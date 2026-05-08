@@ -44,7 +44,7 @@ describe('renderTemplate helpers', () => {
 describe('render shortcut', () => {
   it('có template "greeting"', () => {
     const out = render('greeting', { shopName: 'Shop X' });
-    expect(out).toContain('Shop X');
+    expect(out).toContain('xem qua mẫu');
   });
   it('warn khi template không tồn tại', () => {
     expect(render('not_exist')).toBe('');
@@ -62,12 +62,12 @@ describe('TEMPLATES coverage', () => {
     'productNotFound', 'priceClarification', 'comparison', 'productList',
     'menuSent', 'productImage', 'gelInfo', 'newProducts',
     'stockInfoSelected', 'stockInfoUnknown', 'bestSeller',
-    'sizeInfo', 'giftInfo', 'fitInfo', 'cleaningInfo',
+    'sizeInfo', 'giftInfo', 'fitInfo', 'materialInfo', 'easyUseInfo', 'cleaningInfo',
     'agePolicy', 'shippingPrivacy', 'inspection', 'shippingFee',
     'discount', 'officePickup', 'paymentPreorder', 'paymentDefault',
     'deliveryPreorder', 'deliveryDefault', 'returnPolicy',
     'budgetTightCustom', 'budgetOptions', 'budgetNoOptions',
-    'vibrationOptions', 'largeOptions', 'featureAdviceDefault',
+    'vibrationOptions', 'largeOptions', 'featureAdviceDefault', 'quietAdvice',
     'humanHandoff', 'systemBusy'
   ];
   for (const k of required) {

@@ -363,6 +363,24 @@ async function sendImage(recipientId, imageUrl) {
   });
 }
 
+async function sendCarousel(recipientId, elements) {
+  if (!Array.isArray(elements) || !elements.length) return;
+  await postFb({
+    recipient: { id: recipientId },
+    message: {
+      metadata: BOT_MESSAGE_METADATA,
+      attachment: {
+        type: 'template',
+        payload: {
+          template_type: 'generic',
+          image_aspect_ratio: 'square',
+          elements
+        }
+      }
+    }
+  });
+}
+
 function showTyping(recipientId) {
   // Fire-and-forget: lỗi typing không chặn flow trả lời chính
   return postFb(
@@ -442,6 +460,79 @@ function getImageFilenameForProduct(product) {
     if (f) return f;
   }
   return null;
+}
+
+function isGreetingText(text) {
+  const t = normalizeText(text).trim();
+  return /^(?:(?:em|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|ban))?[.!?\s]*$/.test(t);
+}
+
+function isHotProductsText(text) {
+  const t = normalizeText(text);
+  return /(?:ban\s*chay|\bhot\b|nhieu\s*nguoi\s*(?:hoi|mua)|duoc\s*hoi\s*nhieu|mau\s*nao\s*(?:duoc|ok|hot)|top|xu\s*huong)/.test(t);
+}
+
+function getMenuImageUrls(baseUrlOverride = '') {
+  return ['menu1', 'menu2']
+    .map(name => getImageFilename(name))
+    .filter(Boolean)
+    .map(file => ({ file, url: getPublicImageUrl(file, baseUrlOverride) }))
+    .filter(x => x.url);
+}
+
+function getHotCarouselProducts() {
+  const configured = Array.isArray(shopConfig.hotCarouselProductCodes)
+    ? shopConfig.hotCarouselProductCodes
+    : Array.isArray(shopConfig.greetingCarouselProductCodes)
+      ? shopConfig.greetingCarouselProductCodes
+      : [];
+  const fallback = [
+    ...(shopConfig.recommendations?.premium || []),
+    ...(shopConfig.recommendations?.budget || [])
+  ];
+  const wanted = configured.length ? configured : fallback;
+  const byCode = new Map(products.map(p => [String(p.code || '').toUpperCase(), p]));
+  const result = [];
+
+  for (const code of wanted) {
+    const product = byCode.get(String(code || '').toUpperCase());
+    if (product && !result.some(p => p.code === product.code)) result.push(product);
+    if (result.length >= 10) break;
+  }
+  return result;
+}
+
+function buildHotCarouselElements(baseUrlOverride = '') {
+  return getHotCarouselProducts()
+    .map(product => {
+      const file = getImageFilenameForProduct(product);
+      const imageUrl = getPublicImageUrl(file, baseUrlOverride);
+      if (!imageUrl) return null;
+
+      const title = `${product.code} - ${product.price}`.slice(0, 80);
+      const subtitle = String(product.description || 'Mẫu đang được hỏi nhiều bên shop').slice(0, 80);
+      return {
+        title,
+        subtitle,
+        image_url: imageUrl,
+        buttons: [
+          {
+            type: 'postback',
+            title: 'Tư vấn mã này',
+            payload: `Tư vấn ${product.code}`
+          }
+        ]
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+async function sendHotCarousel(senderId, baseUrlOverride = '') {
+  const elements = buildHotCarouselElements(baseUrlOverride);
+  if (!elements.length) return false;
+  await sendCarousel(senderId, elements);
+  return true;
 }
 
 // ========== ANTI-SPAM ẢNH ==========
@@ -614,6 +705,15 @@ function splitNameAndAddress(text) {
   const plusFormat = splitByPlusWithPhone(text);
   if (plusFormat) return plusFormat;
 
+  const phoneMatch = String(text || '').match(/(?:\+?84|0)\d{8,10}/);
+  if (phoneMatch) {
+    const beforePhone = stripLeadPrefixes(String(text).slice(0, phoneMatch.index));
+    const afterPhone = stripLeadPrefixes(String(text).slice(phoneMatch.index + phoneMatch[0].length));
+    const name = cleanLeadPart(beforePhone);
+    const address = cleanLeadPart(afterPhone);
+    if (name || address) return { name, address };
+  }
+
   const withoutPhone = String(text || '').replace(/(?:\+?84|0)\d{8,10}/g, ' ');
   const explicit = splitExplicitOrderFields(withoutPhone);
   if (explicit) return explicit;
@@ -670,18 +770,6 @@ function normalizeLeadTextField(text) {
       .replace(/\s*\+\s*/g, ' ')
       .replace(/\s{2,}/g, ' ')
   );
-}
-
-function buildDepositMessage(senderId) {
-  const draft = storage.getOrderDraft(senderId);
-  const productCode = String(draft.productCode || storage.getLastProductCode(senderId) || 'mã shop đã tư vấn').trim();
-  return `Dạ em đã nhận đủ thông tin đơn hàng ${productCode}. Để bảo mật thông tin và đẩy đơn nhanh, shop áp dụng quy định cọc trước 50k tiền ship (hoặc thanh toán full để được freeship). Anh/chị quét mã QR dưới đây và ghi nội dung CK là SĐT của anh/chị nhé. Chuyển xong nhắn "ok" hoặc gửi bill để em cho hàng đi luôn ạ!`;
-}
-
-function getShopQrImageUrl(baseUrlOverride = '') {
-  const qrPath = path.join(SHOP_DIR, 'images', 'qr-thanh-toan.png');
-  if (!fs.existsSync(qrPath)) return null;
-  return getPublicImageUrl('qr-thanh-toan.png', baseUrlOverride);
 }
 
 /**
@@ -922,16 +1010,6 @@ async function handleEvent(event, baseUrlOverride = '') {
       const confirmedLead = buildConfirmedSheetLead(senderId, { messageId: mid || '', userText });
       void pushLeadToSheet(confirmedLead);
       sendTelegramAlert(confirmedLead);
-      try {
-        await sendMessage(senderId, buildDepositMessage(senderId));
-        const qrUrl = getShopQrImageUrl(baseUrlOverride);
-        if (qrUrl) {
-          await sendImage(senderId, qrUrl);
-          console.log(`🧾 Đã gửi QR thanh toán cho ${senderId}`);
-        }
-      } catch (err) {
-        console.error('❌ Lỗi gửi hướng dẫn cọc/QR:', err.response?.data || err.message);
-      }
     }
     console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
     return;
@@ -941,9 +1019,26 @@ async function handleEvent(event, baseUrlOverride = '') {
   try {
     showTyping(senderId);
 
-    // Chạy song song: vừa gửi ảnh vừa gọi Gemini để bớt độ trễ
-    const images = buildRequestedImageUrls(userText, senderId, baseUrlOverride);
+    // Chạy song song: vừa gửi ảnh/carousel vừa xử lý reply để bớt độ trễ
+    const isGreeting = isGreetingText(userText);
+    const shouldSendHotCarousel = isHotProductsText(userText);
+    const images = isGreeting
+      ? getMenuImageUrls(baseUrlOverride)
+      : shouldSendHotCarousel
+        ? []
+        : buildRequestedImageUrls(userText, senderId, baseUrlOverride);
     imagePromise = (async () => {
+      if (shouldSendHotCarousel) {
+        try {
+          const sent = await sendHotCarousel(senderId, baseUrlOverride);
+          if (sent) console.log(`🖼️  Gửi hot carousel cho ${senderId}`);
+        } catch (e) {
+          const msg = e.response?.data?.error?.message || e.message;
+          console.error(`❌ Gửi hot carousel fail: ${msg}`);
+        }
+        return;
+      }
+
       for (const { file, url } of images) {
         try {
           await sendImage(senderId, url);

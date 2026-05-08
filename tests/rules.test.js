@@ -120,7 +120,7 @@ describe('Engine: intent router cơ bản', () => {
   });
 
   it('GREETING', () => {
-    expect(engine.buildDeterministicReply('em chào shop', 'u1')).toContain('chào');
+    expect(engine.buildDeterministicReply('em chào shop', 'u1')).toContain('xem qua mẫu');
   });
   it('PRODUCT_LIST khi user gõ mã', () => {
     expect(engine.buildDeterministicReply('m8 còn không', 'u2')).toContain('MÃ8');
@@ -157,8 +157,29 @@ describe('Engine: intent router cơ bản', () => {
   });
   it('không coi "MÃ8 300k" là PRICE_CLARIFICATION', () => {
     const reply = engine.buildDeterministicReply('MÃ8 300k', 'u_price_mention');
-    expect(reply).toContain('em gửi thông tin nhanh');
+    expect(reply).toContain('em gửi mình xem qua');
     expect(reply.includes('giá 680k')).toBeFalse();
+  });
+  it('"đổi sang mã 10" dùng đúng mã mới thay vì hỏi lại', () => {
+    const reply = engine.buildDeterministicReply('đổi sang mã 10 giúp em', 'u_change_code');
+    expect(reply).toContain('MÃ10');
+    expect(reply).toContain('150k');
+    expect(reply.includes('nhắn giúp em mã sản phẩm muốn đổi sang')).toBeFalse();
+  });
+  it('tư vấn người mới/dễ dùng không cần Gemini', () => {
+    const reply = engine.buildDeterministicReply('người mới nên bắt đầu mẫu nào dễ dùng', 'u_easy');
+    expect(reply).toContain('dễ dùng');
+    expect(reply).toContain('MÃ10');
+  });
+  it('hỏi chất liệu theo mã trả lời từ mô tả sản phẩm', () => {
+    const reply = engine.buildDeterministicReply('MÃ8 chất liệu có mềm không', 'u_material');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('Sạc pin');
+  });
+  it('hỏi mẫu kín đáo/dễ cất gợi ý mẫu nhỏ gọn', () => {
+    const reply = engine.buildDeterministicReply('mẫu nào nhỏ gọn dễ cất không lộ', 'u_quiet');
+    expect(reply).toContain('kín đáo');
+    expect(reply).toContain('MÃ10');
   });
 });
 

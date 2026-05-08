@@ -170,7 +170,7 @@ function wantsShippingPrivacy(text) {
 
 function wantsPaymentInfo(text) {
   const t = preprocess(text);
-  return /(?:cod|thanh\s*toan|tra\s*tien|chuyen\s*khoan|ck|coc|dat\s*coc|nhan\s*hang\s*tra\s*tien)/.test(t);
+  return /(?:cod|thanh\s*toan|tra\s*tien|chuyen\s*khoan|ck|nhan\s*hang\s*tra\s*tien)/.test(t);
 }
 
 function wantsDeliveryTime(text) {
@@ -228,9 +228,24 @@ function wantsFitInfo(text) {
   return /(?:khit|chat|om|rong|co\s*gian|mem|that\s*khong|giong\s*that)/.test(t);
 }
 
+function wantsMaterialInfo(text) {
+  const t = preprocess(text);
+  return /(?:chat\s*lieu|silicon|cao\s*su|mem\s*khong|co\s*mem|do\s*ben|ben\s*khong|hang\s*loai\s*1\b|loai\s*1\b)/.test(t);
+}
+
+function wantsEasyUseInfo(text) {
+  const t = preprocess(text);
+  return /(?:de\s*dung|dung\s*de|nguoi\s*moi|lan\s*dau|moi\s*choi|de\s*ve\s*sinh|de\s*rua|nen\s*bat\s*dau)/.test(t);
+}
+
 function wantsCleaningInfo(text) {
   const t = preprocess(text);
   return /(?:ve\s*sinh|rua|lam\s*sach|giat|khu\s*mui|bao\s*quan|co\s*rua\s*duoc)/.test(t);
+}
+
+function wantsQuietAdvice(text) {
+  const t = preprocess(text);
+  return /(?:kin\s*dao|de\s*cat|cat\s*dau|nho\s*gon|khong\s*lo|it\s*lo|mang\s*di|de\s*giau|giau\s*duoc)/.test(t);
 }
 
 // FIX: phân biệt "user hỏi về order info" vs "user cung cấp order info".
@@ -614,7 +629,20 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     {
       name: 'CHANGE_PRODUCT',
       match: ctx => wantsChangeProduct(ctx.text),
-      handle: () => render('changeProduct')
+      handle: ctx => {
+        if (!ctx.found.length) return render('changeProduct');
+
+        const product = ctx.found[0];
+        if (!ctx.missingFields.length) {
+          return readyOrderReply(ctx.productAwareOrder, product);
+        }
+        return render('orderIntentWithProduct', {
+          productCode: product.code,
+          price: explainPrice(product.price),
+          orderInfoFields: config.policies.orderInfoFields,
+          privacy: config.policies.privacy
+        });
+      }
     },
     {
       name: 'PROVIDES_NAME_OR_ADDRESS',
@@ -825,9 +853,28 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       }
     },
     {
+      name: 'MATERIAL_INFO',
+      match: ctx => wantsMaterialInfo(ctx.text) && Boolean(ctx.selectedProduct),
+      handle: ctx => render('materialInfo', {
+        productCode: ctx.selectedProduct.code,
+        description: ctx.selectedProduct.description || 'sản phẩm trong menu'
+      })
+    },
+    {
       name: 'FIT_INFO',
       match: ctx => wantsFitInfo(ctx.text) && Boolean(ctx.selectedProduct),
       handle: ctx => render('fitInfo', { productCode: ctx.selectedProduct.code })
+    },
+    {
+      name: 'EASY_USE_INFO',
+      match: ctx => wantsEasyUseInfo(ctx.text),
+      handle: ctx => {
+        const options = recommendationProducts('budget')
+          .slice(0, 3)
+          .map(p => `${p.code} giá ${p.price}`)
+          .join(', ');
+        return render('easyUseInfo', { options: options || 'các mẫu nhỏ gọn trong menu' });
+      }
     },
     {
       name: 'CLEANING_INFO',
@@ -866,13 +913,20 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     },
     {
       name: 'FEATURE_OR_LARGE_OR_RECOMMEND',
-      match: ctx => wantsFeatureAdvice(ctx.text) || ctx.wantsLarge || wantsRecommendation(ctx.text),
+      match: ctx => wantsFeatureAdvice(ctx.text) || ctx.wantsLarge || wantsQuietAdvice(ctx.text) || wantsRecommendation(ctx.text),
       handle: ctx => {
         if (ctx.wantsLarge) {
           const options = recommendationProducts('large')
             .map(p => `${p.code} giá ${p.price}${p.preorder ? ' hàng đặt' : ''}`)
             .join(', ');
           return render('largeOptions', { options: options || 'một số mẫu kích thước lớn' });
+        }
+        if (wantsQuietAdvice(ctx.text)) {
+          const options = recommendationProducts('budget')
+            .slice(0, 3)
+            .map(p => `${p.code} giá ${p.price}`)
+            .join(', ');
+          return render('quietAdvice', { options: options || 'các mẫu nhỏ gọn trong menu' });
         }
         return render('featureAdviceDefault');
       }
@@ -984,11 +1038,14 @@ module.exports = {
     wantsHuman,
     wantsInspection,
     wantsKeywordImage: (text, keyword) => wantsKeywordImage(text, keyword, {}),
+    wantsMaterialInfo,
     wantsMenuImages,
     wantsNewProducts,
     wantsOfficePickup,
     wantsPaymentInfo,
     wantsProductImage,
+    wantsEasyUseInfo,
+    wantsQuietAdvice,
     wantsRecommendation,
     wantsReturnPolicy,
     wantsShippingFee,
