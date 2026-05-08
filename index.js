@@ -373,6 +373,8 @@ function sanitizeGeminiReply(text) {
   s = s.replace(/\s*\([^)]*(?:hệ\s*thống|tự\s*động|he\s*thong|tu\s*dong)[^)]*\)/gi, '');
   s = s.replace(/\s*\([^)]*(?:ảnh|anh|menu|sản\s*phẩm|san\s*pham)[^)]*(?:kèm|kem|gửi|gui|đây|day)[^)]*\)/gi, '');
   s = s.replace(/\s*\([^)]*(?:kèm|kem|gửi|gui|đây|day)[^)]*(?:ảnh|anh|menu|sản\s*phẩm|san\s*pham)[^)]*\)/gi, '');
+  s = s.replace(/\s*\[[^\]]*(?:ảnh|anh|menu|sản\s*phẩm|san\s*pham|hình|hinh)[^\]]*(?:kèm|kem|gửi|gui|đây|day|ở\s*đây|o\s*day)[^\]]*\]/gi, '');
+  s = s.replace(/\s*\[[^\]]*(?:kèm|kem|gửi|gui|đây|day|ở\s*đây|o\s*day)[^\]]*(?:ảnh|anh|menu|sản\s*phẩm|san\s*pham|hình|hinh)[^\]]*\]/gi, '');
   s = s.replace(/\banh\s*\/\s*em\b/gi, 'anh/chị');
   return s.replace(/\s{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1').trim();
 }
@@ -389,6 +391,8 @@ async function callGemini(userId, userMessage) {
   const raw = extractGeminiText(res)
     || 'Xin lỗi anh/chị, em chưa hiểu ý. Anh/chị có thể nói rõ hơn không ạ? 😊';
   const botReply = sanitizeGeminiReply(raw) || raw;
+  history.push({ role: 'model', parts: [{ text: botReply }] });
+  if (history.length > 20) history.splice(0, history.length - 20);
   storage.setHistory(userId, history);
 
   return botReply;
