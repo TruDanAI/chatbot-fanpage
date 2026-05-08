@@ -47,6 +47,7 @@ describe('quick replies: stage suggestions', () => {
   it('checkout chỉ gợi ý gửi thông tin và gặp nhân viên', () => {
     const replies = buildQuickReplies({ stateAfterReply: 'COLLECTING_INFO' });
     expect(replies.map(item => item.payload)).toEqual(['SEND_ORDER_INFO', 'HUMAN_HANDOFF']);
+    expect(replies[0].title).toBe('📝 Gửi thông tin nhận hàng');
   });
 
   it('confirmed không show random actions', () => {
@@ -63,5 +64,14 @@ describe('quick replies: stage suggestions', () => {
       isGreeting: true,
       stateAfterReply: 'COLLECTING_INFO'
     })).toBe('checkout');
+  });
+
+  it('reply chào "xem qua mẫu" vẫn hiện quick Hàng hot', () => {
+    const replies = buildQuickReplies({
+      replyText: '👋 Dạ em gửi mình xem qua mẫu bên shop nhé 😄 Ưng mã nào mình nhắn em tư vấn nhanh ạ.'
+    });
+
+    expect(replies.map(item => item.payload)).toEqual(['HOT_PRODUCTS', 'BUDGET_300', 'GEL_ACCESSORIES', 'QUICK_ADVICE']);
+    expect(replies[0].title).toBe('🔥 Hàng hot');
   });
 });

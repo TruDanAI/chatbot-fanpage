@@ -1325,6 +1325,7 @@ async function handleEvent(event, baseUrlOverride = '') {
       stateBeforeReply,
       stateAfterReply,
       isGreeting,
+      replyText: reply,
       fallbackUsed: !deterministicMatched,
       lastProductCode: storage.getLastProductCode(senderId),
       orderDraft: storage.getOrderDraft(senderId)

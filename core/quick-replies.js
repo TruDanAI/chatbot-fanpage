@@ -41,7 +41,7 @@ const DEFAULT_ACTIONS = {
     text: 'mẫu nào dưới 300k'
   },
   SEND_ORDER_INFO: {
-    title: '📦 Gửi thông tin',
+    title: '📝 Gửi thông tin nhận hàng',
     payload: 'SEND_ORDER_INFO',
     text: 'chốt đơn cần gửi thông tin gì?'
   }
@@ -57,6 +57,10 @@ const DEFAULT_STAGE_ACTIONS = {
 const TERMINAL_STATES = new Set(['CONFIRMED']);
 const CHECKOUT_STATES = new Set(['COLLECTING_INFO', 'READY_TO_CONFIRM']);
 
+function looksLikeGreetingReply(text) {
+  return /xem\s+qua\s+m[ẫa]u/i.test(String(text || ''));
+}
+
 function getQuickReplyConfig(config = {}) {
   const qr = config.quickReplies || {};
   return {
@@ -70,7 +74,7 @@ function toMessengerQuickReply(action) {
   if (!action || !action.title || !action.payload) return null;
   const item = {
     content_type: 'text',
-    title: String(action.title).slice(0, 20),
+    title: String(action.title),
     payload: String(action.payload).slice(0, 1000)
   };
   if (action.imageUrl) item.image_url = action.imageUrl;
@@ -96,7 +100,7 @@ function inferSuggestionStage(ctx = {}) {
   if (TERMINAL_STATES.has(state)) return '';
   if (CHECKOUT_STATES.has(state)) return 'checkout';
   if (ctx.fallbackUsed || ctx.confused) return 'confused';
-  if (ctx.isGreeting) return 'greeting';
+  if (ctx.isGreeting || looksLikeGreetingReply(ctx.replyText)) return 'greeting';
   if (state === 'PRODUCT_SELECTED' || ctx.viewingProduct || ctx.lastProductCode) return 'productDetail';
   return '';
 }
