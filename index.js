@@ -752,21 +752,47 @@ function isProbablyIncompleteReply(reply, userText) {
 function cleanLeadPart(text) {
   return String(text || '')
     .replace(/\s+/g, ' ')
-    .replace(/\s+(?:nhé|nhe|nha|ạ|a)$/i, '')
+    .replace(/\s+(?:nhé|nhe|nha|ạ)$/i, '')
     .replace(/\s+(?:shop|ad|minh|mình|anh|chị|chi|em)\s*(?:ơi|oi)?$/i, '')
     .replace(/^[,:;\-\s]+|[,:;\-\s]+$/g, '')
     .trim();
 }
 
+const LEAD_PRONOUN_PATTERN = '(?:mình|minh|em|anh|chị|chi|tôi|toi)';
+const PHONE_LABEL_PATTERN = '(?:sđt|sdt|số\\s*điện\\s*thoại|so\\s*dien\\s*thoai|đt|dt|phone)';
+const NAME_LABEL_PATTERN = '(?:tên\\s*người\\s*nhận|ten\\s*nguoi\\s*nhan|người\\s*nhận|nguoi\\s*nhan|tên|ten)';
+const ADDRESS_LABEL_PATTERN = '(?:địa\\s*chỉ|dia\\s*chi|dc|ship\\s*về|ship\\s*ve|giao\\s*về|giao\\s*ve|nơi\\s*nhận|noi\\s*nhan|chỗ\\s*nhận|cho\\s*nhan)';
+const ANY_LEAD_LABEL_PATTERN = `(?:${PHONE_LABEL_PATTERN}|${NAME_LABEL_PATTERN}|${ADDRESS_LABEL_PATTERN})`;
+
 function stripLeadPrefixes(text) {
   return cleanLeadPart(text)
-    .replace(/^(?:tên người nhận|ten nguoi nhan|người nhận|nguoi nhan|tên|ten)\s*(?:là|la|:)?\s*/i, '')
-    .replace(/^(?:địa chỉ|dia chi|dc|ship về|ship ve|giao về|giao ve)\s*(?:là|la|:)?\s*/i, '')
+    .replace(new RegExp(`^(?:${LEAD_PRONOUN_PATTERN}\\s+)?${NAME_LABEL_PATTERN}\\s*(?:là|la|:)?\\s*`, 'i'), '')
+    .replace(new RegExp(`^(?:${LEAD_PRONOUN_PATTERN}\\s+)?(?:là|la)\\s+`, 'i'), '')
+    .replace(new RegExp(`^${ADDRESS_LABEL_PATTERN}\\s*(?:là|la|:)?\\s*`, 'i'), '')
     .trim();
+}
+
+function extractLabeledLeadValue(text, labelPattern) {
+  const re = new RegExp(
+    `(?:^|[\\s,;|+])${labelPattern}\\s*(?:là|la|:|-)?\\s*([\\s\\S]*?)(?=(?:[\\s,;|+]+${ANY_LEAD_LABEL_PATTERN}\\s*(?:là|la|:|-)?\\s*)|$)`,
+    'i'
+  );
+  const match = String(text || '').match(re);
+  return match ? cleanLeadPart(match[1]) : '';
+}
+
+function splitLabeledLeadFields(text) {
+  const name = extractLabeledLeadValue(text, NAME_LABEL_PATTERN);
+  const address = extractLabeledLeadValue(text, ADDRESS_LABEL_PATTERN);
+  if (!name && !address) return null;
+  return { name, address };
 }
 
 function prefixedLeadPart(text) {
   const raw = cleanLeadPart(text);
+  const labeled = splitLabeledLeadFields(raw);
+  if (labeled) return labeled;
+
   const name = raw.match(/^(?:tên người nhận|ten nguoi nhan|người nhận|nguoi nhan|tên|ten)\s*(?:là|la|:)?\s*(.+)$/i);
   if (name) return { name: cleanLeadPart(name[1]) };
 
@@ -778,6 +804,9 @@ function prefixedLeadPart(text) {
 
 function splitExplicitOrderFields(text) {
   const raw = cleanLeadPart(text);
+  const labeled = splitLabeledLeadFields(raw);
+  if (labeled) return labeled;
+
   const addressMatch = raw.match(/^(.*?)\b(?:và\s*)?(?:địa chỉ|dia chi|dc|ship về|ship ve|giao về|giao ve)\s*(?:là|la|:)?\s*(.+)$/i);
   if (!addressMatch) return null;
 
@@ -811,7 +840,55 @@ function splitByPlusWithPhone(text) {
   return { name, address };
 }
 
+function findAddressStart(text) {
+  const normalized = normalizeText(text);
+  const keywordIndex = normalized.search(/\b(so|nha|ngo|ngach|hem|kiet|duong|thon|xom|ap|xa|phuong|huyen|quan|tinh|tp|thanh pho|ho chi minh|ha noi|sai gon|bac ninh|hai phong|da nang)\b/i);
+  const numberMatch = normalized.match(/(?:^|\s)(?:so\s*)?\d+[a-z]?(?:[/-]\d+[a-z]?)?(?=\s+\S{2,})/i);
+  const numberIndex = numberMatch
+    ? numberMatch.index + (/^\s/.test(numberMatch[0]) ? 1 : 0)
+    : -1;
+  const indexes = [keywordIndex, numberIndex].filter(index => index >= 0);
+  return indexes.length ? Math.min(...indexes) : -1;
+}
+
+function splitRestNameAndAddress(text) {
+  const rest = stripLeadPrefixes(text);
+  if (!rest) return { name: '', address: '' };
+
+  const commaParts = rest
+    .split(/[,;]+/)
+    .map(part => stripLeadPrefixes(part))
+    .filter(Boolean);
+  if (commaParts.length >= 2) {
+    return {
+      name: commaParts[0],
+      address: cleanLeadPart(commaParts.slice(1).join(', '))
+    };
+  }
+
+  const addressStart = findAddressStart(rest);
+  if (addressStart > 0) {
+    return {
+      name: cleanLeadPart(rest.slice(0, addressStart)),
+      address: cleanLeadPart(rest.slice(addressStart))
+    };
+  }
+  if (addressStart === 0) {
+    return { name: '', address: cleanLeadPart(rest) };
+  }
+
+  const parts = rest.split(/\s+/);
+  if (parts.length <= 3) return { name: rest, address: '' };
+  return {
+    name: cleanLeadPart(parts.slice(0, 2).join(' ')),
+    address: cleanLeadPart(parts.slice(2).join(' '))
+  };
+}
+
 function splitNameAndAddress(text) {
+  const labeled = splitLabeledLeadFields(text);
+  if (labeled) return labeled;
+
   const plusFormat = splitByPlusWithPhone(text);
   if (plusFormat) return plusFormat;
 
@@ -820,8 +897,12 @@ function splitNameAndAddress(text) {
     const beforePhone = stripLeadPrefixes(String(text).slice(0, phoneMatch.index));
     const afterPhone = stripLeadPrefixes(String(text).slice(phoneMatch.index + phoneMatch[0].length));
     const name = cleanLeadPart(beforePhone);
-    const address = cleanLeadPart(afterPhone);
-    if (name || address) return { name, address };
+    const afterParts = splitRestNameAndAddress(afterPhone);
+    if (name && (afterParts.address || afterPhone)) {
+      return { name, address: afterParts.address || cleanLeadPart(afterPhone) };
+    }
+    if (name) return { name, address: '' };
+    if (afterParts.name || afterParts.address) return afterParts;
   }
 
   const withoutPhone = String(text || '').replace(/(?:\+?84|0)\d{8,10}/g, ' ');
@@ -843,34 +924,7 @@ function splitNameAndAddress(text) {
     };
   }
 
-  const rest = stripLeadPrefixes(lines[0] || withoutPhone);
-  if (!rest) return { name: '', address: '' };
-
-  const commaParts = rest
-    .split(/[,;]+/)
-    .map(part => stripLeadPrefixes(part))
-    .filter(Boolean);
-  if (commaParts.length >= 2) {
-    return {
-      name: commaParts[0],
-      address: cleanLeadPart(commaParts.slice(1).join(', '))
-    };
-  }
-
-  const addressStart = normalizeText(rest).search(/\b(so|nha|ngo|ngach|duong|thon|xom|ap|xa|phuong|huyen|quan|tinh|tp|thanh pho)\b/i);
-  if (addressStart > 0) {
-    return {
-      name: cleanLeadPart(rest.slice(0, addressStart)),
-      address: cleanLeadPart(rest.slice(addressStart))
-    };
-  }
-
-  const parts = rest.split(/\s+/);
-  if (parts.length <= 3) return { name: rest, address: '' };
-  return {
-    name: cleanLeadPart(parts.slice(0, 2).join(' ')),
-    address: cleanLeadPart(parts.slice(2).join(' '))
-  };
+  return splitRestNameAndAddress(lines[0] || withoutPhone);
 }
 
 function normalizeLeadTextField(text) {
@@ -880,6 +934,70 @@ function normalizeLeadTextField(text) {
       .replace(/\s*\+\s*/g, ' ')
       .replace(/\s{2,}/g, ' ')
   );
+}
+
+function looksLikeShippingAddressPart(text) {
+  const cleaned = cleanLeadPart(stripLeadPrefixes(text));
+  if (!cleaned) return false;
+  if (findAddressStart(cleaned) >= 0) return true;
+  return /[,;]/.test(cleaned)
+    && /\b(xa|phuong|huyen|quan|tinh|tp|thanh pho)\b/i.test(normalizeText(cleaned));
+}
+
+function extractAddressChangeText(userText, mentionedCode = '') {
+  const raw = String(userText || '');
+  const explicit = raw.match(new RegExp(
+    `(?:đổi|doi|sửa|sua|cập\\s*nhật|cap\\s*nhat|chuyển|chuyen)\\s*(?:${ADDRESS_LABEL_PATTERN})\\s*(?:sang|thành|thanh|là|la|:)?\\s*(.+)$`,
+    'i'
+  ));
+  if (explicit) return cleanLeadPart(explicit[1]);
+
+  // Chỉ coi "đổi/sửa ... sang ..." là đổi địa chỉ khi phần sau thật sự giống địa chỉ.
+  // Nếu câu có mã sản phẩm ("đổi sang mã 10") thì để luồng đổi mẫu xử lý.
+  if (mentionedCode) return '';
+
+  const broad = raw.match(/(?:đổi|doi|sửa|sua|cập\s*nhật|cap\s*nhat|chuyển|chuyen)\b[\s\S]*?\b(?:sang|thành|thanh|là|la|:)\s*(.+)$/i);
+  if (!broad) return '';
+  return looksLikeShippingAddressPart(broad[1]) ? cleanLeadPart(broad[1]) : '';
+}
+
+function isProductChangeText(text) {
+  const t = normalizeText(text);
+  return /\b(doi|sua|chuyen|cap\s*nhat)\b/.test(t)
+    && (/\b(ma|mau|san\s*pham|sp)\b/.test(t) || /\bsang\b/.test(t));
+}
+
+function hasExistingOrderDraft(draft = {}) {
+  return Boolean(
+    draft.productCode
+    || draft.phone
+    || draft.name
+    || draft.address
+    || (Array.isArray(draft.cartItems) && draft.cartItems.length)
+  );
+}
+
+function isCatalogProductCartItem(item = {}) {
+  const code = String(item.code || '').trim().toUpperCase();
+  const name = String(item.name || '').trim().toUpperCase();
+  return /^MÃ\d+$/.test(code) || /^MÃ\d+$/.test(name);
+}
+
+function buildReplacementCartItems(draft = {}, productCode = '') {
+  const code = String(productCode || '').trim().toUpperCase();
+  if (!code) return [];
+
+  const existing = Array.isArray(draft.cartItems) ? draft.cartItems : [];
+  const previousProduct = existing.find(isCatalogProductCartItem);
+  const productItem = {
+    code,
+    name: code,
+    qty: Number(previousProduct?.qty || 1) || 1,
+    variant: '',
+    display: code
+  };
+  const extras = existing.filter(item => !isCatalogProductCartItem(item));
+  return [productItem, ...extras];
 }
 
 /**
@@ -991,10 +1109,9 @@ async function notifyStaffForReadyOrder(senderId, userText, opts = {}) {
     previousNotifiedAt: notified.at || ''
   });
   console.log(`📤 Đơn đủ thông tin — gửi ${isUpdate ? 'cập nhật ' : ''}lead cho nhân viên (${senderId}).`);
-  void pushLeadToSheet(confirmedLead);
   sendTelegramAlert({
     ...confirmedLead,
-    text: isUpdate ? 'CẬP NHẬT ĐƠN' : 'ĐƠN ĐỦ THÔNG TIN'
+    text: isUpdate ? 'CẬP NHẬT ĐƠN ĐỦ THÔNG TIN' : 'ĐƠN ĐỦ THÔNG TIN - CHỜ KHÁCH OK'
   });
   if (storage.setOrderStaffNotification) {
     storage.setOrderStaffNotification(senderId, {
@@ -1002,8 +1119,6 @@ async function notifyStaffForReadyOrder(senderId, userText, opts = {}) {
       at: confirmedLead.confirmedAt
     });
   }
-  storage.setSessionState(senderId, STATES.CONFIRMED);
-  storage.setHandoff(senderId, Date.now() + HANDOFF_MS);
   return true;
 }
 
@@ -1011,19 +1126,22 @@ function buildLeadDetails(userText, senderId) {
   const mentionedCode = extractRequestedProductCodes(userText)[0] || '';
   const productCode = mentionedCode || storage.getLastProductCode(senderId) || '';
   const phone = extractPhone(userText);
-  const addressChangeMatch = String(userText || '').match(/(?:đổi|doi|sửa|sua|cập\s*nhật|cap\s*nhat|chuyển|chuyen)\s*(?:địa\s*chỉ|dia\s*chi|dc)?\s*(?:sang|thành|thanh|là|la|:)\s*(.+)$/i);
-  const hasLeadPrefix = /(?:^|\n)\s*(?:tên người nhận|ten nguoi nhan|người nhận|nguoi nhan|tên|ten|địa chỉ|dia chi|dc|ship về|ship ve|giao về|giao ve)(?:\s|:|$)/i
-    .test(userText);
+  const draft = storage.getOrderDraft(senderId);
+  const addressChangeText = extractAddressChangeText(userText, mentionedCode);
+  const hasLeadPrefix = new RegExp(
+    `(?:^|\\n)\\s*(?:${LEAD_PRONOUN_PATTERN}\\s+)?(?:${NAME_LABEL_PATTERN}|${ADDRESS_LABEL_PATTERN})(?:\\s|:|$)`,
+    'i'
+  ).test(userText)
+    || new RegExp(`(?:^|\\n)\\s*${LEAD_PRONOUN_PATTERN}\\s+(?:là|la)\\s+`, 'i').test(userText);
   const addressOnly = !phone && /[,;]/.test(userText) && /\b(xã|xa|phường|phuong|huyện|huyen|quận|quan|tỉnh|tinh|tp|thành phố|thanh pho)\b/i
     .test(normalizeText(userText));
-  let parsed = addressChangeMatch
-    ? { name: '', address: cleanLeadPart(addressChangeMatch[1]) }
+  let parsed = addressChangeText
+    ? { name: '', address: cleanLeadPart(addressChangeText) }
     : phone || hasLeadPrefix
     ? splitNameAndAddress(userText)
     : addressOnly
       ? { name: '', address: cleanLeadPart(stripLeadPrefixes(userText)) }
       : { name: '', address: '' };
-  const draft = storage.getOrderDraft(senderId);
 
   if (
     !parsed.name
@@ -1038,12 +1156,16 @@ function buildLeadDetails(userText, senderId) {
     parsed = { name: cleanLeadPart(userText), address: '' };
   }
 
-  return {
+  const details = {
     productCode,
     phone,
     name: normalizeLeadTextField(parsed.name),
     address: normalizeLeadTextField(parsed.address)
   };
+  if (mentionedCode && isProductChangeText(userText) && hasExistingOrderDraft(draft)) {
+    details.cartItems = buildReplacementCartItems(draft, mentionedCode);
+  }
+  return details;
 }
 
 function shouldCaptureHandoffOrderUpdate(senderId, userText, leadDetails, previousDraft = {}) {
@@ -1475,7 +1597,11 @@ async function handleEvent(event, baseUrlOverride = '') {
         productInterest: confirmedLead.productInterest || ''
       });
       void pushLeadToSheet(confirmedLead);
-      sendTelegramAlert(confirmedLead);
+      sendTelegramAlert({
+        ...confirmedLead,
+        text: 'ĐƠN ĐÃ ĐƯỢC KHÁCH XÁC NHẬN'
+      });
+      storage.setHandoff(senderId, Date.now() + HANDOFF_MS);
     }
     console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
     return;
@@ -1519,21 +1645,25 @@ async function handleEvent(event, baseUrlOverride = '') {
     const stateBeforeReply = deriveSessionState(senderId);
     let reply = buildDeterministicReply(userText, senderId);
     const deterministicMatched = Boolean(reply);
+    let usedFallbackReply = false;
     if (deterministicMatched) {
       resetFallbackAttention(senderId);
       trackEvent(senderId, 'deterministic_reply', userText, { stateBefore: stateBeforeReply });
       console.log('⚡ Trả lời rule-based, không gọi Gemini');
     } else if (!USE_GEMINI) {
       reply = buildFallbackReply(userText, senderId);
+      usedFallbackReply = true;
       trackEvent(senderId, 'fallback_used', userText, { reason: 'gemini_disabled' });
       console.log('🧩 USE_GEMINI=false, dùng fallback rule-based');
     } else {
       reply = await callGemini(senderId, userText);
+      resetFallbackAttention(senderId);
       trackEvent(senderId, 'gemini_reply', userText, { stateBefore: stateBeforeReply });
     }
     if (isProbablyIncompleteReply(reply, userText)) {
       console.warn(`⚠️  Gemini trả lời có vẻ bị cụt, dùng fallback. Reply gốc: ${reply.replace(/\n/g, ' ')}`);
       reply = buildFallbackReply(userText, senderId);
+      usedFallbackReply = true;
       trackEvent(senderId, 'fallback_used', userText, { reason: 'incomplete_reply' });
       await sendTelegramOperationalAlert({
         senderId,
@@ -1542,7 +1672,7 @@ async function handleEvent(event, baseUrlOverride = '') {
         reply
       });
     }
-    if (!deterministicMatched) {
+    if (usedFallbackReply) {
       await trackFallbackAttention(senderId, userText, reply);
     }
     const stateAfterReply = deriveSessionState(senderId);
@@ -1554,7 +1684,7 @@ async function handleEvent(event, baseUrlOverride = '') {
       stateAfterReply,
       isGreeting,
       replyText: reply,
-      fallbackUsed: !deterministicMatched,
+      fallbackUsed: usedFallbackReply,
       lastProductCode: storage.getLastProductCode(senderId),
       orderDraft: storage.getOrderDraft(senderId)
     }, shopConfig);

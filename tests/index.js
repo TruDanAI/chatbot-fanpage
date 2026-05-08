@@ -5,6 +5,7 @@ require('./nlp.test');
 require('./responses.test');
 require('./quick-replies.test');
 require('./rules.test');
+require('./index.test');
 
 const exitCode = run();
 process.exit(exitCode);

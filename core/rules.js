@@ -104,6 +104,11 @@ function formatCartItemLabel(item) {
   return displayCartProductCode(item.code || item.name);
 }
 
+function isGelProduct(product) {
+  const label = normalizeText(`${product?.code || ''} ${product?.description || ''}`);
+  return /\b(gel|boi\s*tron)\b/.test(label);
+}
+
 // ===== Detector functions (đều preprocess hoá ở bên trong) =====
 function asksWhyRepeatedInfo(text) {
   const t = preprocess(text);
@@ -492,10 +497,16 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     const orderDraft = getOrderDraft(userId);
     const state = deriveSessionState(userId, orderDraft);
     if (state !== STATES.READY_TO_CONFIRM && state !== STATES.CONFIRMED) return false;
-    if (!isSimpleConfirmation(userText) && !isNonCommittalReaction(userText)) return false;
 
-    if (state === STATES.READY_TO_CONFIRM) setStoredSessionState(userId, STATES.CONFIRMED);
-    return true;
+    const simpleConfirmation = isSimpleConfirmation(userText);
+    const nonCommittalReaction = isNonCommittalReaction(userText);
+    if (state === STATES.READY_TO_CONFIRM) {
+      if (!simpleConfirmation) return false;
+      setStoredSessionState(userId, STATES.CONFIRMED);
+      return true;
+    }
+
+    return simpleConfirmation || nonCommittalReaction;
   }
 
   // ===== Render helpers (đa số trả thẳng template) =====
@@ -539,7 +550,9 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     }
 
     existing.forEach(addItem);
-    if (ctx.selectedProduct) {
+    const gelItem = extractGelCartItem(ctx.text);
+    const selectedIsGel = isGelProduct(ctx.selectedProduct);
+    if (ctx.selectedProduct && !selectedIsGel) {
       addItem({
         code: ctx.selectedProduct.code,
         name: ctx.selectedProduct.code,
@@ -547,7 +560,17 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
         display: displayCartProductCode(ctx.selectedProduct.code)
       });
     }
-    addItem(extractGelCartItem(ctx.text));
+    if (selectedIsGel) {
+      addItem(gelItem || {
+        code: 'GEL',
+        name: 'gel',
+        qty: 1,
+        variant: '',
+        display: '1 gel 200ml'
+      });
+    } else {
+      addItem(gelItem);
+    }
 
     return [...byKey.values()];
   }
@@ -574,6 +597,49 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       });
     }
     setStoredSessionState(ctx.userId, STATES.COLLECTING_INFO);
+  }
+
+  function isCatalogProductCartItem(item = {}) {
+    const code = String(item.code || '').trim().toUpperCase();
+    const name = String(item.name || '').trim().toUpperCase();
+    return /^MÃ\d+$/.test(code) || /^MÃ\d+$/.test(name);
+  }
+
+  function replaceProductCartItems(orderDraft = {}, product) {
+    const code = String(product?.code || '').trim().toUpperCase();
+    if (!code) return Array.isArray(orderDraft.cartItems) ? orderDraft.cartItems : [];
+
+    const existing = Array.isArray(orderDraft.cartItems) ? orderDraft.cartItems : [];
+    const previousProduct = existing.find(isCatalogProductCartItem);
+    const nextProduct = {
+      code,
+      name: code,
+      qty: Number(previousProduct?.qty || 1) || 1,
+      variant: '',
+      display: displayCartProductCode(code)
+    };
+    return [
+      nextProduct,
+      ...existing.filter(item => !isCatalogProductCartItem(item))
+    ];
+  }
+
+  function persistProductChange(ctx, product) {
+    const cartItems = replaceProductCartItems(ctx.orderDraft, product);
+    const details = {
+      productCode: product.code,
+      cartItems
+    };
+    const stored = contextStore.mergeOrderDraft
+      ? contextStore.mergeOrderDraft(ctx.userId, details)
+      : details;
+    setStoredSessionState(ctx.userId, '');
+    return {
+      ...ctx.productAwareOrder,
+      ...stored,
+      productCode: product.code,
+      cartItems
+    };
   }
 
   function checkoutPendingReply(ctx) {
@@ -821,8 +887,10 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
         if (!ctx.found.length) return render('changeProduct');
 
         const product = ctx.found[0];
-        if (!ctx.missingFields.length) {
-          return readyOrderReply(ctx.productAwareOrder, product);
+        const nextOrder = persistProductChange(ctx, product);
+        const missing = missingOrderFields(nextOrder);
+        if (!missing.length) {
+          return readyOrderReply(nextOrder, product);
         }
         return render('orderIntentWithProduct', {
           productCode: product.code,

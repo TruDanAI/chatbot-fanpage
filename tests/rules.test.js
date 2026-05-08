@@ -318,6 +318,21 @@ describe('Engine: state machine 5 trạng thái', () => {
     expect(eng.deriveSessionState(userId)).toBe(STATES.COLLECTING_INFO);
     expect(eng.shouldSilenceAfterCompleteOrder('ok shop', userId)).toBeFalse();
   });
+  it('READY_TO_CONFIRM không bị CONFIRMED bởi phản hồi phủ định/ngắn kiểu "ko"', () => {
+    const localStore = makeStore();
+    const eng = createRuleEngine({ products, config: shopConfig, contextStore: localStore });
+    const userId = 'u_state_no_short_confirm';
+    localStore.mergeOrderDraft(userId, {
+      productCode: 'MÃ8',
+      name: 'An',
+      phone: '0987654321',
+      address: '12 Trần Phú, Hà Nội'
+    });
+
+    expect(eng.deriveSessionState(userId)).toBe(STATES.READY_TO_CONFIRM);
+    expect(eng.shouldSilenceAfterCompleteOrder('ko', userId)).toBeFalse();
+    expect(eng.deriveSessionState(userId)).toBe(STATES.READY_TO_CONFIRM);
+  });
   it('shouldSilenceAfterCompleteOrder = true với "ok"', () => {
     expect(engine.shouldSilenceAfterCompleteOrder('ok shop', u)).toBeTrue();
   });
@@ -359,6 +374,18 @@ describe('Engine: checkout context không rơi về gel/fallback', () => {
     expect(reply).notToBe(shopConfig.templates.gelInfo);
   });
 
+  it('mua riêng gel không bị nhân đôi giữa sản phẩm CSV và gel cart item', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const userId = 'u_checkout_only_gel';
+    const reply = engine.buildDeterministicReply('mua 2 chai gel đào', userId);
+    const cartItems = store.getOrderDraft(userId).cartItems;
+
+    expect(reply).toContain('2 gel đào 200ml');
+    expect(cartItems.length).toBe(1);
+    expect(cartItems[0].code).toBe('GEL');
+  });
+
   it('"ok" theo context sản phẩm chuyển sang xin thông tin, không null/Gemini', () => {
     const store = makeStore();
     const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
@@ -397,6 +424,26 @@ describe('Engine: checkout context không rơi về gel/fallback', () => {
     expect(reply).toContain('• MÃ8');
     expect(reply).toContain('• MÃ10');
     expect(/chốt\s+MÃ10 rồi/.test(reply)).toBeFalse();
+  });
+
+  it('đổi sang mã mới thay cart product cũ khi đơn đã có thông tin', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const userId = 'u_change_product_cart';
+
+    engine.buildDeterministicReply('chốt mã 8', userId);
+    store.mergeOrderDraft(userId, {
+      name: 'Hân',
+      phone: '0123456789',
+      address: 'Đồng Me, Mễ Trì, Hà Nội'
+    });
+
+    const reply = engine.buildDeterministicReply('đổi sang mã 10 giúp em', userId);
+    const cartItems = store.getOrderDraft(userId).cartItems;
+    expect(reply).toContain('• MÃ10');
+    expect(reply.includes('• MÃ8')).toBeFalse();
+    expect(cartItems.length).toBe(1);
+    expect(cartItems[0].code).toBe('MÃ10');
   });
 
   it('đang COLLECTING_INFO hỏi cần gửi gì thì chỉ nhắc field, không replay cart', () => {
