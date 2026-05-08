@@ -65,6 +65,12 @@ describe('nlp.extractRequestedProductCodes', () => {
   it('regex chuẩn "ma 8"', () => {
     expect(nlp.extractRequestedProductCodes('cho xem ma 8 nhé', known)).toContain('MÃ8');
   });
+  it('nhận danh sách "mã 2, 8 và 10" dù chỉ có tiền tố ở mã đầu', () => {
+    expect(nlp.extractRequestedProductCodes('cho xem mã 2, 8 và 10 đi', ['MÃ2', 'MÃ8', 'MÃ10'])).toEqual(['MÃ2', 'MÃ8', 'MÃ10']);
+  });
+  it('không nhận nhầm số lượng gel trong "mã 8 và 1 chai gel"', () => {
+    expect(nlp.extractRequestedProductCodes('lấy mã 8 và 1 chai gel', ['MÃ1', 'MÃ8'])).toEqual(['MÃ8']);
+  });
   it('teencode "m8"', () => {
     expect(nlp.extractRequestedProductCodes('m8 còn không', known)).toContain('MÃ8');
   });

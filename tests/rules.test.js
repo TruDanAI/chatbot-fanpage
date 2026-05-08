@@ -150,8 +150,20 @@ describe('Engine: intent router cơ bản', () => {
   it('GREETING nhận câu chào có "ạ"', () => {
     expect(engine.buildDeterministicReply('chào shop ạ', 'u1a')).toContain('xem qua mẫu');
   });
+  it('GREETING nhận "Shop ơi"', () => {
+    expect(engine.buildDeterministicReply('Shop ơi', 'u1b')).toContain('xem qua mẫu');
+  });
+  it('"mẫu đâu shop" gửi lại menu bằng rule-based', () => {
+    expect(engine.buildDeterministicReply('mẫu đâu shop', 'u_menu_missing')).toContain('xem qua sản phẩm');
+  });
   it('PRODUCT_LIST khi user gõ mã', () => {
     expect(engine.buildDeterministicReply('m8 còn không', 'u2')).toContain('MÃ8');
+  });
+  it('nhiều mã viết tắt "mã 2, 8 và 10" trả đủ các mã', () => {
+    const reply = engine.buildDeterministicReply('Cho mình xem mã 2, 8 và 10 đi', 'u_multi_codes');
+    expect(reply).toContain('MÃ2');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('MÃ10');
   });
   it('PRODUCT_LIST một mã trả lời dạng tư vấn', () => {
     const reply = engine.buildDeterministicReply('mã 7', 'u_ma7');

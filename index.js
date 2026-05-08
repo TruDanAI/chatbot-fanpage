@@ -122,6 +122,7 @@ const TELEGRAM_ALERT_COOLDOWN_MS = Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS
 const FALLBACK_ALERT_THRESHOLD = Number(process.env.FALLBACK_ALERT_THRESHOLD || 2);
 const FALLBACK_HANDOFF_THRESHOLD = Number(process.env.FALLBACK_HANDOFF_THRESHOLD || 3);
 const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 30 * 60 * 1000);
+const GEMINI_HISTORY_LIMIT = 20;
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL ||
   (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
@@ -379,21 +380,97 @@ function sanitizeGeminiReply(text) {
   return s.replace(/\s{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1').trim();
 }
 
+function trimGeminiHistory(history) {
+  const items = Array.isArray(history) ? history : [];
+  return items.slice(-GEMINI_HISTORY_LIMIT);
+}
+
+function addGeminiHistoryMessage(history, role, text) {
+  const content = String(text || '').trim();
+  if (!content) return history;
+  history.push({
+    role,
+    parts: [{ text: truncateText(content, 1200) }]
+  });
+  return trimGeminiHistory(history);
+}
+
+function recordConversationTurn(userId, userText, botReply) {
+  if (!userId) return;
+  let history = storage.getHistory(userId);
+  history = addGeminiHistoryMessage(history, 'user', userText);
+  history = addGeminiHistoryMessage(history, 'model', botReply);
+  storage.setHistory(userId, history);
+}
+
+function productSummary(product) {
+  if (!product) return '';
+  return [
+    `${product.code} giá ${product.price}`,
+    product.description || '',
+    product.size ? `size ${product.size}` : '',
+    product.weight ? `nặng ${product.weight}` : '',
+    product.gift ? `tặng ${product.gift}` : '',
+    product.preorder ? `hàng đặt ${shopConfig.policies?.preorderDays || ''}`.trim() : ''
+  ].filter(Boolean).join(', ');
+}
+
+function formatGeminiCartItems(draft = {}) {
+  const items = Array.isArray(draft.cartItems) ? draft.cartItems : [];
+  if (!items.length && draft.productCode) return draft.productCode;
+  return items
+    .map(item => {
+      const code = String(item.code || item.name || '').trim();
+      const qty = Number(item.qty || 1) || 1;
+      const variant = String(item.variant || '').trim();
+      const display = String(item.display || '').trim();
+      return display || `${qty} x ${code}${variant ? ` ${variant}` : ''}`;
+    })
+    .filter(Boolean)
+    .join(', ');
+}
+
+function buildGeminiRuntimeContext(userId) {
+  const draft = storage.getOrderDraft(userId);
+  const lastCode = storage.getLastProductCode(userId) || draft.productCode || '';
+  const lastProduct = products.find(p => String(p.code || '').toUpperCase() === String(lastCode || '').toUpperCase());
+  const sessionState = deriveSessionState(userId, draft);
+  const cartText = formatGeminiCartItems(draft);
+  const leadFields = [
+    draft.name ? `tên: ${draft.name}` : '',
+    draft.phone ? `SĐT: ${draft.phone}` : '',
+    draft.address ? `địa chỉ: ${draft.address}` : ''
+  ].filter(Boolean).join(', ');
+
+  const lines = [
+    'Tóm tắt hội thoại để hiểu ngữ cảnh, không nhắc lại phần này với khách:',
+    `- Trạng thái: ${sessionState || 'IDLE'}`,
+    lastProduct ? `- Mã khách vừa xem/quan tâm: ${productSummary(lastProduct)}` : '',
+    cartText ? `- Đơn/giỏ nháp: ${cartText}` : '',
+    leadFields ? `- Thông tin khách đã gửi: ${leadFields}` : '',
+    '- Nếu khách muốn chốt, đổi, hủy, gửi thông tin giao hàng hoặc hỏi giá/mã cụ thể mà rule chưa xử lý, trả lời ngắn và hướng khách gửi đủ tên + SĐT + địa chỉ; không tự nói đã lên đơn.'
+  ].filter(Boolean);
+
+  return lines.length > 2 ? lines.join('\n') : '';
+}
+
+function buildGeminiRequestHistory(userId, userMessage) {
+  const storedHistory = trimGeminiHistory(storage.getHistory(userId)).slice(-(GEMINI_HISTORY_LIMIT - 1));
+  const context = buildGeminiRuntimeContext(userId);
+  const currentText = context
+    ? `${context}\n\nTin nhắn khách cần trả lời:\n${userMessage}`
+    : String(userMessage || '');
+
+  return addGeminiHistoryMessage([...storedHistory], 'user', currentText);
+}
+
 async function callGemini(userId, userMessage) {
-  const history = storage.getHistory(userId);
-  history.push({ role: 'user', parts: [{ text: userMessage }] });
-
-  // Giữ tối đa 20 tin nhắn để tiết kiệm token
-  if (history.length > 20) history.splice(0, history.length - 20);
-
+  const history = buildGeminiRequestHistory(userId, userMessage);
   const res = await generateGeminiWithRetry(history);
 
   const raw = extractGeminiText(res)
     || 'Xin lỗi anh/chị, em chưa hiểu ý. Anh/chị có thể nói rõ hơn không ạ? 😊';
   const botReply = sanitizeGeminiReply(raw) || raw;
-  history.push({ role: 'model', parts: [{ text: botReply }] });
-  if (history.length > 20) history.splice(0, history.length - 20);
-  storage.setHistory(userId, history);
 
   return botReply;
 }
@@ -574,7 +651,7 @@ function getImageFilenameForProduct(product) {
 
 function isGreetingText(text) {
   const t = normalizeText(text).trim();
-  return /^(?:(?:em|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
+  return /^(?:(?:em|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop\s*oi|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
 }
 
 function isHotProductsText(text) {
@@ -1698,6 +1775,7 @@ async function handleEvent(event, baseUrlOverride = '') {
     } else {
       await sendMessage(senderId, reply);
     }
+    recordConversationTurn(senderId, userText, reply);
     console.log(`✉️  Đã gửi tin tới ${senderId}`);
   } catch (err) {
     const geminiInfo = getGeminiErrorInfo(err);
@@ -1718,6 +1796,7 @@ async function handleEvent(event, baseUrlOverride = '') {
           status: geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus || ''
         });
         await sendMessage(senderId, fallback);
+        recordConversationTurn(senderId, userText, fallback);
         console.log(`🛟 Fallback do Gemini lỗi (${geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus}): ${fallback.slice(0, 120).replace(/\n/g, ' ')}`);
         await trackFallbackAttention(senderId, userText, fallback);
       } catch {}
@@ -1833,5 +1912,8 @@ if (require.main === module) {
 module.exports = {
   buildDeterministicReply,
   buildFallbackReply,
-  buildLeadDetails
+  buildLeadDetails,
+  buildGeminiRuntimeContext,
+  buildGeminiRequestHistory,
+  recordConversationTurn
 };

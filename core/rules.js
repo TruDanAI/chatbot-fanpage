@@ -148,6 +148,7 @@ function wantsHuman(text) {
 function wantsMenuImages(text) {
   const t = preprocess(text);
   return /(xem|gui|cho|coi|tham\s*khao).*(menu|bang gia|danh muc|danh sach|catalog|san pham|cac san pham|hang)/.test(t)
+    || /\b(?:mau|san\s*pham|menu|bang\s*gia)\s*(?:dau|o\s*dau)\b/.test(t)
     || /\bmenu\b/.test(t)
     || /\bcatalog\b/.test(t)
     || /\bdanh\s*sach\s*san\s*pham\b/.test(t)
@@ -262,7 +263,7 @@ function wantsAgePolicy(text) {
 
 function isSimpleGreeting(text) {
   const t = preprocess(text).trim();
-  return /^(?:(?:em|anh|chi|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|chi|anh|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
+  return /^(?:(?:em|anh|chi|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop\s*oi|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|chi|anh|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
 }
 
 function isSimpleConfirmation(text) {

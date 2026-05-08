@@ -83,12 +83,29 @@ function levenshtein(a, b) {
 function extractRequestedProductCodes(text, knownCodes = []) {
   const t = preprocess(text);
   const codes = new Set();
+  const addCode = numberText => {
+    const number = Number(numberText);
+    if (Number.isFinite(number) && number > 0) codes.add(`MÃ${number}`);
+  };
 
-  // Pass 1: regex tường minh.
+  // Pass 1a: danh sách mã có tiền tố một lần: "mã 2, 8 và 10".
+  // Không nhận số lượng/phụ kiện ngay sau đó, ví dụ "mã 8 và 1 chai gel".
+  const productPrefix = '(?:ma|mau|max|sp|san\\s*pham|m)';
+  const listSeparator = '(?:[,;/+&]|\\bva\\b|\\bvoi\\b|\\bvs\\b|\\band\\b|\\bcung\\s*voi\\b)';
+  const codeNumber = '0*(\\d{1,2})(?!\\d)(?!\\s*(?:k|nghin|trieu|tr|chai|lo|tuyp|gel|cm|x))';
+  const listRe = new RegExp(`\\b${productPrefix}\\s*${codeNumber}(?:\\s*${listSeparator}\\s*(?:${productPrefix}\\s*)?${codeNumber})+`, 'g');
+  let listMatch;
+  while ((listMatch = listRe.exec(t)) !== null) {
+    for (const numberMatch of listMatch[0].matchAll(/\d{1,2}/g)) {
+      addCode(numberMatch[0]);
+    }
+  }
+
+  // Pass 1b: regex tường minh cho từng mã riêng lẻ.
   const re = /\b(?:ma|mau|max|sp|san\s*pham|m)\s*0*(\d{1,2})\b/g;
   let m;
   while ((m = re.exec(t)) !== null) {
-    codes.add(`MÃ${Number(m[1])}`);
+    addCode(m[1]);
   }
 
   // Pass 2: fuzzy với danh sách mã có sẵn (chỉ chạy khi cần thiết).
