@@ -16,7 +16,7 @@ module.exports = {
     },
     {
       name: 'GEL_KEYWORD',
-      match: ctx => ctx.mentionsKeyword('gel'),
+      match: ctx => ctx.mentionsKeyword('gel') && !detectors.isOrderIntent(ctx.text),
       handle: ctx => ctx.render('gelInfo')
     },
     {

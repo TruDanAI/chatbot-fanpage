@@ -7,6 +7,7 @@ const { parse } = require('csv-parse/sync');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'chat-state.json');
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.csv');
+const EVENTS_FILE = path.join(DATA_DIR, 'events.jsonl');
 const MIDS_FILE = path.join(DATA_DIR, 'processed-mids.json');
 const CUSTOMER_HEADERS = ['at', 'type', 'senderId', 'productCode', 'phone', 'name', 'address', 'text', 'history'];
 
@@ -30,6 +31,7 @@ if (!state.context) state.context = {};
 const mids = new Set(loadJSON(MIDS_FILE, []));
 const MID_LIMIT = 5000;
 let customerWriteQueue = Promise.resolve();
+let eventWriteQueue = Promise.resolve();
 let stateWriteQueue = Promise.resolve();
 
 let saveTimer = null;
@@ -111,6 +113,26 @@ function appendCustomerQueued(customer) {
   return customerWriteQueue;
 }
 
+function appendEventQueued(event) {
+  const payload = {
+    at: event.at || new Date().toISOString(),
+    type: String(event.type || 'event'),
+    senderId: String(event.senderId || ''),
+    sessionState: String(event.sessionState || ''),
+    productCode: String(event.productCode || ''),
+    text: event.text == null ? '' : String(event.text),
+    meta: event.meta || {}
+  };
+
+  eventWriteQueue = eventWriteQueue
+    .then(() => fs.promises.appendFile(EVENTS_FILE, JSON.stringify(payload) + '\n', 'utf8'))
+    .catch(err => {
+      console.error('Lỗi ghi events.jsonl:', err.message);
+    });
+
+  return eventWriteQueue;
+}
+
 module.exports = {
   getDataDir() {
     return DATA_DIR;
@@ -118,6 +140,10 @@ module.exports = {
 
   getCustomersFile() {
     return CUSTOMERS_FILE;
+  },
+
+  getEventsFile() {
+    return EVENTS_FILE;
   },
 
   getHistory(userId) {
@@ -156,6 +182,17 @@ module.exports = {
     scheduleSave();
   },
 
+  getLastUserAt(userId) {
+    return state.context[userId]?.lastUserAt || '';
+  },
+
+  setLastUserAt(userId, at = new Date().toISOString()) {
+    if (!userId) return;
+    if (!state.context[userId]) state.context[userId] = {};
+    state.context[userId].lastUserAt = at;
+    scheduleSave();
+  },
+
   getOrderDraft(userId) {
     return state.context[userId]?.orderDraft
       ? { ...state.context[userId].orderDraft }
@@ -171,6 +208,17 @@ module.exports = {
     for (const key of ['productCode', 'phone', 'name', 'address']) {
       const value = String(details[key] || '').trim();
       if (value) next[key] = value;
+    }
+
+    if (Array.isArray(details.cartItems) && details.cartItems.length) {
+      next.cartItems = details.cartItems
+        .map(item => ({
+          code: String(item.code || '').trim(),
+          name: String(item.name || '').trim(),
+          qty: Number(item.qty || 1) || 1,
+          variant: String(item.variant || '').trim()
+        }))
+        .filter(item => item.code || item.name);
     }
 
     if (Object.keys(next).length) {
@@ -203,6 +251,24 @@ module.exports = {
     scheduleSave();
   },
 
+  resetSessionAfterTimeout(userId) {
+    if (!userId || !state.context[userId]) return {};
+    const current = state.context[userId];
+    const abandoned = current.orderDraft ? { ...current.orderDraft } : {};
+    if (Object.keys(abandoned).length) {
+      current.abandonedOrderDraft = {
+        ...abandoned,
+        abandonedAt: new Date().toISOString()
+      };
+    }
+    delete current.orderDraft;
+    delete current.lastProductCode;
+    current.sessionState = 'IDLE';
+    current.timedOutAt = new Date().toISOString();
+    scheduleSave();
+    return abandoned;
+  },
+
   seenMid(mid) {
     return mids.has(mid);
   },
@@ -229,5 +295,9 @@ module.exports = {
       text: customer.text || '',
       history: customer.history || ''
     });
+  },
+
+  appendEvent(event) {
+    return appendEventQueued(event);
   }
 };

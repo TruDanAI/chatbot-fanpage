@@ -22,6 +22,7 @@ const TEMPLATES = {
   orderInfoRequest: 'Dạ chốt đơn{{productSuffix}} mình gửi em {{orderInfoFields}} nhé.',
   orderIntentNoProduct: 'Dạ mình muốn chốt mã nào thì nhắn em mã sản phẩm nhé.',
   orderIntentWithProduct: 'Dạ {{productCode}} giá {{price}} ạ. Mình chốt thì gửi em {{orderInfoFields}} nhé. Bên em nhận hàng thanh toán, che tên sản phẩm trước khi gửi.',
+  checkoutPendingInfo: 'Dạ em chốt giúp mình:\n{{cartLines}}\n\nBên em freeship và che tên sản phẩm khi gửi nha.\n\nMình gửi em:\n- Tên người nhận\n- SĐT\n- Địa chỉ nhận hàng\n\nđể em lên đơn cho mình nhé.',
 
   // ===== Sản phẩm / giá / so sánh =====
   productNotFound: 'Dạ hiện bên em chưa có {{codes}} ạ. Mình xem mã khác trong menu giúp em nhé.',

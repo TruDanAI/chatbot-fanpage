@@ -84,6 +84,10 @@ function displayProductCode(code) {
   return match ? `mã ${match[1]}` : String(code || '');
 }
 
+function displayCartProductCode(code) {
+  return String(code || '').toUpperCase();
+}
+
 // ===== Detector functions (đều preprocess hoá ở bên trong) =====
 function asksWhyRepeatedInfo(text) {
   const t = preprocess(text);
@@ -152,6 +156,32 @@ function wantsKeywordImage(text, keyword, config = {}) {
 function isOrderIntent(text) {
   const t = preprocess(text);
   return /\b(?:chot|lay|dat|mua|giu|len\s*don)\b/.test(t);
+}
+
+function extractGelCartItem(text) {
+  const t = preprocess(text);
+  if (!/\b(?:gel|boi\s*tron)\b/.test(t)) return null;
+
+  const beforeMatch = t.match(/(\d{1,2})\s*(?:chai|lo|tuyp)?\s*(?:gel|boi\s*tron)\b/);
+  const afterMatch = t.match(/\b(?:gel|boi\s*tron)\b\s*(\d{1,2})\s*(?:chai|lo|tuyp)?/);
+  const qty = Number(beforeMatch?.[1] || afterMatch?.[1] || 1);
+  const flavorMatch = t.match(/\bgel\s+(dao|dau|bac\s*ha|khong\s*mau|truyen\s*thong)\b/);
+  const flavorLabels = {
+    dao: 'đào',
+    dau: 'dâu',
+    'bac ha': 'bạc hà',
+    'khong mau': 'không màu',
+    'truyen thong': 'truyền thống'
+  };
+  const flavor = flavorMatch ? flavorLabels[flavorMatch[1].replace(/\s+/g, ' ')] || flavorMatch[1] : '';
+
+  return {
+    code: 'GEL',
+    name: 'gel',
+    qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+    variant: flavor,
+    display: `${Number.isFinite(qty) && qty > 0 ? qty : 1} gel${flavor ? ` ${flavor}` : ''} 200ml`
+  };
 }
 
 function isPriceClarification(text) {
@@ -428,6 +458,7 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     const missing = missingOrderFields(draft);
     if (!missing.length) return STATES.READY_TO_CONFIRM;
     if (draft.name || draft.phone || draft.address) return STATES.COLLECTING_INFO;
+    if (Array.isArray(draft.cartItems) && draft.cartItems.length) return STATES.COLLECTING_INFO;
     if (draft.productCode || (contextStore.getLastProductCode && contextStore.getLastProductCode(userId))) {
       return STATES.PRODUCT_SELECTED;
     }
@@ -451,6 +482,73 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       name: order.name || '',
       phone: order.phone || '',
       address: order.address || ''
+    });
+  }
+
+  function buildCartItems(ctx) {
+    const existing = Array.isArray(ctx.orderDraft.cartItems) ? ctx.orderDraft.cartItems : [];
+    const byKey = new Map();
+
+    function addItem(item) {
+      if (!item) return;
+      const key = [item.code || item.name, item.variant || ''].join('|').toUpperCase();
+      if (!key.trim()) return;
+      byKey.set(key, {
+        code: item.code || '',
+        name: item.name || '',
+        qty: Number(item.qty || 1) || 1,
+        variant: item.variant || '',
+        display: item.display || ''
+      });
+    }
+
+    existing.forEach(addItem);
+    if (ctx.selectedProduct) {
+      addItem({
+        code: ctx.selectedProduct.code,
+        name: ctx.selectedProduct.code,
+        qty: 1,
+        display: displayCartProductCode(ctx.selectedProduct.code)
+      });
+    }
+    addItem(extractGelCartItem(ctx.text));
+
+    return [...byKey.values()];
+  }
+
+  function formatCartLines(items, product) {
+    const cartItems = items && items.length
+      ? items
+      : product
+        ? [{ code: product.code, qty: 1, display: displayCartProductCode(product.code) }]
+        : [];
+
+    return cartItems
+      .map(item => {
+        if (item.display) return `- ${item.display}`;
+        if (String(item.code || '').toUpperCase() === 'GEL') {
+          return `- ${item.qty || 1} gel${item.variant ? ` ${item.variant}` : ''} 200ml`;
+        }
+        return `- ${displayCartProductCode(item.code || item.name)}`;
+      })
+      .join('\n');
+  }
+
+  function persistCheckoutDraft(ctx, cartItems) {
+    if (contextStore.mergeOrderDraft) {
+      contextStore.mergeOrderDraft(ctx.userId, {
+        productCode: ctx.selectedProduct?.code || ctx.productAwareOrder.productCode || '',
+        cartItems
+      });
+    }
+    setStoredSessionState(ctx.userId, STATES.COLLECTING_INFO);
+  }
+
+  function checkoutPendingReply(ctx) {
+    const cartItems = buildCartItems(ctx);
+    persistCheckoutDraft(ctx, cartItems);
+    return render('checkoutPendingInfo', {
+      cartLines: formatCartLines(cartItems, ctx.selectedProduct)
     });
   }
 
@@ -662,6 +760,18 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
         : readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct)
     },
     {
+      name: 'CONTEXT_CONFIRMATION',
+      match: ctx => (
+        (isSimpleConfirmation(ctx.text) || isNonCommittalReaction(ctx.text))
+        && ctx.sessionState !== STATES.IDLE
+        && ctx.missingFields.length > 0
+      ),
+      handle: ctx => {
+        if (ctx.selectedProduct) return checkoutPendingReply(ctx);
+        return render('infoMissingNoProduct');
+      }
+    },
+    {
       name: 'GREETING',
       match: ctx => isSimpleGreeting(ctx.text),
       handle: () => render('greeting', { shopName: config.shopName })
@@ -755,12 +865,7 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       match: ctx => isOrderIntent(ctx.text),
       handle: ctx => {
         if (!ctx.selectedProduct) return render('orderIntentNoProduct');
-        return render('orderIntentWithProduct', {
-          productCode: ctx.selectedProduct.code,
-          price: explainPrice(ctx.selectedProduct.price),
-          orderInfoFields: config.policies.orderInfoFields,
-          privacy: config.policies.privacy
-        });
+        return checkoutPendingReply(ctx);
       }
     },
     {

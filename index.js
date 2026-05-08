@@ -79,6 +79,7 @@ const rules = createRuleEngine({
     getLastProductCode: userId => storage.getLastProductCode(userId),
     setLastProductCode: (userId, code) => storage.setLastProductCode(userId, code),
     getOrderDraft: userId => storage.getOrderDraft(userId),
+    mergeOrderDraft: (userId, details) => storage.mergeOrderDraft(userId, details),
     // State machine: rules.js suy ra IDLE/PRODUCT_SELECTED/COLLECTING_INFO/READY_TO_CONFIRM
     // từ orderDraft + lastProductCode, chỉ có CONFIRMED là cần lưu tường minh.
     getSessionState: userId => storage.getSessionState(userId),
@@ -99,6 +100,7 @@ const {
   wantsMenuImages,
   wantsProductImage,
   render,
+  deriveSessionState,
   STATES
 } = rules;
 
@@ -111,6 +113,10 @@ const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const USE_GEMINI      = String(process.env.USE_GEMINI || 'true').toLowerCase() !== 'false';
 const PORT            = process.env.PORT || 3000;
 const ADMIN_EXPORT_TOKEN = process.env.ADMIN_EXPORT_TOKEN || '';
+const TELEGRAM_ALERT_COOLDOWN_MS = Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS || 10 * 60 * 1000);
+const FALLBACK_ALERT_THRESHOLD = Number(process.env.FALLBACK_ALERT_THRESHOLD || 2);
+const FALLBACK_HANDOFF_THRESHOLD = Number(process.env.FALLBACK_HANDOFF_THRESHOLD || 3);
+const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 30 * 60 * 1000);
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL ||
   (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
@@ -135,6 +141,8 @@ const app = express();
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf; }
 }));
+
+const attentionStateByUser = new Map();
 
 // ========== IMAGE SERVING ==========
 const ALLOWED_IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -409,7 +417,7 @@ function verifySignature(req) {
 }
 
 // ========== HUMAN HANDOFF ==========
-const HANDOFF_MS = 30 * 60 * 1000; // 30 phút
+const HANDOFF_MS = Number(process.env.HANDOFF_MS || 30 * 60 * 1000); // 30 phút
 
 function isBotEcho(event) {
   const message = event.message || {};
@@ -810,6 +818,14 @@ function buildConfirmedSheetLead(senderId, opts = {}) {
   const productInterest = product
     ? (desc ? `${product.code} — ${desc}` : String(product.code || ''))
     : codeRaw;
+  const cartItems = Array.isArray(draft.cartItems) ? draft.cartItems : [];
+  const cartText = cartItems.length
+    ? cartItems.map(item => {
+        const label = item.display
+          || [item.qty && item.qty !== 1 ? item.qty : '', item.name || item.code, item.variant].filter(Boolean).join(' ');
+        return label.trim();
+      }).filter(Boolean).join(' + ')
+    : '';
 
   return {
     dedupeKey: buildSheetDedupeKey(senderId, messageId, userText),
@@ -818,7 +834,7 @@ function buildConfirmedSheetLead(senderId, opts = {}) {
     phone: String(draft.phone || '').trim(),
     address: String(draft.address || '').trim(),
     productCode: codeRaw,
-    productInterest,
+    productInterest: cartText ? `${productInterest}${productInterest ? ' + ' : ''}${cartText}` : productInterest,
     confirmedAt: new Date().toISOString()
   };
 }
@@ -848,22 +864,172 @@ function buildLeadDetails(userText, senderId) {
   };
 }
 
+function truncateText(text, max = 700) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  return s.length > max ? `${s.slice(0, max - 3)}...` : s;
+}
+
+function wantsUrgentHumanAttention(text) {
+  const t = normalizeText(text);
+  return /(?:khong\s*hieu|tra\s*loi\s*gi|noi\s*gi|bot|tu\s*van\s*te|hoi\s*mai|lau\s*the|buc\s*minh|kho\s*chiu|lua\s*dao|chan\s*the|mat\s*thoi\s*gian)/.test(t);
+}
+
+function trackEvent(senderId, type, text = '', meta = {}) {
+  if (!senderId || !type) return;
+  const draft = storage.getOrderDraft(senderId);
+  storage.appendEvent({
+    type,
+    senderId,
+    text,
+    sessionState: deriveSessionState(senderId),
+    productCode: draft.productCode || storage.getLastProductCode(senderId) || '',
+    meta
+  });
+}
+
+function maybeResetTimedOutSession(senderId, userText) {
+  const previous = storage.getLastUserAt(senderId);
+  const now = Date.now();
+  storage.setLastUserAt(senderId, new Date(now).toISOString());
+
+  if (!previous || !SESSION_TIMEOUT_MS) return false;
+  const previousMs = Date.parse(previous);
+  if (!Number.isFinite(previousMs) || now - previousMs <= SESSION_TIMEOUT_MS) return false;
+
+  const abandoned = storage.resetSessionAfterTimeout(senderId);
+  trackEvent(senderId, 'session_timeout', userText, {
+    idleMs: now - previousMs,
+    abandonedProductCode: abandoned.productCode || '',
+    hadCart: Array.isArray(abandoned.cartItems) && abandoned.cartItems.length > 0
+  });
+  return true;
+}
+
+function formatOrderDraftForAlert(senderId) {
+  const draft = storage.getOrderDraft(senderId);
+  const cartItems = Array.isArray(draft.cartItems) ? draft.cartItems : [];
+  const cartText = cartItems.length
+    ? cartItems.map(item => {
+        const label = item.display
+          || [item.qty && item.qty !== 1 ? item.qty : '', item.name || item.code, item.variant].filter(Boolean).join(' ');
+        return label.trim();
+      }).filter(Boolean).join(' + ')
+    : '';
+
+  return [
+    `Stage: ${storage.getSessionState(senderId) || 'AUTO'}`,
+    `Last product: ${storage.getLastProductCode(senderId) || 'Không có'}`,
+    `Draft product: ${draft.productCode || 'Không có'}`,
+    `Cart: ${cartText || 'Không có'}`,
+    `Tên: ${draft.name || 'Chưa có'}`,
+    `SĐT: ${draft.phone || 'Chưa có'}`,
+    `Địa chỉ: ${draft.address || 'Chưa có'}`
+  ].join('\n');
+}
+
+function shouldThrottleOperationalAlert(senderId, reason) {
+  const key = `${senderId}:${reason}`;
+  const now = Date.now();
+  const state = attentionStateByUser.get(key) || {};
+  if (state.lastAlertAt && now - state.lastAlertAt < TELEGRAM_ALERT_COOLDOWN_MS) return true;
+  attentionStateByUser.set(key, { ...state, lastAlertAt: now });
+  return false;
+}
+
+async function sendTelegramMessage(text) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!botToken || !chatId) return false;
+
+  await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    chat_id: chatId,
+    text: truncateText(text, 3900)
+  });
+  return true;
+}
+
+async function sendTelegramOperationalAlert({ senderId, reason, userText = '', reply = '', error = '', force = false } = {}) {
+  try {
+    if (!senderId) return;
+    if (!force && shouldThrottleOperationalAlert(senderId, reason || 'operational')) return;
+
+    const history = storage.getHistory(senderId)
+      .slice(-6)
+      .map(item => {
+        const role = item.role === 'model' ? 'Bot/Gemini' : 'Khách';
+        const text = item.parts?.map(part => part.text).filter(Boolean).join(' ') || '';
+        return `${role}: ${truncateText(text, 180)}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+
+    const text = [
+      '🚨 CẦN NHÂN VIÊN HỖ TRỢ',
+      '',
+      `Lý do: ${reason || 'Không rõ'}`,
+      `User: ${senderId}`,
+      '',
+      formatOrderDraftForAlert(senderId),
+      '',
+      `Tin mới nhất: ${truncateText(userText, 500) || 'Không có'}`,
+      reply ? `Bot vừa trả: ${truncateText(reply, 500)}` : '',
+      error ? `Lỗi: ${truncateText(error, 700)}` : '',
+      history ? `\nLịch sử Gemini gần nhất:\n${history}` : ''
+    ].filter(Boolean).join('\n');
+
+    await sendTelegramMessage(text);
+  } catch (err) {
+    console.error('❌ Lỗi gửi Telegram operational alert:', err.response?.data || err.message);
+  }
+}
+
+function resetFallbackAttention(senderId) {
+  if (!senderId) return;
+  const state = attentionStateByUser.get(senderId);
+  if (!state) return;
+  attentionStateByUser.set(senderId, { ...state, fallbackCount: 0 });
+}
+
+async function trackFallbackAttention(senderId, userText, reply) {
+  if (!senderId) return;
+  const state = attentionStateByUser.get(senderId) || {};
+  const fallbackCount = Number(state.fallbackCount || 0) + 1;
+  attentionStateByUser.set(senderId, { ...state, fallbackCount });
+
+  if (fallbackCount >= FALLBACK_ALERT_THRESHOLD) {
+    await sendTelegramOperationalAlert({
+      senderId,
+      reason: `Ngoài rule-base/fallback liên tiếp ${fallbackCount} lần`,
+      userText,
+      reply
+    });
+  }
+
+  if (fallbackCount >= FALLBACK_HANDOFF_THRESHOLD) {
+    storage.setHandoff(senderId, Date.now() + HANDOFF_MS);
+    trackEvent(senderId, 'handoff_started', userText, {
+      reason: 'fallback_threshold',
+      fallbackCount
+    });
+    await sendTelegramOperationalAlert({
+      senderId,
+      reason: `Tự bật handoff vì fallback ${fallbackCount} lần liên tiếp`,
+      userText,
+      reply,
+      force: true
+    });
+  }
+}
+
 async function sendTelegramAlert(leadData) {
   try {
-    const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
-    if (!botToken || !chatId) return;
-
     const text = `🚨 CÓ ĐƠN HÀNG MỚI!
 👤 Tên: ${leadData.name || 'Không có'}
 📞 SĐT: ${leadData.phone || 'Không có'}
 🏠 Địa chỉ: ${leadData.address || 'Không có'}
 📦 Sản phẩm: ${leadData.productCode || 'Không có'}`;
 
-    await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      chat_id: chatId,
-      text: text
-    });
+    await sendTelegramMessage(text);
   } catch (err) {
     console.error('❌ Lỗi gửi Telegram alert:', err.response?.data || err.message);
   }
@@ -938,16 +1104,47 @@ async function handleEvent(event, baseUrlOverride = '') {
   if (!userText) return;
 
   console.log(`📩 [${senderId}]: ${userText}`);
+  trackEvent(senderId, 'message_received', userText, { messageId: mid || '' });
+  maybeResetTimedOutSession(senderId, userText);
 
   // Khách yêu cầu gặp nhân viên → tạm dừng bot, ghi log
   if (wantsHuman(userText)) {
     storage.setHandoff(senderId, Date.now() + HANDOFF_MS);
+    trackEvent(senderId, 'handoff_started', userText, { reason: 'wants_human' });
     storage.appendCustomer({
       type: 'handoff_request',
       senderId,
       phone: '',
       text: userText,
       at: new Date().toISOString()
+    });
+    void sendTelegramOperationalAlert({
+      senderId,
+      reason: 'Khách yêu cầu gặp nhân viên',
+      userText,
+      force: true
+    });
+    try {
+      await sendMessage(senderId, render('humanHandoff'));
+    } catch {}
+    return;
+  }
+
+  if (wantsUrgentHumanAttention(userText)) {
+    storage.setHandoff(senderId, Date.now() + HANDOFF_MS);
+    trackEvent(senderId, 'handoff_started', userText, { reason: 'urgent_attention' });
+    storage.appendCustomer({
+      type: 'handoff_attention',
+      senderId,
+      phone: '',
+      text: userText,
+      at: new Date().toISOString()
+    });
+    void sendTelegramOperationalAlert({
+      senderId,
+      reason: 'Khách có dấu hiệu bực/ngoài tầm xử lý',
+      userText,
+      force: true
     });
     try {
       await sendMessage(senderId, render('humanHandoff'));
@@ -981,6 +1178,7 @@ async function handleEvent(event, baseUrlOverride = '') {
   }
 
   if (looksLikePhone(userText)) {
+    trackEvent(senderId, 'lead_info_received', userText, { fields: ['phone'] });
     storage.appendCustomer({
       type: 'lead',
       senderId,
@@ -991,6 +1189,9 @@ async function handleEvent(event, baseUrlOverride = '') {
       at: new Date().toISOString()
     });
   } else if ((leadDetails.name || leadDetails.address) && currentLead.phone && currentLead.name && currentLead.address) {
+    trackEvent(senderId, 'lead_info_received', userText, {
+      fields: ['name', 'address'].filter(field => Boolean(leadDetails[field]))
+    });
     storage.appendCustomer({
       type: 'lead_update',
       senderId,
@@ -1008,6 +1209,10 @@ async function handleEvent(event, baseUrlOverride = '') {
     if (justConfirmed) {
       console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (${senderId}).`);
       const confirmedLead = buildConfirmedSheetLead(senderId, { messageId: mid || '', userText });
+      trackEvent(senderId, 'order_confirmed', userText, {
+        productCode: confirmedLead.productCode || '',
+        productInterest: confirmedLead.productInterest || ''
+      });
       void pushLeadToSheet(confirmedLead);
       sendTelegramAlert(confirmedLead);
     }
@@ -1050,18 +1255,38 @@ async function handleEvent(event, baseUrlOverride = '') {
       }
     })();
 
+    const stateBeforeReply = deriveSessionState(senderId);
     let reply = buildDeterministicReply(userText, senderId);
-    if (reply) {
+    const deterministicMatched = Boolean(reply);
+    if (deterministicMatched) {
+      resetFallbackAttention(senderId);
+      trackEvent(senderId, 'deterministic_reply', userText, { stateBefore: stateBeforeReply });
       console.log('⚡ Trả lời rule-based, không gọi Gemini');
     } else if (!USE_GEMINI) {
       reply = buildFallbackReply(userText, senderId);
+      trackEvent(senderId, 'fallback_used', userText, { reason: 'gemini_disabled' });
       console.log('🧩 USE_GEMINI=false, dùng fallback rule-based');
     } else {
       reply = await callGemini(senderId, userText);
+      trackEvent(senderId, 'gemini_reply', userText, { stateBefore: stateBeforeReply });
     }
     if (isProbablyIncompleteReply(reply, userText)) {
       console.warn(`⚠️  Gemini trả lời có vẻ bị cụt, dùng fallback. Reply gốc: ${reply.replace(/\n/g, ' ')}`);
       reply = buildFallbackReply(userText, senderId);
+      trackEvent(senderId, 'fallback_used', userText, { reason: 'incomplete_reply' });
+      await sendTelegramOperationalAlert({
+        senderId,
+        reason: 'Gemini trả lời có vẻ bị cụt',
+        userText,
+        reply
+      });
+    }
+    if (!deterministicMatched) {
+      await trackFallbackAttention(senderId, userText, reply);
+    }
+    const stateAfterReply = deriveSessionState(senderId);
+    if (stateBeforeReply !== STATES.COLLECTING_INFO && stateAfterReply === STATES.COLLECTING_INFO) {
+      trackEvent(senderId, 'checkout_started', userText, { stateBefore: stateBeforeReply });
     }
     console.log(`🤖 reply: ${reply.slice(0, 120).replace(/\n/g, ' ')}`);
     await imagePromise; // đợi ảnh xong rồi mới gửi text để text xuất hiện sau ảnh
@@ -1070,12 +1295,24 @@ async function handleEvent(event, baseUrlOverride = '') {
   } catch (err) {
     const geminiInfo = getGeminiErrorInfo(err);
     console.error('❌ Lỗi xử lý tin:', err.response?.data || err.message || geminiInfo);
+    void sendTelegramOperationalAlert({
+      senderId,
+      reason: 'Lỗi xử lý tin nhắn',
+      userText,
+      error: JSON.stringify(err.response?.data || err.message || geminiInfo),
+      force: true
+    });
     if (shouldUseFallbackReply(err)) {
       try {
         await imagePromise;
         const fallback = buildFallbackReply(userText, senderId);
+        trackEvent(senderId, 'fallback_used', userText, {
+          reason: 'gemini_error',
+          status: geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus || ''
+        });
         await sendMessage(senderId, fallback);
         console.log(`🛟 Fallback do Gemini lỗi (${geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus}): ${fallback.slice(0, 120).replace(/\n/g, ' ')}`);
+        await trackFallbackAttention(senderId, userText, fallback);
       } catch {}
       return;
     }
@@ -1119,6 +1356,17 @@ app.get('/admin/customers.csv', (req, res) => {
   res.download(file, 'customers.csv');
 });
 
+app.get('/admin/events.jsonl', (req, res) => {
+  if (!requireAdminToken(req, res)) return;
+
+  const file = storage.getEventsFile();
+  if (!fs.existsSync(file)) {
+    res.status(404).send('Chưa có events.jsonl');
+    return;
+  }
+  res.download(file, 'events.jsonl');
+});
+
 // Debug: xem session/order draft hiện tại của 1 user. Hữu ích khi nhân viên cần tra soát.
 app.get('/admin/state/:userId', (req, res) => {
   if (!requireAdminToken(req, res)) return;
@@ -1126,6 +1374,7 @@ app.get('/admin/state/:userId', (req, res) => {
   res.json({
     userId,
     inHandoff: storage.inHandoff(userId),
+    lastUserAt: storage.getLastUserAt(userId),
     lastProductCode: storage.getLastProductCode(userId),
     orderDraft: storage.getOrderDraft(userId),
     sessionState: storage.getSessionState(userId),

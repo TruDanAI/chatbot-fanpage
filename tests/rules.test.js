@@ -2,9 +2,24 @@ const { describe, it, expect } = require('./harness');
 const path = require('path');
 const { loadProducts } = require('../core/products');
 const shopConfig = require('../shops/adult-shop/config');
+const adultCustomIntents = require('../shops/adult-shop/custom-intents');
 const { createRuleEngine, STATES, detectors } = require('../core/rules');
 
 const products = loadProducts(path.join(__dirname, '..', 'shops', 'adult-shop', 'products.csv'));
+const adultConfig = {
+  ...shopConfig,
+  intents: {
+    ...(shopConfig.intents || {}),
+    prepend: [
+      ...(adultCustomIntents.prepend || []),
+      ...(shopConfig.intents?.prepend || [])
+    ],
+    append: [
+      ...(shopConfig.intents?.append || []),
+      ...(adultCustomIntents.append || [])
+    ]
+  }
+};
 
 // Mock contextStore (đầy đủ giống storage.js)
 function makeStore() {
@@ -132,8 +147,11 @@ describe('Engine: intent router cơ bản', () => {
     expect(reply).toContain('size 12x25cm');
     expect(reply).toContain('tặng kèm 10 gói gel luôn ạ');
   });
-  it('ORDER_INTENT trả về giá', () => {
-    expect(engine.buildDeterministicReply('chốt MÃ8', 'u3')).toContain('680k');
+  it('ORDER_INTENT chuyển sang checkout', () => {
+    const reply = engine.buildDeterministicReply('chốt MÃ8', 'u3');
+    expect(reply).toContain('Dạ em chốt giúp mình');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('Tên người nhận');
   });
   it('"chốt đi" không trigger BEST_SELLER (BUG: hot trong chot)', () => {
     const store = makeStore();
@@ -141,13 +159,13 @@ describe('Engine: intent router cơ bản', () => {
     const eng = createRuleEngine({ products, config: shopConfig, contextStore: store });
     const r = eng.buildDeterministicReply('chốt đi', 'u_chot');
     expect(r).toContain('MÃ10');
-    expect(r).toContain('150k');
+    expect(r).toContain('Tên người nhận');
     expect(r.includes('bán chạy')).toBe(false);
   });
   it('"tôi chốt mã 3" → ORDER_INTENT MÃ3, không BEST_SELLER', () => {
     const reply = engine.buildDeterministicReply('tôi chốt mã 3 nhé', 'u_ct3');
     expect(reply).toContain('MÃ3');
-    expect(reply).toContain('300k');
+    expect(reply).toContain('Tên người nhận');
     expect(reply.includes('bán chạy')).toBe(false);
   });
   it('"loại 150k thế nào" → BUDGET, không PRICE mã last', () => {
@@ -244,6 +262,54 @@ describe('Engine: state machine 5 trạng thái', () => {
     expect(s === STATES.IDLE || s === STATES.PRODUCT_SELECTED).toBeTrue();
     const draft = store.getOrderDraft(u);
     expect(!draft.name && !draft.phone && !draft.address).toBeTrue();
+  });
+});
+
+describe('Engine: checkout context không rơi về gel/fallback', () => {
+  it('chốt MÃ8 kèm gel tạo checkout và lưu cart', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const reply = engine.buildDeterministicReply('chốt cho em mã 8 và 1 chai gel nhé', 'u_checkout_gel');
+
+    expect(reply).toContain('Dạ em chốt giúp mình');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('1 gel 200ml');
+    expect(reply).toContain('Tên người nhận');
+    expect(reply).notToBe(shopConfig.templates.gelInfo);
+    expect(engine.deriveSessionState('u_checkout_gel')).toBe(STATES.COLLECTING_INFO);
+    expect(store.getOrderDraft('u_checkout_gel').cartItems.length).toBe(2);
+  });
+
+  it('lấy gel đào và MÃ8 vẫn vào checkout, không trả lại giá gel', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const reply = engine.buildDeterministicReply('dạ vâng lấy cho loại gel đào và mã 8 nhé', 'u_checkout_gel_dao');
+
+    expect(reply).toContain('Dạ em chốt giúp mình');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('1 gel đào 200ml');
+    expect(reply).notToBe(shopConfig.templates.gelInfo);
+  });
+
+  it('"ok" theo context sản phẩm chuyển sang xin thông tin, không null/Gemini', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    engine.buildDeterministicReply('Tư vấn MÃ8', 'u_ok_context');
+
+    const reply = engine.buildDeterministicReply('ok', 'u_ok_context');
+    expect(reply).toContain('Dạ em chốt giúp mình');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('SĐT');
+  });
+
+  it('"?" theo context checkout nhắc lại bước xin thông tin', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    engine.buildDeterministicReply('chốt mã 8', 'u_question_context');
+
+    const reply = engine.buildDeterministicReply('?', 'u_question_context');
+    expect(reply).toContain('Tên người nhận');
+    expect(reply).toContain('Địa chỉ nhận hàng');
   });
 });
 
