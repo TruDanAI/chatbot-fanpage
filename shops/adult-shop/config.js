@@ -107,6 +107,10 @@ CÁCH TƯ VẤN:
       'Dạ gel bên em 150k/chai 200ml, mua gel tặng thêm 5 gói nhỏ ạ.',
     agePolicy:
       'Dạ sản phẩm bên {{shopName}} chỉ tư vấn và bán cho khách từ đủ {{minAge}} tuổi trở lên ạ. Nếu mình đã đủ {{minAge}} tuổi thì em hỗ trợ tư vấn bình thường nhé.',
+    experienceAdviceDefault:
+      'Dạ tuỳ mã và nhu cầu của mình ạ 😄 Mẫu mềm/ôm thì cảm giác thật hơn, mẫu có rung thì kích thích hơn. Mình thích nhỏ gọn dễ dùng hay có rung mạnh hơn để em gợi ý đúng mã nha?\n\nMình có thể xem nhanh {{options}} ạ.',
+    experienceAdviceSelected:
+      'Dạ {{productCode}} thiên về cảm giác thoải mái theo mô tả sản phẩm ạ. Nếu mình muốn rõ hơn thì em tư vấn thêm theo nhu cầu: nhỏ gọn dễ dùng, mềm/chân thật, hay có rung mạnh hơn nha.',
     budgetTightCustom:
       'Dạ tầm 200k thì gần nhất là MÃ10 giá 150k, nhỏ gọn không rung. Có rung thì mình xem MÃ2 giá 300k ạ.',
     budgetOptions:
@@ -130,5 +134,5 @@ CÁCH TƯ VẤN:
   },
 
   fallbackReply:
-    'Dạ hệ thống đang đông nên em phản hồi chậm chút ạ 🙏 Mình nhắn lại nhu cầu (mã sản phẩm hoặc ngân sách), em sẽ tư vấn ngay.'
+    'Dạ mình nhắn em mã sản phẩm hoặc tầm giá muốn xem, em gợi ý nhanh cho mình nha 😄'
 };

@@ -243,6 +243,25 @@ describe('Engine: intent router cơ bản', () => {
   });
 });
 
+describe('Engine: adult-shop experience advice', () => {
+  it('"Co suong k e" không rơi vào fallback/Gemini', () => {
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: makeStore() });
+    const reply = engine.buildDeterministicReply('Co suong k e', 'u_exp_default');
+
+    expect(reply).toContain('tuỳ mã và nhu cầu');
+    expect(reply).toContain('có rung');
+    expect(reply).toContain('MÃ2');
+  });
+
+  it('hỏi cảm giác theo mã trả lời bám đúng mã đang chọn', () => {
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: makeStore() });
+    const reply = engine.buildDeterministicReply('MÃ8 dùng có sướng không shop', 'u_exp_selected');
+
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('cảm giác thoải mái');
+  });
+});
+
 describe('Engine: state machine 5 trạng thái', () => {
   const store = makeStore();
   const engine = createRuleEngine({ products, config: shopConfig, contextStore: store });
