@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { GoogleGenAI } = require('@google/genai');
 const storage = require('./core/storage');
 const { pushLeadToSheet, startSheetOutboxWorker } = require('./core/sheets-webhook');
 const { loadProducts } = require('./core/products');
@@ -110,8 +111,11 @@ const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN;
 const FB_PAGE_TOKEN   = process.env.FB_PAGE_TOKEN;
 const FB_APP_SECRET   = process.env.FB_APP_SECRET;
 const GEMINI_API_KEY  = process.env.GEMINI_API_KEY;
+const GEMINI_PROVIDER = String(process.env.GEMINI_PROVIDER || 'vertex').trim().toLowerCase();
 const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const USE_GEMINI      = String(process.env.USE_GEMINI || 'true').toLowerCase() !== 'false';
+const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_PROJECT_ID || '';
+const GOOGLE_CLOUD_LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'global';
 const PORT            = process.env.PORT || 3000;
 const ADMIN_EXPORT_TOKEN = process.env.ADMIN_EXPORT_TOKEN || '';
 const TELEGRAM_ALERT_COOLDOWN_MS = Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS || 10 * 60 * 1000);
@@ -125,11 +129,22 @@ const PUBLIC_BASE_URL =
   '';
 
 const required = { FB_VERIFY_TOKEN, FB_PAGE_TOKEN };
-if (USE_GEMINI) required.GEMINI_API_KEY = GEMINI_API_KEY;
+if (USE_GEMINI) {
+  if (GEMINI_PROVIDER === 'api_key') {
+    required.GEMINI_API_KEY = GEMINI_API_KEY;
+  } else if (GEMINI_PROVIDER === 'vertex') {
+    required.GOOGLE_CLOUD_PROJECT = GOOGLE_CLOUD_PROJECT;
+  } else {
+    required.GEMINI_PROVIDER = '';
+  }
+}
 const missing = Object.entries(required).filter(([, v]) => !v).map(([k]) => k);
 if (missing.length) {
   console.error('❌ Thiếu biến môi trường bắt buộc:', missing.join(', '));
   console.error('   Hãy điền vào file .env (local) hoặc Variables trên Railway/Render.');
+  if (missing.includes('GEMINI_PROVIDER')) {
+    console.error('   GEMINI_PROVIDER chỉ hỗ trợ "vertex" hoặc "api_key".');
+  }
   process.exit(1);
 }
 if (!FB_APP_SECRET) {
@@ -245,11 +260,12 @@ function sleep(ms) {
 
 function getGeminiErrorInfo(err) {
   const error = err?.response?.data?.error || {};
+  const sdkError = err?.error || {};
   return {
-    httpStatus: err?.response?.status,
-    code: error.code,
-    status: error.status,
-    message: error.message || err?.message || 'Unknown Gemini error'
+    httpStatus: err?.response?.status || err?.status,
+    code: error.code || err?.code || sdkError.code,
+    status: error.status || err?.statusText || sdkError.status,
+    message: error.message || sdkError.message || err?.message || 'Unknown Gemini error'
   };
 }
 
@@ -264,21 +280,78 @@ function isGeminiRetryableError(err) {
     || message.includes('timeout');
 }
 
-async function postGeminiWithRetry(history) {
+function getGoogleServiceAccountCredentials() {
+  const rawBase64 = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64;
+  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const raw = rawBase64
+    ? Buffer.from(rawBase64, 'base64').toString('utf8')
+    : rawJson;
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`GOOGLE_SERVICE_ACCOUNT_JSON không phải JSON hợp lệ: ${err.message}`);
+  }
+}
+
+let vertexGeminiClient = null;
+function getVertexGeminiClient() {
+  if (vertexGeminiClient) return vertexGeminiClient;
+
+  const credentials = getGoogleServiceAccountCredentials();
+  vertexGeminiClient = new GoogleGenAI({
+    vertexai: true,
+    project: GOOGLE_CLOUD_PROJECT,
+    location: GOOGLE_CLOUD_LOCATION,
+    googleAuthOptions: credentials ? { credentials } : undefined,
+    httpOptions: { timeout: 20000 }
+  });
+  return vertexGeminiClient;
+}
+
+async function generateGeminiViaVertex(history) {
+  return getVertexGeminiClient().models.generateContent({
+    model: GEMINI_MODEL,
+    contents: history,
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      temperature: 0.8,
+      maxOutputTokens: 800
+    }
+  });
+}
+
+async function generateGeminiViaApiKey(history) {
+  const res = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: history,
+      generationConfig: { temperature: 0.8, maxOutputTokens: 800 }
+    },
+    { timeout: 20000 }
+  );
+  return res.data;
+}
+
+function extractGeminiText(result) {
+  if (typeof result?.text === 'string') return result.text;
+  if (typeof result?.text === 'function') return result.text();
+  return result?.candidates?.[0]?.content?.parts?.[0]?.text
+    || result?.data?.candidates?.[0]?.content?.parts?.[0]?.text
+    || '';
+}
+
+async function generateGeminiWithRetry(history) {
   const maxAttempts = 3;
   let lastErr;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: history,
-          generationConfig: { temperature: 0.8, maxOutputTokens: 800 }
-        },
-        { timeout: 20000 }
-      );
+      return GEMINI_PROVIDER === 'api_key'
+        ? await generateGeminiViaApiKey(history)
+        : await generateGeminiViaVertex(history);
     } catch (err) {
       lastErr = err;
       if (!isGeminiRetryableError(err) || attempt === maxAttempts) break;
@@ -311,9 +384,9 @@ async function callGemini(userId, userMessage) {
   // Giữ tối đa 20 tin nhắn để tiết kiệm token
   if (history.length > 20) history.splice(0, history.length - 20);
 
-  const res = await postGeminiWithRetry(history);
+  const res = await generateGeminiWithRetry(history);
 
-  const raw = res.data.candidates?.[0]?.content?.parts?.[0]?.text
+  const raw = extractGeminiText(res)
     || 'Xin lỗi anh/chị, em chưa hiểu ý. Anh/chị có thể nói rõ hơn không ạ? 😊';
   const botReply = sanitizeGeminiReply(raw) || raw;
   storage.setHistory(userId, history);
@@ -1531,7 +1604,8 @@ function shutdown(signal) {
 
 if (require.main === module) {
   server = app.listen(PORT, async () => {
-    console.log(`🚀 Bot shop="${ACTIVE_SHOP_ID}" port ${PORT} (sản phẩm: ${products.length}, Gemini: ${USE_GEMINI ? GEMINI_MODEL : 'off'})`);
+    const geminiLabel = USE_GEMINI ? `${GEMINI_PROVIDER}/${GEMINI_MODEL}` : 'off';
+    console.log(`🚀 Bot shop="${ACTIVE_SHOP_ID}" port ${PORT} (sản phẩm: ${products.length}, Gemini: ${geminiLabel})`);
     await checkPageToken();
     startSheetOutboxWorker();
   });

@@ -4,11 +4,22 @@
 
 ---
 
-## BƯỚC 1 — LẤY GEMINI API KEY (miễn phí)
+## BƯỚC 1 — CẤU HÌNH GEMINI TRÊN GOOGLE CLOUD
 
-1. Vào: https://aistudio.google.com/apikey
-2. Đăng nhập Google → bấm **"Create API Key"**
-3. Copy key lại (dạng: `AIza...`)
+Bot mặc định dùng `GEMINI_PROVIDER=vertex` để gọi Gemini qua Google Cloud / Vertex AI và trừ vào credits Cloud Console.
+
+1. Vào Google Cloud Console, chọn project đang có credits.
+2. Bật billing cho project nếu chưa bật.
+3. Enable **Vertex AI API**.
+4. Local: cài Google Cloud CLI rồi chạy:
+
+```bash
+gcloud auth application-default login
+```
+
+5. Deploy ngoài Google Cloud/Railway/Render: tạo service account, cấp quyền **Vertex AI User**, rồi đưa JSON vào biến môi trường `GOOGLE_SERVICE_ACCOUNT_JSON` hoặc `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`.
+
+Mode API key kiểu AI Studio vẫn còn nhưng là legacy. Chỉ dùng khi set `GEMINI_PROVIDER=api_key` và điền `GEMINI_API_KEY`.
 
 ---
 
@@ -26,12 +37,17 @@
 
 ## BƯỚC 3 — CẤU HÌNH BIẾN MÔI TRƯỜNG
 
-Cần tối thiểu `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`. Nếu bật Gemini thì cần thêm `GEMINI_API_KEY`.
+Cần tối thiểu `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`. Nếu bật Gemini qua Cloud Console thì cần `GOOGLE_CLOUD_PROJECT` và credential ADC/service account.
 
 | Biến | Lấy ở đâu | Bắt buộc |
 |---|---|---|
-| `GEMINI_API_KEY` | Bước 1 | Có nếu `USE_GEMINI` không phải `false` |
+| `GEMINI_PROVIDER` | `vertex` hoặc `api_key`; mặc định `vertex` | Không |
 | `GEMINI_MODEL` | Tên model Gemini, mặc định `gemini-2.5-flash` | Không |
+| `GOOGLE_CLOUD_PROJECT` | Project ID trên Google Cloud Console | Có nếu `USE_GEMINI=true` và `GEMINI_PROVIDER=vertex` |
+| `GOOGLE_CLOUD_LOCATION` | Region Vertex AI, mặc định `global` | Không |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Nội dung JSON service account khi deploy ngoài Google Cloud | Có nếu server không có ADC |
+| `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` | Bản base64 của service account JSON, thay cho biến trên | Không |
+| `GEMINI_API_KEY` | AI Studio API key legacy | Chỉ khi `GEMINI_PROVIDER=api_key` |
 | `FB_PAGE_TOKEN` | Bước 2 (Access Token) | Có |
 | `FB_VERIFY_TOKEN` | Tự đặt một chuỗi ngẫu nhiên (vd: `shopbot_x7k2p9q`) | Có |
 | `FB_APP_SECRET` | Bước 2 (App Secret) | Khuyến nghị |
@@ -43,6 +59,8 @@ Cần tối thiểu `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`. Nếu bật Gemini thì 
 
 ### Chạy local
 
+Yêu cầu Node.js 20+.
+
 ```bash
 cp .env.example .env
 # mở .env và điền các giá trị bên trên
@@ -51,17 +69,26 @@ npm test
 npm run dev
 ```
 
+Ví dụ `.env` cho local dùng Cloud Console:
+
+```bash
+GEMINI_PROVIDER=vertex
+GEMINI_MODEL=gemini-2.5-flash
+GOOGLE_CLOUD_PROJECT=gen-lang-client-0790842164
+GOOGLE_CLOUD_LOCATION=global
+```
+
 ### Deploy lên Railway
 
 1. Vào https://railway.app → đăng ký bằng GitHub
 2. **New Project → Deploy from GitHub repo** (push code lên GitHub trước)
 3. Sau khi deploy: **Settings** → copy domain (`xxx.railway.app`)
-4. **Variables** → thêm `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`, `FB_APP_SECRET`; thêm `GEMINI_API_KEY` nếu muốn bật Gemini fallback
+4. **Variables** → thêm `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`, `FB_APP_SECRET`, `GEMINI_PROVIDER=vertex`, `GOOGLE_CLOUD_PROJECT`, và credential service account (`GOOGLE_SERVICE_ACCOUNT_JSON` hoặc `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`)
 5. Nếu Railway không tự cấp `RAILWAY_PUBLIC_DOMAIN` hoặc bạn dùng custom domain, thêm `PUBLIC_BASE_URL=https://ten-domain-cua-ban`
 6. Nếu muốn lưu lead/state không mất sau restart/deploy: tạo Railway Volume, mount vào `/data`, rồi thêm biến `DATA_DIR=/data`
 7. Nếu muốn tải lead/debug session từ trình duyệt, thêm `ADMIN_EXPORT_TOKEN=chuoi_bi_mat_that_dai`
 
-Nếu API Gemini đang free/không ổn định, có thể thêm:
+Nếu Gemini đang lỗi/quota hết, có thể thêm:
 
 ```bash
 USE_GEMINI=false
@@ -195,14 +222,14 @@ Nếu set `FB_APP_SECRET`, bot sẽ kiểm tra `X-Hub-Signature-256`. Request kh
 → Kiểm tra `FB_VERIFY_TOKEN` có khớp giữa Railway và Facebook không.
 
 ❌ **Bot không trả lời**
-→ Check log Railway. Thường do thiếu `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`, hoặc `GEMINI_API_KEY` khi `USE_GEMINI=true`.
+→ Check log Railway. Thường do thiếu `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`, `GOOGLE_CLOUD_PROJECT`, hoặc credential Vertex AI khi `USE_GEMINI=true`.
 → Bot cũng có thể đang ở chế độ handoff, đợi 30 phút hoặc xoá `data/chat-state.json`.
 
 ❌ **Webhook trả 403**
 → Sai `FB_APP_SECRET` hoặc thiếu chữ ký. Kiểm tra lại App Secret.
 
 ❌ **Lỗi Gemini API**
-→ Quota hết, key sai, hoặc model đang quá tải. Có thể tạm set `USE_GEMINI=false` để bot chạy rule-only.
+→ Kiểm tra Vertex AI API đã bật, service account có quyền `Vertex AI User`, project/location đúng, hoặc model đang quá tải. Có thể tạm set `USE_GEMINI=false` để bot chạy rule-only.
 
 ❌ **Ảnh không gửi được**
 → Kiểm tra `PUBLIC_BASE_URL` có trỏ đúng domain public không, file ảnh có tồn tại không, và cột `imageFile` trong `products.csv` có đúng tên file không.
