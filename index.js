@@ -118,10 +118,20 @@ const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOO
 const GOOGLE_CLOUD_LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'global';
 const PORT            = process.env.PORT || 3000;
 const ADMIN_EXPORT_TOKEN = process.env.ADMIN_EXPORT_TOKEN || '';
+
+function envPositiveNumber(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 const TELEGRAM_ALERT_COOLDOWN_MS = Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS || 10 * 60 * 1000);
 const FALLBACK_ALERT_THRESHOLD = Number(process.env.FALLBACK_ALERT_THRESHOLD || 2);
 const FALLBACK_HANDOFF_THRESHOLD = Number(process.env.FALLBACK_HANDOFF_THRESHOLD || 3);
 const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 30 * 60 * 1000);
+const ABANDONED_CART_REMINDER_ENABLED = String(process.env.ABANDONED_CART_REMINDER_ENABLED || 'true').toLowerCase() !== 'false';
+const ABANDONED_CART_REMINDER_MS = envPositiveNumber('ABANDONED_CART_REMINDER_MS', 20 * 60 * 1000);
+const ABANDONED_CART_REMINDER_SCAN_MS = envPositiveNumber('ABANDONED_CART_REMINDER_SCAN_MS', 60 * 1000);
+const ABANDONED_CART_REMINDER_MAX_AGE_MS = envPositiveNumber('ABANDONED_CART_REMINDER_MAX_AGE_MS', 23 * 60 * 60 * 1000);
 const GEMINI_HISTORY_LIMIT = 20;
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL ||
@@ -428,6 +438,28 @@ function formatGeminiCartItems(draft = {}) {
     })
     .filter(Boolean)
     .join(', ');
+}
+
+const ORDER_FIELD_LABELS = {
+  name: 'tên người nhận',
+  phone: 'SĐT',
+  address: 'địa chỉ giao hàng'
+};
+
+function getMissingOrderFieldLabels(draft = {}) {
+  return ['name', 'phone', 'address']
+    .filter(field => !String(draft[field] || '').trim())
+    .map(field => ORDER_FIELD_LABELS[field]);
+}
+
+function buildAbandonedCartReminderText(draft = {}) {
+  const missing = getMissingOrderFieldLabels(draft);
+  if (!missing.length) return '';
+
+  return render('abandonedCartReminder', {
+    cartText: formatGeminiCartItems(draft) || 'mẫu mình đã chọn',
+    missing: missing.join(' + ')
+  });
 }
 
 function buildGeminiRuntimeContext(userId) {
@@ -1343,6 +1375,10 @@ function maybeResetTimedOutSession(senderId, userText) {
   const previousMs = Date.parse(previous);
   if (!Number.isFinite(previousMs) || now - previousMs <= SESSION_TIMEOUT_MS) return false;
 
+  const draft = storage.getOrderDraft(senderId);
+  const reminderMs = Date.parse(String(draft.abandonedCartReminderSentAt || ''));
+  if (Number.isFinite(reminderMs) && now - reminderMs <= SESSION_TIMEOUT_MS) return false;
+
   const abandoned = storage.resetSessionAfterTimeout(senderId);
   trackEvent(senderId, 'session_timeout', userText, {
     idleMs: now - previousMs,
@@ -1350,6 +1386,106 @@ function maybeResetTimedOutSession(senderId, userText) {
     hadCart: Array.isArray(abandoned.cartItems) && abandoned.cartItems.length > 0
   });
   return true;
+}
+
+let abandonedCartReminderTimer = null;
+let abandonedCartReminderKickoffTimer = null;
+let abandonedCartReminderRunning = false;
+
+async function sendAbandonedCartReminder(candidate) {
+  const senderId = candidate?.userId;
+  if (!senderId || storage.inHandoff(senderId)) return false;
+
+  const draft = storage.getOrderDraft(senderId);
+  if (draft.abandonedCartReminderSentAt) return false;
+  if (!Array.isArray(draft.cartItems) || !draft.cartItems.length) return false;
+  if (deriveSessionState(senderId, draft) === STATES.CONFIRMED) return false;
+
+  const reminder = buildAbandonedCartReminderText(draft);
+  if (!reminder) return false;
+
+  const quickReplies = buildQuickReplies({ stage: 'checkout' }, shopConfig);
+  await sendQuickReplies(senderId, reminder, quickReplies);
+
+  const missingFields = candidate.missingFields || ['name', 'phone', 'address']
+    .filter(field => !String(draft[field] || '').trim());
+  storage.markAbandonedCartReminderSent(senderId, {
+    at: new Date().toISOString(),
+    idleMs: candidate.idleMs,
+    missingFields
+  });
+  trackEvent(senderId, 'abandoned_cart_reminder_sent', '', {
+    idleMs: candidate.idleMs,
+    missingFields,
+    payloads: quickReplies.map(item => item.payload)
+  });
+  return true;
+}
+
+async function scanAbandonedCartReminders(options = {}) {
+  if (abandonedCartReminderRunning) return 0;
+  abandonedCartReminderRunning = true;
+  let sent = 0;
+
+  try {
+    const candidates = storage.listAbandonedCartReminderCandidates({
+      idleMs: options.idleMs || ABANDONED_CART_REMINDER_MS,
+      maxAgeMs: options.maxAgeMs || ABANDONED_CART_REMINDER_MAX_AGE_MS,
+      limit: options.limit || 50
+    });
+
+    for (const candidate of candidates) {
+      try {
+        if (await sendAbandonedCartReminder(candidate)) sent += 1;
+      } catch (err) {
+        const status = err.response?.status;
+        const msg = err.response?.data?.error?.message || err.message;
+        console.error(`❌ Nhắc giỏ bỏ dở fail (${candidate.userId}): ${msg}`);
+        trackEvent(candidate.userId, 'abandoned_cart_reminder_failed', '', {
+          status: status || '',
+          error: msg,
+          idleMs: candidate.idleMs
+        });
+        if (status && status >= 400 && status < 500 && status !== 429) {
+          storage.markAbandonedCartReminderFailed(candidate.userId, {
+            at: new Date().toISOString(),
+            status,
+            error: msg
+          });
+        }
+      }
+    }
+  } finally {
+    abandonedCartReminderRunning = false;
+  }
+
+  return sent;
+}
+
+function startAbandonedCartReminderWorker(options = {}) {
+  const enabled = options.enabled == null ? ABANDONED_CART_REMINDER_ENABLED : Boolean(options.enabled);
+  if (!enabled) return null;
+  if (abandonedCartReminderTimer) return abandonedCartReminderTimer;
+
+  const optionIntervalMs = Number(options.intervalMs);
+  const intervalMs = Number.isFinite(optionIntervalMs) && optionIntervalMs > 0
+    ? optionIntervalMs
+    : ABANDONED_CART_REMINDER_SCAN_MS;
+  const firstDelayMs = Math.min(options.firstDelayMs || 10 * 1000, intervalMs);
+  const run = () => {
+    void scanAbandonedCartReminders(options).catch(err => {
+      console.error(`❌ Worker nhắc giỏ bỏ dở lỗi: ${err.message}`);
+    });
+  };
+
+  abandonedCartReminderKickoffTimer = setTimeout(run, firstDelayMs);
+  abandonedCartReminderKickoffTimer.unref?.();
+  abandonedCartReminderTimer = setInterval(run, intervalMs);
+  abandonedCartReminderTimer.unref?.();
+  console.log(
+    `🛒 Nhắc giỏ bỏ dở bật: sau ${Math.round((options.idleMs || ABANDONED_CART_REMINDER_MS) / 60000)} phút, quét mỗi ${Math.round(intervalMs / 1000)} giây.`
+  );
+  return abandonedCartReminderTimer;
 }
 
 function formatOrderDraftForAlert(senderId) {
@@ -1857,12 +1993,15 @@ app.get('/admin/events.jsonl', (req, res) => {
 app.get('/admin/state/:userId', (req, res) => {
   if (!requireAdminToken(req, res)) return;
   const userId = req.params.userId;
+  const orderDraft = storage.getOrderDraft(userId);
   res.json({
     userId,
     inHandoff: storage.inHandoff(userId),
     lastUserAt: storage.getLastUserAt(userId),
     lastProductCode: storage.getLastProductCode(userId),
-    orderDraft: storage.getOrderDraft(userId),
+    orderDraft,
+    abandonedCartReminderSentAt: orderDraft.abandonedCartReminderSentAt || '',
+    abandonedCartReminderFailedAt: orderDraft.abandonedCartReminderFailedAt || '',
     sessionState: storage.getSessionState(userId),
     historyLength: storage.getHistory(userId).length
   });
@@ -1887,6 +2026,8 @@ let server = null;
 
 function shutdown(signal) {
   console.log(`🛑 Nhận ${signal}, đang dừng server...`);
+  if (abandonedCartReminderKickoffTimer) clearTimeout(abandonedCartReminderKickoffTimer);
+  if (abandonedCartReminderTimer) clearInterval(abandonedCartReminderTimer);
   if (!server) process.exit(0);
 
   server.close(() => {
@@ -1903,6 +2044,7 @@ if (require.main === module) {
     console.log(`🚀 Bot shop="${ACTIVE_SHOP_ID}" port ${PORT} (sản phẩm: ${products.length}, Gemini: ${geminiLabel})`);
     await checkPageToken();
     startSheetOutboxWorker();
+    startAbandonedCartReminderWorker();
   });
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -1913,7 +2055,11 @@ module.exports = {
   buildDeterministicReply,
   buildFallbackReply,
   buildLeadDetails,
+  buildAbandonedCartReminderText,
   buildGeminiRuntimeContext,
   buildGeminiRequestHistory,
-  recordConversationTurn
+  recordConversationTurn,
+  maybeResetTimedOutSession,
+  scanAbandonedCartReminders,
+  startAbandonedCartReminderWorker
 };

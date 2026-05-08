@@ -24,6 +24,7 @@ const TEMPLATES = {
   orderIntentWithProduct: 'Dạ {{productCode}} giá {{price}} ạ. Mình chốt thì gửi em {{orderInfoFields}} nhé. Bên em nhận hàng thanh toán, che tên sản phẩm trước khi gửi.',
   orderInfoReminder: 'Dạ mình gửi giúp em:\n- Tên người nhận\n- SĐT\n- Địa chỉ nhận hàng\n\nđể em lên đơn cho mình nhé 😄',
   checkoutPendingInfo: 'Dạ em chốt giúp mình:\n{{cartLines}}\n\nBên em freeship và che tên sản phẩm khi gửi nha.\n\nMình gửi em:\n- Tên người nhận\n- SĐT\n- Địa chỉ nhận hàng\n\nđể em lên đơn cho mình nhé.',
+  abandonedCartReminder: 'Dạ em nhắc nhẹ, mình đang chốt {{cartText}} nhưng em còn thiếu {{missing}} để lên đơn ạ. Nếu mình vẫn lấy, gửi giúp em thông tin đó nha. Bên em freeship và che tên sản phẩm khi gửi.',
 
   // ===== Sản phẩm / giá / so sánh =====
   productNotFound: 'Dạ hiện bên em chưa có {{codes}} ạ. Mình xem mã khác trong menu giúp em nhé.',

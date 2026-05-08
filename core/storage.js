@@ -133,6 +133,34 @@ function appendEventQueued(event) {
   return eventWriteQueue;
 }
 
+function cloneOrderDraft(draft = {}) {
+  const copy = { ...draft };
+  if (Array.isArray(draft.cartItems)) {
+    copy.cartItems = draft.cartItems.map(item => ({ ...item }));
+  }
+  return copy;
+}
+
+function missingOrderFieldKeys(draft = {}) {
+  const missing = [];
+  if (!String(draft.name || '').trim()) missing.push('name');
+  if (!String(draft.phone || '').trim()) missing.push('phone');
+  if (!String(draft.address || '').trim()) missing.push('address');
+  return missing;
+}
+
+function parseTimeMs(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function positiveNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 module.exports = {
   getDataDir() {
     return DATA_DIR;
@@ -289,6 +317,93 @@ module.exports = {
     current.timedOutAt = new Date().toISOString();
     scheduleSave();
     return abandoned;
+  },
+
+  listAbandonedCartReminderCandidates(options = {}) {
+    const nowMs = parseTimeMs(options.now == null ? Date.now() : options.now);
+    if (!Number.isFinite(nowMs)) return [];
+
+    const idleMs = positiveNumber(options.idleMs, 20 * 60 * 1000);
+    const maxAgeMs = positiveNumber(options.maxAgeMs, 23 * 60 * 60 * 1000);
+    const limit = Math.max(1, Math.floor(positiveNumber(options.limit, 50)));
+    const result = [];
+    let handoffChanged = false;
+
+    for (const [userId, context] of Object.entries(state.context || {})) {
+      if (result.length >= limit) break;
+      const draft = context?.orderDraft;
+      if (!draft) continue;
+      if (context.sessionState === 'CONFIRMED') continue;
+      if (draft.abandonedCartReminderSentAt || draft.abandonedCartReminderFailedAt) continue;
+
+      const handoffUntil = Number(state.handoff?.[userId] || 0);
+      if (handoffUntil && nowMs <= handoffUntil) continue;
+      if (handoffUntil && nowMs > handoffUntil) {
+        delete state.handoff[userId];
+        handoffChanged = true;
+      }
+
+      const cartItems = Array.isArray(draft.cartItems) ? draft.cartItems : [];
+      if (!cartItems.length) continue;
+
+      const missingFields = missingOrderFieldKeys(draft);
+      if (!missingFields.length) continue;
+
+      const lastActivityMs = parseTimeMs(context.lastUserAt || draft.updatedAt);
+      if (!Number.isFinite(lastActivityMs)) continue;
+
+      const idleForMs = nowMs - lastActivityMs;
+      if (idleForMs < idleMs || idleForMs > maxAgeMs) continue;
+
+      result.push({
+        userId,
+        lastUserAt: context.lastUserAt || '',
+        idleMs: idleForMs,
+        missingFields,
+        lastProductCode: context.lastProductCode || '',
+        sessionState: context.sessionState || '',
+        orderDraft: cloneOrderDraft(draft)
+      });
+    }
+
+    if (handoffChanged) scheduleSave();
+    return result;
+  },
+
+  markAbandonedCartReminderSent(userId, details = {}) {
+    if (!userId || !state.context[userId]?.orderDraft) return {};
+    const current = state.context[userId].orderDraft || {};
+    const next = {
+      ...current,
+      abandonedCartReminderSentAt: String(details.at || new Date().toISOString())
+    };
+
+    const idleMs = Number(details.idleMs);
+    if (Number.isFinite(idleMs) && idleMs >= 0) next.abandonedCartReminderIdleMs = idleMs;
+    if (Array.isArray(details.missingFields)) {
+      next.abandonedCartReminderMissingFields = details.missingFields.map(item => String(item));
+    }
+
+    state.context[userId].orderDraft = next;
+    scheduleSave();
+    return cloneOrderDraft(next);
+  },
+
+  markAbandonedCartReminderFailed(userId, details = {}) {
+    if (!userId || !state.context[userId]?.orderDraft) return {};
+    const current = state.context[userId].orderDraft || {};
+    const next = {
+      ...current,
+      abandonedCartReminderFailedAt: String(details.at || new Date().toISOString())
+    };
+
+    const status = Number(details.status);
+    if (Number.isFinite(status)) next.abandonedCartReminderFailedStatus = status;
+    if (details.error) next.abandonedCartReminderFailedError = String(details.error).slice(0, 300);
+
+    state.context[userId].orderDraft = next;
+    scheduleSave();
+    return cloneOrderDraft(next);
   },
 
   seenMid(mid) {

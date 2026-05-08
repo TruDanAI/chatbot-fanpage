@@ -8,9 +8,11 @@ process.env.FB_PAGE_TOKEN = process.env.FB_PAGE_TOKEN || 'test-page-token';
 process.env.USE_GEMINI = 'false';
 
 const {
+  buildAbandonedCartReminderText,
   buildGeminiRequestHistory,
   buildGeminiRuntimeContext,
   buildLeadDetails,
+  maybeResetTimedOutSession,
   recordConversationTurn
 } = require('../index');
 const storage = require('../core/storage');
@@ -138,5 +140,122 @@ describe('index: Gemini context smoothing', () => {
     expect(history[2].parts[0].text).toContain('MÃ10 giá 150k');
     expect(history[2].parts[0].text).toContain('Tin nhắn khách cần trả lời');
     expect(history[2].parts[0].text).toContain('mẫu đó dùng sao shop');
+  });
+});
+
+describe('index/storage: nhắc giỏ bỏ dở', () => {
+  const now = Date.parse('2026-05-08T00:00:00.000Z');
+  const oldEnough = new Date(now - 21 * 60 * 1000).toISOString();
+
+  it('render lời nhắc theo thông tin còn thiếu', () => {
+    const text = buildAbandonedCartReminderText({
+      cartItems: [{ code: 'MÃ8', name: 'MÃ8', qty: 1 }],
+      phone: '0987654321'
+    });
+
+    expect(text).toContain('1 x MÃ8');
+    expect(text).toContain('tên người nhận + địa chỉ giao hàng');
+    expect(text).notToBe('');
+  });
+
+  it('lọc draft checkout thiếu thông tin sau thời gian idle', () => {
+    const userId = 'idx_abandoned_candidate';
+    storage.clearOrderDraft(userId);
+    storage.setLastUserAt(userId, oldEnough);
+    storage.mergeOrderDraft(userId, {
+      productCode: 'MÃ8',
+      cartItems: [{ code: 'MÃ8', name: 'MÃ8', qty: 1 }],
+      phone: '0987654321'
+    });
+
+    const candidate = storage.listAbandonedCartReminderCandidates({
+      now,
+      idleMs: 20 * 60 * 1000,
+      maxAgeMs: 23 * 60 * 60 * 1000
+    }).find(item => item.userId === userId);
+
+    expect(Boolean(candidate)).toBeTrue();
+    expect(candidate.missingFields).toEqual(['name', 'address']);
+  });
+
+  it('không nhắc khách chỉ hỏi/xem mã sản phẩm, chưa có cartItems checkout', () => {
+    const userId = 'idx_product_view_not_abandoned';
+    storage.clearOrderDraft(userId);
+    storage.setLastUserAt(userId, oldEnough);
+    storage.mergeOrderDraft(userId, { productCode: 'MÃ8' });
+
+    const candidate = storage.listAbandonedCartReminderCandidates({
+      now,
+      idleMs: 20 * 60 * 1000,
+      maxAgeMs: 23 * 60 * 60 * 1000
+    }).find(item => item.userId === userId);
+
+    expect(Boolean(candidate)).toBeFalse();
+  });
+
+  it('đã gửi nhắc thì không đưa lại vào candidate', () => {
+    const userId = 'idx_abandoned_sent_once';
+    storage.clearOrderDraft(userId);
+    storage.setLastUserAt(userId, oldEnough);
+    storage.mergeOrderDraft(userId, {
+      productCode: 'MÃ8',
+      cartItems: [{ code: 'MÃ8', name: 'MÃ8', qty: 1 }]
+    });
+    storage.markAbandonedCartReminderSent(userId, {
+      at: new Date(now).toISOString(),
+      idleMs: 21 * 60 * 1000,
+      missingFields: ['name', 'phone', 'address']
+    });
+
+    const candidate = storage.listAbandonedCartReminderCandidates({
+      now,
+      idleMs: 20 * 60 * 1000,
+      maxAgeMs: 23 * 60 * 60 * 1000
+    }).find(item => item.userId === userId);
+
+    expect(Boolean(candidate)).toBeFalse();
+  });
+
+  it('lỗi gửi 4xx đã đánh dấu thì không retry liên tục', () => {
+    const userId = 'idx_abandoned_failed_once';
+    storage.clearOrderDraft(userId);
+    storage.setLastUserAt(userId, oldEnough);
+    storage.mergeOrderDraft(userId, {
+      productCode: 'MÃ8',
+      cartItems: [{ code: 'MÃ8', name: 'MÃ8', qty: 1 }]
+    });
+    storage.markAbandonedCartReminderFailed(userId, {
+      at: new Date(now).toISOString(),
+      status: 400,
+      error: 'recipient unavailable'
+    });
+
+    const candidate = storage.listAbandonedCartReminderCandidates({
+      now,
+      idleMs: 20 * 60 * 1000,
+      maxAgeMs: 23 * 60 * 60 * 1000
+    }).find(item => item.userId === userId);
+
+    expect(Boolean(candidate)).toBeFalse();
+  });
+
+  it('khách trả lời sau lời nhắc gần đây không bị timeout xóa draft', () => {
+    const userId = 'idx_reminder_extends_timeout';
+    storage.clearOrderDraft(userId);
+    storage.setLastUserAt(userId, new Date(Date.now() - 31 * 60 * 1000).toISOString());
+    storage.mergeOrderDraft(userId, {
+      productCode: 'MÃ8',
+      cartItems: [{ code: 'MÃ8', name: 'MÃ8', qty: 1 }]
+    });
+    storage.markAbandonedCartReminderSent(userId, {
+      at: new Date().toISOString(),
+      idleMs: 20 * 60 * 1000,
+      missingFields: ['name', 'phone', 'address']
+    });
+
+    const reset = maybeResetTimedOutSession(userId, '0987654321 An 12 Tran Phu');
+
+    expect(reset).toBeFalse();
+    expect(storage.getOrderDraft(userId).cartItems.length).toBe(1);
   });
 });

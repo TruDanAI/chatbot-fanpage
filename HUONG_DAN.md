@@ -55,6 +55,10 @@ Cần tối thiểu `FB_PAGE_TOKEN`, `FB_VERIFY_TOKEN`. Nếu bật Gemini qua C
 | `PUBLIC_BASE_URL` | URL public của app để Messenger lấy ảnh qua `/media` | Không nếu Railway/Render tự có domain |
 | `ADMIN_EXPORT_TOKEN` | Chuỗi bí mật để tải CSV/xem debug state | Khuyến nghị |
 | `DATA_DIR` | Thư mục lưu state/lead, ví dụ `/data` khi dùng Railway Volume | Không |
+| `ABANDONED_CART_REMINDER_ENABLED` | `true`/`false`, bật nhắc giỏ bỏ dở | Không |
+| `ABANDONED_CART_REMINDER_MS` | Sau bao lâu thì nhắc, mặc định `1200000` = 20 phút | Không |
+| `ABANDONED_CART_REMINDER_SCAN_MS` | Chu kỳ worker quét draft, mặc định `60000` = 1 phút | Không |
+| `ABANDONED_CART_REMINDER_MAX_AGE_MS` | Không nhắc draft quá cũ, mặc định `82800000` ~ 23 giờ | Không |
 | `PORT` | Railway/Render tự set, local dùng `3000` | Không |
 
 ### Chạy local
@@ -160,6 +164,11 @@ Cách dùng:
 ### Human handoff
 - Khách gõ `nhân viên`, `admin`, `người thật`, `tư vấn viên` → bot tạm dừng 30 phút.
 - Khi nhân viên trả lời tay từ trang Facebook → bot tự dừng 30 phút (qua `message_echoes`).
+
+### Nhắc giỏ bỏ dở
+Bot tự quét các draft đã vào checkout nhưng còn thiếu tên/SĐT/địa chỉ. Mặc định sau 20 phút không thấy khách nhắn tiếp, bot gửi 1 lời nhắc nhẹ kèm quick replies `Gửi thông tin` và `Gặp nhân viên`.
+
+Để tránh nhắc nhầm, bot chỉ nhắc khi draft có `cartItems`; khách chỉ hỏi giá hoặc xem mã sản phẩm sẽ không bị nhắc.
 
 ### Lưu và tải lead khách hàng
 Khi khách gửi tin nhắn có số điện thoại VN, bot tự động ghi vào `customers.csv` kèm thông tin đơn và 10 tin gần nhất. Nếu có set `DATA_DIR=/data` trên Railway thì file sẽ nằm ở `/data/customers.csv` trong Volume.
