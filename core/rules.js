@@ -75,6 +75,13 @@ function missingOrderFields(order) {
   return missing;
 }
 
+function hasOrderProduct(order) {
+  return Boolean(
+    String(order?.productCode || '').trim()
+    || (Array.isArray(order?.cartItems) && order.cartItems.length)
+  );
+}
+
 function compactProductName(product) {
   return product ? `${product.code} giá ${explainPrice(product.price)}` : 'mẫu anh/chị chọn';
 }
@@ -470,7 +477,9 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
 
     const draft = orderDraft || getOrderDraft(userId);
     const missing = missingOrderFields(draft);
-    if (!missing.length) return STATES.READY_TO_CONFIRM;
+    const hasProduct = hasOrderProduct(draft)
+      || Boolean(contextStore.getLastProductCode && contextStore.getLastProductCode(userId));
+    if (!missing.length && hasProduct) return STATES.READY_TO_CONFIRM;
     if (draft.name || draft.phone || draft.address) return STATES.COLLECTING_INFO;
     if (Array.isArray(draft.cartItems) && draft.cartItems.length) return STATES.COLLECTING_INFO;
     if (draft.productCode || (contextStore.getLastProductCode && contextStore.getLastProductCode(userId))) {
@@ -768,19 +777,25 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     {
       name: 'PHONE_WITH_LEAD',
       match: ctx => looksLikePhone(ctx.text) && (providesName(ctx.text) || providesAddress(ctx.text)),
-      handle: ctx => ctx.missingFields.length
-        ? render('phoneWithLeadMissing', { missing: ctx.missingFields.join(' + ') })
-        : readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct)
+      handle: ctx => {
+        if (ctx.missingFields.length) return render('phoneWithLeadMissing', { missing: ctx.missingFields.join(' + ') });
+        if (!hasOrderProduct(ctx.productAwareOrder)) return render('infoMissingNoProduct');
+        return readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct);
+      }
     },
     {
       name: 'PHONE_ONLY',
       match: ctx => looksLikePhone(ctx.text),
-      handle: ctx => ctx.missingFields.length
-        ? render('phoneOnlyMissing', {
+      handle: ctx => {
+        if (ctx.missingFields.length) {
+          return render('phoneOnlyMissing', {
             otherFields: config.policies.orderInfoFields.replace('SĐT + ', ''),
             shopName: config.shopName
-          })
-        : readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct)
+          });
+        }
+        if (!hasOrderProduct(ctx.productAwareOrder)) return render('infoMissingNoProduct');
+        return readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct);
+      }
     },
     {
       name: 'CONTEXT_CONFIRMATION',
@@ -821,7 +836,10 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       name: 'PROVIDES_NAME_OR_ADDRESS',
       match: ctx => providesName(ctx.text) || providesAddress(ctx.text),
       handle: ctx => {
-        if (!ctx.missingFields.length) return readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct);
+        if (!ctx.missingFields.length) {
+          if (!hasOrderProduct(ctx.productAwareOrder)) return render('infoMissingNoProduct');
+          return readyOrderReply(ctx.productAwareOrder, ctx.selectedProduct);
+        }
         if (ctx.selectedProduct) {
           return render('infoMissingWithProduct', {
             productCode: ctx.selectedProduct.code,

@@ -31,7 +31,7 @@ const DEFAULT_ACTIONS = {
     text: 'gặp nhân viên tư vấn'
   },
   ORDER_SELECTED: {
-    title: '✅ Chốt mẫu này',
+    title: '✅ Chốt mẫu',
     payload: 'ORDER_SELECTED',
     text: 'chốt mẫu này'
   },
@@ -41,7 +41,7 @@ const DEFAULT_ACTIONS = {
     text: 'mẫu nào dưới 300k'
   },
   SEND_ORDER_INFO: {
-    title: '📝 Gửi thông tin nhận hàng',
+    title: '📝 Gửi thông tin',
     payload: 'SEND_ORDER_INFO',
     text: 'chốt đơn cần gửi thông tin gì?'
   }
@@ -49,7 +49,7 @@ const DEFAULT_ACTIONS = {
 
 const DEFAULT_STAGE_ACTIONS = {
   greeting: ['HOT_PRODUCTS', 'BUDGET_300', 'GEL_ACCESSORIES', 'QUICK_ADVICE'],
-  productDetail: ['GEL_ACCESSORIES', 'HOT_PRODUCTS', 'CHEAPER_PRODUCTS', 'ORDER_SELECTED'],
+  productDetail: ['ORDER_SELECTED', 'GEL_ACCESSORIES', 'HOT_PRODUCTS', 'CHEAPER_PRODUCTS'],
   checkout: ['SEND_ORDER_INFO', 'HUMAN_HANDOFF'],
   confused: ['HOT_PRODUCTS', 'QUICK_ADVICE']
 };
@@ -58,7 +58,7 @@ const TERMINAL_STATES = new Set(['CONFIRMED']);
 const CHECKOUT_STATES = new Set(['COLLECTING_INFO', 'READY_TO_CONFIRM']);
 
 function looksLikeGreetingReply(text) {
-  return /xem\s+qua\s+m[ẫa]u/i.test(String(text || ''));
+  return /xem\s+qua\s+(?:m[ẫa]u|sản\s*phẩm|san\s*pham)/i.test(String(text || ''));
 }
 
 function getQuickReplyConfig(config = {}) {

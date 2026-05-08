@@ -959,7 +959,7 @@ function buildConfirmedSheetLead(senderId, opts = {}) {
     phone: String(draft.phone || '').trim(),
     address: String(draft.address || '').trim(),
     productCode: codeRaw,
-    productInterest: cartText ? `${productInterest}${productInterest ? ' + ' : ''}${cartText}` : productInterest,
+    productInterest: cartText || productInterest,
     confirmedAt: new Date().toISOString()
   };
 }
@@ -1016,13 +1016,27 @@ function buildLeadDetails(userText, senderId) {
     .test(userText);
   const addressOnly = !phone && /[,;]/.test(userText) && /\b(xã|xa|phường|phuong|huyện|huyen|quận|quan|tỉnh|tinh|tp|thành phố|thanh pho)\b/i
     .test(normalizeText(userText));
-  const parsed = addressChangeMatch
+  let parsed = addressChangeMatch
     ? { name: '', address: cleanLeadPart(addressChangeMatch[1]) }
     : phone || hasLeadPrefix
     ? splitNameAndAddress(userText)
     : addressOnly
       ? { name: '', address: cleanLeadPart(stripLeadPrefixes(userText)) }
       : { name: '', address: '' };
+  const draft = storage.getOrderDraft(senderId);
+
+  if (
+    !parsed.name
+    && !parsed.address
+    && !phone
+    && !mentionedCode
+    && !draft.name
+    && draft.phone
+    && draft.address
+    && looksLikeBareCustomerName(userText)
+  ) {
+    parsed = { name: cleanLeadPart(userText), address: '' };
+  }
 
   return {
     productCode,
@@ -1030,6 +1044,59 @@ function buildLeadDetails(userText, senderId) {
     name: normalizeLeadTextField(parsed.name),
     address: normalizeLeadTextField(parsed.address)
   };
+}
+
+function shouldCaptureHandoffOrderUpdate(senderId, userText, leadDetails, previousDraft = {}) {
+  const mentionedCode = extractRequestedProductCodes(userText)[0] || '';
+  const previousCode = String(previousDraft.productCode || storage.getLastProductCode(senderId) || '').toUpperCase();
+  const hasExistingOrder = Boolean(
+    previousDraft.productCode
+    || previousDraft.phone
+    || previousDraft.name
+    || previousDraft.address
+    || (Array.isArray(previousDraft.cartItems) && previousDraft.cartItems.length)
+  );
+  const productChanged = mentionedCode
+    && mentionedCode.toUpperCase() !== previousCode;
+
+  if (!hasExistingOrder && !String(leadDetails.productCode || '').trim()) return false;
+
+  return Boolean(
+    leadDetails.phone
+    || leadDetails.name
+    || leadDetails.address
+    || (hasExistingOrder && productChanged)
+  );
+}
+
+function captureHandoffOrderUpdate(senderId, userText, opts = {}) {
+  const previousDraft = storage.getOrderDraft(senderId);
+  const leadDetails = buildLeadDetails(userText, senderId);
+  if (!shouldCaptureHandoffOrderUpdate(senderId, userText, leadDetails, previousDraft)) return false;
+
+  const currentLead = storage.mergeOrderDraft(senderId, leadDetails);
+  trackEvent(senderId, 'handoff_order_update_received', userText, {
+    fields: ['productCode', 'phone', 'name', 'address'].filter(field => Boolean(leadDetails[field]))
+  });
+  storage.appendCustomer({
+    type: 'lead_update',
+    senderId,
+    ...currentLead,
+    text: userText,
+    history: storage.getHistory(senderId).slice(-10),
+    at: new Date().toISOString()
+  });
+
+  const confirmedLead = buildConfirmedSheetLead(senderId, {
+    messageId: opts.messageId || '',
+    userText
+  });
+  void pushLeadToSheet(confirmedLead);
+  sendTelegramAlert({
+    ...confirmedLead,
+    text: 'CẬP NHẬT ĐƠN TRONG HANDOFF'
+  });
+  return true;
 }
 
 function truncateText(text, max = 700) {
@@ -1040,6 +1107,19 @@ function truncateText(text, max = 700) {
 function wantsUrgentHumanAttention(text) {
   const t = normalizeText(text);
   return /(?:khong\s*hieu|tra\s*loi\s*gi|noi\s*gi|bot|tu\s*van\s*te|hoi\s*mai|lau\s*the|buc\s*minh|kho\s*chiu|lua\s*dao|chan\s*the|mat\s*thoi\s*gian)/.test(t);
+}
+
+function looksLikeBareCustomerName(text) {
+  const raw = cleanLeadPart(text);
+  const t = normalizeText(raw);
+  if (!raw || raw.length < 2 || raw.length > 50) return false;
+  if (raw.includes('?') || extractPhone(raw) || extractRequestedProductCodes(raw).length) return false;
+  if (/\d/.test(raw)) return false;
+  if (/^(?:ok|oke|oki|okay|vang|da|duoc|chot|lay|mua|dat|gui|ship|khong|ko|k)\b/.test(t)) return false;
+  if (/(?:dia\s*chi|sdt|so\s*dien\s*thoai|ship|giao|xa|phuong|huyen|quan|tinh|tp|duong|thon|xom|ngo|ngach|hem|gel|ma|mau|shop|tu\s*van|gia|bao\s*nhieu)/.test(t)) return false;
+
+  const words = raw.split(/\s+/).filter(Boolean);
+  return words.length <= 5 && /[A-Za-zÀ-ỹ]/.test(raw);
 }
 
 function trackEvent(senderId, type, text = '', meta = {}) {
@@ -1261,12 +1341,6 @@ async function handleEvent(event, baseUrlOverride = '') {
   if (mid && storage.seenMid(mid)) return;
   if (mid) storage.markMid(mid);
 
-  // Đang trong khoảng human handoff → bot không trả lời
-  if (storage.inHandoff(senderId)) {
-    console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}`);
-    return;
-  }
-
   let userText = null;
   let quickReplyPayload = '';
   if (event.message?.quick_reply?.payload) {
@@ -1282,6 +1356,14 @@ async function handleEvent(event, baseUrlOverride = '') {
     messageId: mid || '',
     quickReplyPayload
   });
+
+  // Đang trong khoảng human handoff → bot không trả lời, nhưng vẫn ghi nhận cập nhật đơn.
+  if (storage.inHandoff(senderId)) {
+    const captured = captureHandoffOrderUpdate(senderId, userText, { messageId: mid || '' });
+    console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}${captured ? ' — đã ghi nhận cập nhật đơn' : ''}`);
+    return;
+  }
+
   maybeResetTimedOutSession(senderId, userText);
 
   // Khách yêu cầu gặp nhân viên → tạm dừng bot, ghi log

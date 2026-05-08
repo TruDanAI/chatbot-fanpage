@@ -9,6 +9,17 @@ function wantsExperienceAdvice(ctx) {
   return /\b(?:suong|phe|cam\s*giac|chan\s*that|that\s*khong|dung\s*(?:co\s*)?(?:on|thich|da)|co\s*(?:suong|phe)|da\s*(?:khong|ko|k))\b/.test(t);
 }
 
+function wantsNeedBasedRecommendation(ctx) {
+  const t = ctx.normalized || '';
+  if (ctx.found?.length) return false;
+
+  const asksForType = /\b(?:loai|mau|hang|dong|kieu|cai)\b/.test(t)
+    || /\b(?:co|shop\s*co)\b/.test(t);
+  const hasNeedKeyword = /\b(?:mem|om|khit|chan\s*that|giong\s*that|rung|pin|sac\s*pin|manh|kich\s*thich)\b/.test(t);
+
+  return asksForType && hasNeedKeyword;
+}
+
 module.exports = {
   prepend: [
     {
@@ -28,7 +39,7 @@ module.exports = {
       name: 'EXPERIENCE_ADVICE',
       match: ctx => wantsExperienceAdvice(ctx),
       handle: ctx => {
-        if (ctx.selectedProduct) {
+        if (ctx.selectedProduct && !wantsNeedBasedRecommendation(ctx)) {
           return ctx.render('experienceAdviceSelected', {
             productCode: ctx.selectedProduct.code
           });

@@ -260,6 +260,29 @@ describe('Engine: adult-shop experience advice', () => {
     expect(reply).toContain('MÃ8');
     expect(reply).toContain('cảm giác thoải mái');
   });
+
+  it('hỏi loại mềm/chân thật/rung mạnh sau khi xem mã không bị dính lastProduct', () => {
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: makeStore() });
+    const userId = 'u_need_recommendation';
+    engine.buildDeterministicReply('ma 10', userId);
+
+    const reply = engine.buildDeterministicReply('co loai mem chan that va rung manh khong shop', userId);
+    expect(reply).toContain('tuỳ mã và nhu cầu');
+    expect(reply).toContain('MÃ2');
+    expect(reply).toContain('MÃ8');
+    expect(reply.includes('MÃ10 thiên về')).toBeFalse();
+  });
+
+  it('xin tư vấn thêm sau khi xem mã vẫn có reply rule-based', () => {
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: makeStore() });
+    const userId = 'u_more_advice';
+    engine.buildDeterministicReply('ma 10', userId);
+
+    const reply = engine.buildDeterministicReply('tu van them di e', userId);
+    expect(reply).toContain('Dạ em gợi ý nhanh');
+    expect(reply).toContain('MÃ10');
+    expect(reply).toContain('MÃ2');
+  });
 });
 
 describe('Engine: state machine 5 trạng thái', () => {
@@ -281,6 +304,19 @@ describe('Engine: state machine 5 trạng thái', () => {
   it('READY_TO_CONFIRM khi đủ 3 trường', () => {
     store.mergeOrderDraft(u, { address: '12 Trần Phú, Hà Nội', productCode: 'MÃ8' });
     expect(engine.deriveSessionState(u)).toBe(STATES.READY_TO_CONFIRM);
+  });
+  it('chưa có sản phẩm thì không READY_TO_CONFIRM dù đủ tên/SĐT/địa chỉ', () => {
+    const storeNoProduct = makeStore();
+    const eng = createRuleEngine({ products, config: shopConfig, contextStore: storeNoProduct });
+    const userId = 'u_state_no_product';
+    storeNoProduct.mergeOrderDraft(userId, {
+      name: 'An',
+      phone: '0987654321',
+      address: '12 Trần Phú, Hà Nội'
+    });
+
+    expect(eng.deriveSessionState(userId)).toBe(STATES.COLLECTING_INFO);
+    expect(eng.shouldSilenceAfterCompleteOrder('ok shop', userId)).toBeFalse();
   });
   it('shouldSilenceAfterCompleteOrder = true với "ok"', () => {
     expect(engine.shouldSilenceAfterCompleteOrder('ok shop', u)).toBeTrue();

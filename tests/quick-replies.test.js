@@ -30,24 +30,25 @@ describe('quick replies: stage suggestions', () => {
     expect(payloads.includes('NEW_PRODUCTS')).toBeFalse();
   });
 
-  it('sau product detail có gel, mẫu hot, mẫu rẻ hơn, chốt mẫu này', () => {
+  it('sau product detail ưu tiên chốt mẫu trước các gợi ý phụ', () => {
     const replies = buildQuickReplies({
       stateAfterReply: 'PRODUCT_SELECTED',
       lastProductCode: 'MÃ7'
     });
 
     expect(replies.map(item => item.payload)).toEqual([
+      'ORDER_SELECTED',
       'GEL_ACCESSORIES',
       'HOT_PRODUCTS',
-      'CHEAPER_PRODUCTS',
-      'ORDER_SELECTED'
+      'CHEAPER_PRODUCTS'
     ]);
+    expect(replies[0].title).toBe('✅ Chốt mẫu');
   });
 
   it('checkout chỉ gợi ý gửi thông tin và gặp nhân viên', () => {
     const replies = buildQuickReplies({ stateAfterReply: 'COLLECTING_INFO' });
     expect(replies.map(item => item.payload)).toEqual(['SEND_ORDER_INFO', 'HUMAN_HANDOFF']);
-    expect(replies[0].title).toBe('📝 Gửi thông tin nhận hàng');
+    expect(replies[0].title).toBe('📝 Gửi thông tin');
   });
 
   it('confirmed không show random actions', () => {
@@ -69,6 +70,15 @@ describe('quick replies: stage suggestions', () => {
   it('reply chào "xem qua mẫu" vẫn hiện quick Hàng hot', () => {
     const replies = buildQuickReplies({
       replyText: '👋 Dạ em gửi mình xem qua mẫu bên shop nhé 😄 Ưng mã nào mình nhắn em tư vấn nhanh ạ.'
+    });
+
+    expect(replies.map(item => item.payload)).toEqual(['HOT_PRODUCTS', 'BUDGET_300', 'GEL_ACCESSORIES', 'QUICK_ADVICE']);
+    expect(replies[0].title).toBe('🔥 Hàng hot');
+  });
+
+  it('reply gửi lại menu "xem qua sản phẩm" vẫn hiện quick Hàng hot', () => {
+    const replies = buildQuickReplies({
+      replyText: 'Dạ em gửi mình xem qua sản phẩm nhé. Ưng mã nào nhắn em tư vấn ạ.'
     });
 
     expect(replies.map(item => item.payload)).toEqual(['HOT_PRODUCTS', 'BUDGET_300', 'GEL_ACCESSORIES', 'QUICK_ADVICE']);
