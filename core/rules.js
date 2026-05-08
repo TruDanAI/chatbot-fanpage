@@ -236,7 +236,7 @@ function wantsAgePolicy(text) {
 
 function isSimpleGreeting(text) {
   const t = preprocess(text).trim();
-  return /^(?:(?:em|anh|chi|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|chi|anh|ban))?[.!?\s]*$/.test(t);
+  return /^(?:(?:em|anh|chi|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|chi|anh|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
 }
 
 function isSimpleConfirmation(text) {

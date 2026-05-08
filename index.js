@@ -297,6 +297,8 @@ function sanitizeGeminiReply(text) {
   let s = String(text || '').trim();
   if (!s) return s;
   s = s.replace(/\s*\([^)]*(?:hệ\s*thống|tự\s*động|he\s*thong|tu\s*dong)[^)]*\)/gi, '');
+  s = s.replace(/\s*\([^)]*(?:ảnh|anh|menu|sản\s*phẩm|san\s*pham)[^)]*(?:kèm|kem|gửi|gui|đây|day)[^)]*\)/gi, '');
+  s = s.replace(/\s*\([^)]*(?:kèm|kem|gửi|gui|đây|day)[^)]*(?:ảnh|anh|menu|sản\s*phẩm|san\s*pham)[^)]*\)/gi, '');
   s = s.replace(/\banh\s*\/\s*em\b/gi, 'anh/chị');
   return s.replace(/\s{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1').trim();
 }
@@ -472,7 +474,7 @@ function getImageFilenameForProduct(product) {
 
 function isGreetingText(text) {
   const t = normalizeText(text).trim();
-  return /^(?:(?:em|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|ban))?[.!?\s]*$/.test(t);
+  return /^(?:(?:em|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
 }
 
 function isHotProductsText(text) {

@@ -137,6 +137,9 @@ describe('Engine: intent router cơ bản', () => {
   it('GREETING', () => {
     expect(engine.buildDeterministicReply('em chào shop', 'u1')).toContain('xem qua mẫu');
   });
+  it('GREETING nhận câu chào có "ạ"', () => {
+    expect(engine.buildDeterministicReply('chào shop ạ', 'u1a')).toContain('xem qua mẫu');
+  });
   it('PRODUCT_LIST khi user gõ mã', () => {
     expect(engine.buildDeterministicReply('m8 còn không', 'u2')).toContain('MÃ8');
   });
