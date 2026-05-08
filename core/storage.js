@@ -244,6 +244,28 @@ module.exports = {
     scheduleSave();
   },
 
+  getOrderStaffNotification(userId) {
+    const draft = state.context[userId]?.orderDraft || {};
+    return {
+      hash: draft.staffNotifiedHash || '',
+      at: draft.staffNotifiedAt || ''
+    };
+  },
+
+  setOrderStaffNotification(userId, details = {}) {
+    if (!userId) return {};
+    if (!state.context[userId]) state.context[userId] = {};
+    const current = state.context[userId].orderDraft || {};
+    const next = {
+      ...current,
+      staffNotifiedHash: String(details.hash || '').trim(),
+      staffNotifiedAt: String(details.at || new Date().toISOString()).trim()
+    };
+    state.context[userId].orderDraft = next;
+    scheduleSave();
+    return { ...next };
+  },
+
   clearOrderDraft(userId) {
     if (!userId || !state.context[userId]) return;
     delete state.context[userId].orderDraft;

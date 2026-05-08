@@ -88,6 +88,15 @@ function displayCartProductCode(code) {
   return String(code || '').toUpperCase();
 }
 
+function formatCartItemLabel(item) {
+  if (!item) return '';
+  if (item.display) return item.display;
+  if (String(item.code || '').toUpperCase() === 'GEL') {
+    return `${item.qty || 1} gel${item.variant ? ` ${item.variant}` : ''} 200ml`;
+  }
+  return displayCartProductCode(item.code || item.name);
+}
+
 // ===== Detector functions (đều preprocess hoá ở bên trong) =====
 function asksWhyRepeatedInfo(text) {
   const t = preprocess(text);
@@ -224,6 +233,11 @@ function wantsDeliveryTime(text) {
   return /(?:bao\s*lau|may\s*ngay|khi\s*nao|giao\s*hang|nhan\s*hang|thoi\s*gian|hang\s*dat|co\s*san|con\s*hang)/.test(t);
 }
 
+function wantsTrackingInfo(text) {
+  const t = preprocess(text);
+  return /(?:ma\s*van\s*don|don\s*(?:toi|den)\s*dau|ship\s*(?:toi|den)\s*dau|ma\s*don|tracking|theo\s*doi\s*(?:don|hang|van\s*don))/.test(t);
+}
+
 function wantsShippingFee(text) {
   const t = preprocess(text);
   return /(?:phi\s*ship|tien\s*ship|ship\s*bao\s*nhieu|mien\s*ship|free\s*ship|freeship)/.test(t);
@@ -298,7 +312,7 @@ function wantsQuietAdvice(text) {
 // Trước đây cả 2 đều match -> ưu tiên handler theo thứ tự, dễ nhầm.
 function asksForOrderInfo(text) {
   const t = preprocess(text);
-  if (!/(?:dia\s*chi|sdt|so\s*dien\s*thoai|ten\s*nguoi\s*nhan|thong\s*tin\s*giao\s*hang|hoi\s*dia\s*chi)/.test(t)) {
+  if (!/(?:dia\s*chi|sdt|so\s*dien\s*thoai|ten\s*nguoi\s*nhan|thong\s*tin(?:\s*(?:giao\s*hang|nhan\s*hang|chot\s*don))?|hoi\s*dia\s*chi)/.test(t)) {
     return false;
   }
   // Nếu đây là câu hỏi (có ?, "ở đâu", "thế nào" ...) thì là user hỏi.
@@ -477,8 +491,21 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
 
   // ===== Render helpers (đa số trả thẳng template) =====
   function readyOrderReply(order, product) {
+    const cartItems = Array.isArray(order.cartItems) && order.cartItems.length
+      ? order.cartItems
+      : product || order.productCode
+        ? [{
+            code: product?.code || order.productCode,
+            name: product?.code || order.productCode,
+            qty: 1
+          }]
+        : [];
+    const productText = cartItems.length
+      ? cartItems.map(item => `• ${formatCartItemLabel(item)}`).join('\n')
+      : '• mẫu anh/chị chọn';
+
     return render('readyOrder', {
-      productText: product?.code || order.productCode || 'mẫu anh/chị chọn',
+      productText,
       name: order.name || '',
       phone: order.phone || '',
       address: order.address || ''
@@ -525,11 +552,7 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
 
     return cartItems
       .map(item => {
-        if (item.display) return `- ${item.display}`;
-        if (String(item.code || '').toUpperCase() === 'GEL') {
-          return `- ${item.qty || 1} gel${item.variant ? ` ${item.variant}` : ''} 200ml`;
-        }
-        return `- ${displayCartProductCode(item.code || item.name)}`;
+        return `- ${formatCartItemLabel(item)}`;
       })
       .join('\n');
   }
@@ -855,10 +878,13 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     {
       name: 'ASKS_FOR_ORDER_INFO',
       match: ctx => asksForOrderInfo(ctx.text),
-      handle: ctx => render('orderInfoRequest', {
-        productSuffix: ctx.selectedProduct ? ` ${ctx.selectedProduct.code}` : '',
-        orderInfoFields: config.policies.orderInfoFields
-      })
+      handle: ctx => {
+        if (ctx.sessionState === STATES.COLLECTING_INFO) return render('orderInfoReminder');
+        return render('orderInfoRequest', {
+          productSuffix: ctx.selectedProduct ? ` ${ctx.selectedProduct.code}` : '',
+          orderInfoFields: config.policies.orderInfoFields
+        });
+      }
     },
     {
       name: 'ORDER_INTENT',
@@ -942,6 +968,17 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       name: 'OFFICE_PICKUP',
       match: ctx => wantsOfficePickup(ctx.text),
       handle: () => render('officePickup')
+    },
+    {
+      name: 'TRACKING_INTENT',
+      match: ctx => wantsTrackingInfo(ctx.text),
+      handle: ctx => (
+        ctx.sessionState === STATES.COLLECTING_INFO
+        || ctx.sessionState === STATES.READY_TO_CONFIRM
+        || ctx.sessionState === STATES.CONFIRMED
+      )
+        ? render('trackingPending')
+        : render('trackingDefault')
     },
     {
       name: 'PAYMENT_INFO',
@@ -1201,6 +1238,7 @@ module.exports = {
     wantsShippingFee,
     wantsShippingPrivacy,
     wantsSizeInfo,
-    wantsStockInfo
+    wantsStockInfo,
+    wantsTrackingInfo
   }
 };

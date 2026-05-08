@@ -324,6 +324,59 @@ describe('Engine: checkout context không rơi về gel/fallback', () => {
     expect(reply).toContain('Tên người nhận');
     expect(reply).toContain('Địa chỉ nhận hàng');
   });
+
+  it('readyOrder xác nhận đủ tất cả cartItems, không chỉ lastProductCode', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const userId = 'u_ready_cart';
+
+    engine.buildDeterministicReply('chốt mã 8', userId);
+    engine.buildDeterministicReply('chốt thêm mã 10', userId);
+    store.mergeOrderDraft(userId, {
+      name: 'Hân',
+      phone: '0123456789',
+      address: 'Đồng Me, Mễ Trì, Hà Nội'
+    });
+
+    const reply = engine.buildDeterministicReply('Hân 0123456789 Đồng Me, Mễ Trì, Hà Nội', userId);
+    expect(reply).toContain('• MÃ8');
+    expect(reply).toContain('• MÃ10');
+    expect(/chốt\s+MÃ10 rồi/.test(reply)).toBeFalse();
+  });
+
+  it('đang COLLECTING_INFO hỏi cần gửi gì thì chỉ nhắc field, không replay cart', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const userId = 'u_order_info_reminder';
+    engine.buildDeterministicReply('chốt mã 8', userId);
+
+    const reply = engine.buildDeterministicReply('chốt đơn cần gửi thông tin gì?', userId);
+    expect(reply).toContain('Tên người nhận');
+    expect(reply).toContain('SĐT');
+    expect(reply).toContain('Địa chỉ nhận hàng');
+    expect(reply.includes('Dạ em chốt giúp mình')).toBeFalse();
+    expect(reply.includes('MÃ8')).toBeFalse();
+  });
+
+  it('tracking intent khi đang checkout trả lời trạng thái chờ shop xác nhận/gửi hàng', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const userId = 'u_tracking_checkout';
+    engine.buildDeterministicReply('chốt mã 8', userId);
+
+    const reply = engine.buildDeterministicReply('mã vận đơn đâu shop', userId);
+    expect(reply).toContain('đang chờ shop xác nhận/gửi hàng');
+    expect(reply).toContain('mã vận đơn GHTK');
+  });
+
+  it('tracking intent khi chưa có đơn trả lời policy mã vận đơn', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+
+    const reply = engine.buildDeterministicReply('tracking đơn tới đâu shop', 'u_tracking_idle');
+    expect(reply).toContain('sau khi shop xác nhận và gửi hàng');
+    expect(reply).toContain('mã vận đơn GHTK');
+  });
 });
 
 describe('Engine: BUG FIX user hỏi địa chỉ shop không bị nhầm là cung cấp địa chỉ', () => {

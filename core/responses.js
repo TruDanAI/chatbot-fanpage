@@ -10,7 +10,7 @@ const TEMPLATES = {
   changeProduct: 'Dạ được ạ 👌 Mình nhắn giúp em mã muốn đổi sang, em check lại giá và mẫu cho mình ngay ạ.',
 
   // ===== Đơn hàng =====
-  readyOrder: 'Dạ em nhận đủ thông tin chốt {{productText}} rồi ạ. Bên em nhận hàng thanh toán, che tên sản phẩm và gửi mã vận đơn GHTK để mình theo dõi nhé.',
+  readyOrder: 'Dạ em nhận đủ thông tin chốt:\n{{productText}}\n\nEm chuyển đơn qua nhân viên xác nhận và lên đơn cho mình nhé 😄 Bên em nhận hàng thanh toán, che tên sản phẩm và gửi mã vận đơn GHTK để mình theo dõi.',
   addressChangeReady: 'Dạ được ạ, mình gửi em địa chỉ mới nhé.',
   addressChangeMissing: 'Dạ mình gửi thêm {{missing}} giúp em nhé.',
   apologyRepeatedReady: 'Dạ em xin lỗi ạ, em đã nhận đủ thông tin đơn {{productText}} rồi. Bên em sẽ xác nhận lại trước khi gửi nhé.',
@@ -22,6 +22,7 @@ const TEMPLATES = {
   orderInfoRequest: 'Dạ chốt đơn{{productSuffix}} mình gửi em {{orderInfoFields}} nhé.',
   orderIntentNoProduct: 'Dạ mình muốn chốt mã nào thì nhắn em mã sản phẩm nhé.',
   orderIntentWithProduct: 'Dạ {{productCode}} giá {{price}} ạ. Mình chốt thì gửi em {{orderInfoFields}} nhé. Bên em nhận hàng thanh toán, che tên sản phẩm trước khi gửi.',
+  orderInfoReminder: 'Dạ mình gửi giúp em:\n- Tên người nhận\n- SĐT\n- Địa chỉ nhận hàng\n\nđể em lên đơn cho mình nhé 😄',
   checkoutPendingInfo: 'Dạ em chốt giúp mình:\n{{cartLines}}\n\nBên em freeship và che tên sản phẩm khi gửi nha.\n\nMình gửi em:\n- Tên người nhận\n- SĐT\n- Địa chỉ nhận hàng\n\nđể em lên đơn cho mình nhé.',
 
   // ===== Sản phẩm / giá / so sánh =====
@@ -61,6 +62,8 @@ const TEMPLATES = {
   paymentDefault: 'Dạ bên em nhận hàng thanh toán ạ. Hàng che tên sản phẩm, gửi qua GHTK và có mã vận đơn theo dõi nhé.',
   deliveryPreorder: 'Dạ {{productCode}} là hàng đặt, thời gian về/giao khoảng {{preorderDays}} ạ. Nếu mình muốn mẫu có thể chốt nhanh hơn thì em gợi ý các mẫu không phải hàng đặt nhé.',
   deliveryDefault: 'Dạ bên em gửi Giao Hàng Tiết Kiệm. Sau khi lên đơn sẽ có mã vận đơn để mình theo dõi hành trình ạ.',
+  trackingPending: 'Dạ đơn của mình đang chờ shop xác nhận/gửi hàng ạ 😄 Sau khi gửi bên em sẽ nhắn mã vận đơn GHTK để mình theo dõi nha.',
+  trackingDefault: 'Dạ sau khi shop xác nhận và gửi hàng bên em sẽ nhắn mã vận đơn GHTK để mình theo dõi nha 😄',
   returnPolicy: 'Dạ shop cần nhân viên xác nhận kỹ tình trạng đơn trước khi đổi trả hoặc xử lý lỗi. Mình giữ nguyên hình ảnh/video nhận hàng nếu có vấn đề để shop hỗ trợ nhanh ạ.',
 
   // ===== Tư vấn theo ngân sách / tính năng =====
@@ -73,7 +76,7 @@ const TEMPLATES = {
   quietAdvice: 'Dạ nếu mình ưu tiên kín đáo/dễ cất thì nên chọn các mẫu nhỏ gọn như {{options}}. Shop vẫn gói kín, không ghi tên sản phẩm bên ngoài ạ.',
 
   // ===== Handoff =====
-  humanHandoff: 'Dạ em chuyển mình qua nhân viên tư vấn hỗ trợ kỹ hơn nhé. Mình chờ một chút ạ 🙏',
+  humanHandoff: 'Dạ em đã chuyển nhân viên hỗ trợ mình rồi ạ 😄\nMình chờ giúp em ít phút nhé.',
   systemBusy: 'Xin lỗi mình, hệ thống đang bận. Mình thử lại sau nhé! 🙏'
 };
 

@@ -832,6 +832,29 @@ function buildSheetDedupeKey(senderId, messageId, userText) {
   return crypto.createHash('sha256').update(fingerprint, 'utf8').digest('hex');
 }
 
+function normalizeCartForHash(cartItems = []) {
+  return (Array.isArray(cartItems) ? cartItems : [])
+    .map(item => ({
+      code: String(item.code || '').trim().toUpperCase(),
+      name: String(item.name || '').trim().toLowerCase(),
+      qty: Number(item.qty || 1) || 1,
+      variant: String(item.variant || '').trim().toLowerCase()
+    }))
+    .filter(item => item.code || item.name)
+    .sort((a, b) => `${a.code}|${a.name}|${a.variant}`.localeCompare(`${b.code}|${b.name}|${b.variant}`));
+}
+
+function buildOrderStaffNotificationHash(orderDraft = {}, fallbackProductCode = '') {
+  const payload = {
+    cartItems: normalizeCartForHash(orderDraft.cartItems),
+    productCode: String(orderDraft.productCode || fallbackProductCode || '').trim().toUpperCase(),
+    name: normalizeText(String(orderDraft.name || '').trim()),
+    phone: String(orderDraft.phone || '').replace(/\D/g, ''),
+    address: normalizeText(String(orderDraft.address || '').trim())
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
+}
+
 /** Lead đồng bộ Sheet khi đơn CONFIRMED: cùng trường với orderDraft + mô tả sản phẩm nếu có. */
 function buildConfirmedSheetLead(senderId, opts = {}) {
   const { messageId = '', userText = '' } = opts;
@@ -862,6 +885,49 @@ function buildConfirmedSheetLead(senderId, opts = {}) {
     productInterest: cartText ? `${productInterest}${productInterest ? ' + ' : ''}${cartText}` : productInterest,
     confirmedAt: new Date().toISOString()
   };
+}
+
+async function notifyStaffForReadyOrder(senderId, userText, opts = {}) {
+  const draft = storage.getOrderDraft(senderId);
+  if (deriveSessionState(senderId, draft) !== STATES.READY_TO_CONFIRM) return false;
+  const hasProduct = Boolean(
+    String(draft.productCode || storage.getLastProductCode(senderId) || '').trim()
+    || (Array.isArray(draft.cartItems) && draft.cartItems.length)
+  );
+  if (!hasProduct) return false;
+
+  const fallbackProductCode = storage.getLastProductCode(senderId);
+  const hash = buildOrderStaffNotificationHash(draft, fallbackProductCode);
+  const notified = storage.getOrderStaffNotification
+    ? storage.getOrderStaffNotification(senderId)
+    : {};
+  if (notified.hash === hash) return false;
+
+  const confirmedLead = buildConfirmedSheetLead(senderId, {
+    messageId: opts.messageId || '',
+    userText
+  });
+  const isUpdate = Boolean(notified.hash);
+  trackEvent(senderId, isUpdate ? 'order_update_staff_notified' : 'order_staff_notified', userText, {
+    productCode: confirmedLead.productCode || '',
+    productInterest: confirmedLead.productInterest || '',
+    previousNotifiedAt: notified.at || ''
+  });
+  console.log(`📤 Đơn đủ thông tin — gửi ${isUpdate ? 'cập nhật ' : ''}lead cho nhân viên (${senderId}).`);
+  void pushLeadToSheet(confirmedLead);
+  sendTelegramAlert({
+    ...confirmedLead,
+    text: isUpdate ? 'CẬP NHẬT ĐƠN' : 'ĐƠN ĐỦ THÔNG TIN'
+  });
+  if (storage.setOrderStaffNotification) {
+    storage.setOrderStaffNotification(senderId, {
+      hash,
+      at: confirmedLead.confirmedAt
+    });
+  }
+  storage.setSessionState(senderId, STATES.CONFIRMED);
+  storage.setHandoff(senderId, Date.now() + HANDOFF_MS);
+  return true;
 }
 
 function buildLeadDetails(userText, senderId) {
@@ -1048,11 +1114,12 @@ async function trackFallbackAttention(senderId, userText, reply) {
 
 async function sendTelegramAlert(leadData) {
   try {
-    const text = `🚨 CÓ ĐƠN HÀNG MỚI!
+    const title = leadData.text || 'CÓ ĐƠN HÀNG MỚI';
+    const text = `🚨 ${title}
 👤 Tên: ${leadData.name || 'Không có'}
 📞 SĐT: ${leadData.phone || 'Không có'}
 🏠 Địa chỉ: ${leadData.address || 'Không có'}
-📦 Sản phẩm: ${leadData.productCode || 'Không có'}`;
+📦 Sản phẩm: ${leadData.productInterest || leadData.productCode || 'Không có'}`;
 
     await sendTelegramMessage(text);
   } catch (err) {
@@ -1234,6 +1301,8 @@ async function handleEvent(event, baseUrlOverride = '') {
       at: new Date().toISOString()
     });
   }
+
+  await notifyStaffForReadyOrder(senderId, userText, { messageId: mid || '' });
 
   const sessionBeforeConfirm = storage.getSessionState(senderId);
   if (shouldSilenceAfterCompleteOrder(userText, senderId)) {
