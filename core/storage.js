@@ -24,10 +24,11 @@ function loadJSON(file, fallback) {
   }
 }
 
-const state = loadJSON(STATE_FILE, { history: {}, handoff: {}, context: {} });
+const state = loadJSON(STATE_FILE, { history: {}, handoff: {}, context: {}, profiles: {} });
 if (!state.history) state.history = {};
 if (!state.handoff) state.handoff = {};
 if (!state.context) state.context = {};
+if (!state.profiles) state.profiles = {};
 const mids = new Set(loadJSON(MIDS_FILE, []));
 const MID_LIMIT = 5000;
 let customerWriteQueue = Promise.resolve();
@@ -219,6 +220,32 @@ module.exports = {
     if (!state.context[userId]) state.context[userId] = {};
     state.context[userId].lastUserAt = at;
     scheduleSave();
+  },
+
+  getUserProfile(userId) {
+    return state.profiles[userId] ? { ...state.profiles[userId] } : {};
+  },
+
+  setUserProfile(userId, profile = {}) {
+    if (!userId) return {};
+    const firstName = String(profile.firstName || profile.first_name || '').trim();
+    const lastName = String(profile.lastName || profile.last_name || '').trim();
+    const name = String(profile.name || [firstName, lastName].filter(Boolean).join(' ')).trim();
+    const profilePic = String(profile.profilePic || profile.profile_pic || '').trim();
+    const current = state.profiles[userId] || {};
+    const next = {
+      ...current,
+      firstName,
+      lastName,
+      name,
+      profilePic,
+      updatedAt: String(profile.updatedAt || new Date().toISOString())
+    };
+
+    if (!next.name && !next.firstName && !next.lastName && !next.profilePic) return { ...current };
+    state.profiles[userId] = next;
+    scheduleSave();
+    return { ...next };
   },
 
   getOrderDraft(userId) {

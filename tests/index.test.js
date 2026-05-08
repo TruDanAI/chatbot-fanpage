@@ -12,6 +12,9 @@ const {
   buildGeminiRequestHistory,
   buildGeminiRuntimeContext,
   buildLeadDetails,
+  buildTelegramLeadAlertText,
+  buildTelegramUserLines,
+  getFacebookProfileDisplayName,
   maybeResetTimedOutSession,
   recordConversationTurn
 } = require('../index');
@@ -257,5 +260,46 @@ describe('index/storage: nhắc giỏ bỏ dở', () => {
 
     expect(reset).toBeFalse();
     expect(storage.getOrderDraft(userId).cartItems.length).toBe(1);
+  });
+});
+
+describe('index: Telegram hiển thị tên Facebook', () => {
+  it('format User bằng tên Facebook và vẫn giữ ID để tra soát', () => {
+    const lines = buildTelegramUserLines('123456789', {
+      firstName: 'Nguyễn',
+      lastName: 'An'
+    });
+
+    expect(lines).toEqual(['User: Nguyễn An', 'Facebook ID: 123456789']);
+  });
+
+  it('fallback về senderId khi chưa lấy được profile Facebook', () => {
+    expect(buildTelegramUserLines('123456789', {})).toEqual(['User: 123456789']);
+  });
+
+  it('alert đơn hàng tách tên Facebook và tên nhận hàng', () => {
+    const text = buildTelegramLeadAlertText({
+      senderId: '123456789',
+      text: 'ĐƠN ĐỦ THÔNG TIN - CHỜ KHÁCH OK',
+      name: 'Tran Van B',
+      phone: '0987654321',
+      address: '12 Tran Phu',
+      productCode: 'MÃ8'
+    }, {
+      name: 'Nguyễn An'
+    });
+
+    expect(text).toContain('User: Nguyễn An');
+    expect(text).toContain('Facebook ID: 123456789');
+    expect(text).toContain('Tên nhận hàng: Tran Van B');
+    expect(text).toContain('Sản phẩm: MÃ8');
+  });
+
+  it('ưu tiên profile.name khi có sẵn', () => {
+    expect(getFacebookProfileDisplayName({
+      name: 'Le Minh',
+      firstName: 'Ignored',
+      lastName: 'Name'
+    })).toBe('Le Minh');
   });
 });

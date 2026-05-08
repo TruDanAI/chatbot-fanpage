@@ -132,6 +132,7 @@ const ABANDONED_CART_REMINDER_ENABLED = String(process.env.ABANDONED_CART_REMIND
 const ABANDONED_CART_REMINDER_MS = envPositiveNumber('ABANDONED_CART_REMINDER_MS', 20 * 60 * 1000);
 const ABANDONED_CART_REMINDER_SCAN_MS = envPositiveNumber('ABANDONED_CART_REMINDER_SCAN_MS', 60 * 1000);
 const ABANDONED_CART_REMINDER_MAX_AGE_MS = envPositiveNumber('ABANDONED_CART_REMINDER_MAX_AGE_MS', 23 * 60 * 60 * 1000);
+const FB_PROFILE_CACHE_TTL_MS = envPositiveNumber('FB_PROFILE_CACHE_TTL_MS', 7 * 24 * 60 * 60 * 1000);
 const GEMINI_HISTORY_LIMIT = 20;
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL ||
@@ -170,6 +171,7 @@ app.use(express.json({
 }));
 
 const attentionStateByUser = new Map();
+const facebookProfileFetches = new Map();
 
 // ========== IMAGE SERVING ==========
 const ALLOWED_IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -1488,6 +1490,82 @@ function startAbandonedCartReminderWorker(options = {}) {
   return abandonedCartReminderTimer;
 }
 
+function getFacebookProfileDisplayName(profile = {}) {
+  return String(
+    profile.name
+    || [profile.firstName || profile.first_name, profile.lastName || profile.last_name].filter(Boolean).join(' ')
+  ).replace(/\s+/g, ' ').trim();
+}
+
+function isFreshFacebookProfile(profile = {}) {
+  const updatedAt = Date.parse(String(profile.updatedAt || ''));
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt <= FB_PROFILE_CACHE_TTL_MS;
+}
+
+async function fetchFacebookUserProfile(senderId, fallback = {}) {
+  try {
+    const { data } = await axios.get(
+      `https://graph.facebook.com/v19.0/${encodeURIComponent(senderId)}`,
+      {
+        params: {
+          fields: 'first_name,last_name,profile_pic',
+          access_token: FB_PAGE_TOKEN
+        },
+        timeout: 5000
+      }
+    );
+    const profile = {
+      firstName: data?.first_name || '',
+      lastName: data?.last_name || '',
+      profilePic: data?.profile_pic || ''
+    };
+    profile.name = getFacebookProfileDisplayName(profile);
+    if (!getFacebookProfileDisplayName(profile)) return fallback || {};
+    return storage.setUserProfile ? storage.setUserProfile(senderId, profile) : profile;
+  } catch (err) {
+    if (getFacebookProfileDisplayName(fallback)) return fallback;
+    const e = err.response?.data?.error;
+    console.warn(`⚠️ Không lấy được tên Facebook của ${senderId}: ${e?.message || err.message}`);
+    return {};
+  }
+}
+
+async function getFacebookUserProfile(senderId, options = {}) {
+  if (!senderId) return {};
+  const cached = storage.getUserProfile ? storage.getUserProfile(senderId) : {};
+  if (getFacebookProfileDisplayName(cached) && isFreshFacebookProfile(cached)) return cached;
+  if (options.cachedOnly) return cached;
+  if (facebookProfileFetches.has(senderId)) return facebookProfileFetches.get(senderId);
+
+  const pending = fetchFacebookUserProfile(senderId, cached)
+    .finally(() => facebookProfileFetches.delete(senderId));
+  facebookProfileFetches.set(senderId, pending);
+  return pending;
+}
+
+function buildTelegramUserLines(senderId, profile = {}) {
+  const displayName = getFacebookProfileDisplayName(profile);
+  if (!senderId) return displayName ? [`User: ${displayName}`] : [];
+  if (!displayName) return [`User: ${senderId}`];
+  return [
+    `User: ${displayName}`,
+    `Facebook ID: ${senderId}`
+  ];
+}
+
+function buildTelegramLeadAlertText(leadData, profile = {}) {
+  const title = leadData.text || 'CÓ ĐƠN HÀNG MỚI';
+  const userLines = buildTelegramUserLines(leadData.senderId || '', profile);
+  return [
+    `🚨 ${title}`,
+    ...userLines,
+    `👤 Tên nhận hàng: ${leadData.name || 'Không có'}`,
+    `📞 SĐT: ${leadData.phone || 'Không có'}`,
+    `🏠 Địa chỉ: ${leadData.address || 'Không có'}`,
+    `📦 Sản phẩm: ${leadData.productInterest || leadData.productCode || 'Không có'}`
+  ].filter(Boolean).join('\n');
+}
+
 function formatOrderDraftForAlert(senderId) {
   const draft = storage.getOrderDraft(senderId);
   const cartItems = Array.isArray(draft.cartItems) ? draft.cartItems : [];
@@ -1545,12 +1623,14 @@ async function sendTelegramOperationalAlert({ senderId, reason, userText = '', r
       })
       .filter(Boolean)
       .join('\n');
+    const profile = await getFacebookUserProfile(senderId);
+    const userLines = buildTelegramUserLines(senderId, profile);
 
     const text = [
       '🚨 CẦN NHÂN VIÊN HỖ TRỢ',
       '',
       `Lý do: ${reason || 'Không rõ'}`,
-      `User: ${senderId}`,
+      ...userLines,
       '',
       formatOrderDraftForAlert(senderId),
       '',
@@ -1606,12 +1686,8 @@ async function trackFallbackAttention(senderId, userText, reply) {
 
 async function sendTelegramAlert(leadData) {
   try {
-    const title = leadData.text || 'CÓ ĐƠN HÀNG MỚI';
-    const text = `🚨 ${title}
-👤 Tên: ${leadData.name || 'Không có'}
-📞 SĐT: ${leadData.phone || 'Không có'}
-🏠 Địa chỉ: ${leadData.address || 'Không có'}
-📦 Sản phẩm: ${leadData.productInterest || leadData.productCode || 'Không có'}`;
+    const profile = await getFacebookUserProfile(leadData.senderId || '', { cachedOnly: false });
+    const text = buildTelegramLeadAlertText(leadData, profile);
 
     await sendTelegramMessage(text);
   } catch (err) {
@@ -2058,6 +2134,9 @@ module.exports = {
   buildAbandonedCartReminderText,
   buildGeminiRuntimeContext,
   buildGeminiRequestHistory,
+  buildTelegramLeadAlertText,
+  buildTelegramUserLines,
+  getFacebookProfileDisplayName,
   recordConversationTurn,
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,
