@@ -34,6 +34,13 @@ module.exports = {
 
   wantsVibration: t => /\brung\b|co\s*pin|sac\s*pin/.test(t),
 
+  productPitch(product) {
+    if (String(product?.code || '').toUpperCase() === 'MÃ7') {
+      return 'form khá mềm và chân thật';
+    }
+    return '';
+  },
+
   productImageExtraNames(product) {
     const code = String(product?.code || '');
     if (/gel/i.test(code)) {
@@ -102,6 +109,8 @@ CÁCH TƯ VẤN:
       'Dạ sản phẩm bên {{shopName}} chỉ tư vấn và bán cho khách từ đủ {{minAge}} tuổi trở lên ạ. Nếu mình đã đủ {{minAge}} tuổi thì em hỗ trợ tư vấn bình thường nhé.',
     budgetTightCustom:
       'Dạ tầm 200k thì gần nhất là MÃ10 giá 150k, nhỏ gọn không rung. Có rung thì mình xem MÃ2 giá 300k ạ.',
+    budgetOptions:
+      'Dạ có nha mình 😄 Tầm {{budgetLabel}} bên em có vài mẫu nhỏ gọn với dễ dùng lắm ạ.\n\nĐể em gửi mình mấy mẫu đang được hỏi nhiều trong tầm giá này nha 👌\n{{lines}}',
     featureAdviceDefault:
       'Dạ em gợi ý nhanh: tiết kiệm MÃ10 150k, có rung MÃ2 300k, cao cấp MÃ8 680k. Mình muốn tầm giá nào ạ?',
     bestSeller:

@@ -125,6 +125,13 @@ describe('Engine: intent router cơ bản', () => {
   it('PRODUCT_LIST khi user gõ mã', () => {
     expect(engine.buildDeterministicReply('m8 còn không', 'u2')).toContain('MÃ8');
   });
+  it('PRODUCT_LIST một mã trả lời dạng tư vấn', () => {
+    const reply = engine.buildDeterministicReply('mã 7', 'u_ma7');
+    expect(reply).toContain('Dạ mã 7 bên em đang 560k nha mình');
+    expect(reply).toContain('form khá mềm và chân thật');
+    expect(reply).toContain('size 12x25cm');
+    expect(reply).toContain('tặng kèm 10 gói gel luôn ạ');
+  });
   it('ORDER_INTENT trả về giá', () => {
     expect(engine.buildDeterministicReply('chốt MÃ8', 'u3')).toContain('680k');
   });
@@ -150,14 +157,36 @@ describe('Engine: intent router cơ bản', () => {
     const r = eng.buildDeterministicReply('loại 150k thế nào vậy shop', 'u_150');
     expect(r).toContain('150');
     expect(r).toContain('MÃ10');
-    expect(/^Dạ trong ngân sách khoảng 150k/m.test(String(r))).toBe(true);
+    expect(r).toContain('Tầm khoảng 150k');
+  });
+  it('"có mã nào dưới 200k không" → BUDGET, không PRICE mã last', () => {
+    const store = makeStore();
+    store.setLastProductCode('u_under_200', 'MÃ7');
+    const eng = createRuleEngine({ products, config: shopConfig, contextStore: store });
+    const r = eng.buildDeterministicReply('có mã nào dưới 200k không', 'u_under_200');
+    expect(r).toContain('Dạ có nha mình');
+    expect(r).toContain('Tầm dưới 200k');
+    expect(r).toContain('Để em gửi mình mấy mẫu đang được hỏi nhiều trong tầm giá này');
+    expect(r).toContain('MÃ10');
+    expect(r).toContain('150k');
+    expect(r.includes('MÃ7 giá 560k')).toBeFalse();
+  });
+  it('"Cos mã nào dưới 200k ko shop" → BUDGET, không PRICE mã last', () => {
+    const store = makeStore();
+    store.setLastProductCode('u_under_200_typo', 'MÃ7');
+    const eng = createRuleEngine({ products, config: shopConfig, contextStore: store });
+    const r = eng.buildDeterministicReply('Cos mã nào dưới 200k ko shop', 'u_under_200_typo');
+    expect(r).toContain('Tầm dưới 200k');
+    expect(r).toContain('MÃ10');
+    expect(r).toContain('150k');
+    expect(r.includes('MÃ7 giá 560k')).toBeFalse();
   });
   it('PRODUCT_NOT_FOUND khi mã ngoài menu', () => {
     expect(engine.buildDeterministicReply('cho xem MÃ99', 'u4')).toContain('MÃ99');
   });
   it('không coi "MÃ8 300k" là PRICE_CLARIFICATION', () => {
     const reply = engine.buildDeterministicReply('MÃ8 300k', 'u_price_mention');
-    expect(reply).toContain('em gửi mình xem qua');
+    expect(reply).toContain('mã 8 bên em đang 680k');
     expect(reply.includes('giá 680k')).toBeFalse();
   });
   it('"đổi sang mã 10" dùng đúng mã mới thay vì hỏi lại', () => {

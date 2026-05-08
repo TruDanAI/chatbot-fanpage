@@ -79,6 +79,11 @@ function compactProductName(product) {
   return product ? `${product.code} giá ${explainPrice(product.price)}` : 'mẫu anh/chị chọn';
 }
 
+function displayProductCode(code) {
+  const match = String(code || '').match(/^MÃ(\d+)$/i);
+  return match ? `mã ${match[1]}` : String(code || '');
+}
+
 // ===== Detector functions (đều preprocess hoá ở bên trong) =====
 function asksWhyRepeatedInfo(text) {
   const t = preprocess(text);
@@ -161,6 +166,17 @@ function isPriceClarification(text) {
 
   if (hasPriceKeyword && !hasPriceAmount) return true;
   return (hasPriceKeyword || hasPriceAmount) && hasClarificationMarker;
+}
+
+function isBudgetInquiry(text) {
+  const t = preprocess(text);
+  if (!/(?:\d{2,4}\s*k|\d+\.\d+k|\d+\s*(?:nghin|trieu|tr)\b)/.test(t)) return false;
+  return /\b(?:ngan\s*sach|tam|khoang|duoi|toi\s*da|max|khong\s*qua|trong\s*tam|mau\s*nao|ma\s*nao|loai\s*nao|co\s*(?:ma|mau|loai)\s*nao)\b/.test(t);
+}
+
+function isUpperBoundBudget(text) {
+  const t = preprocess(text);
+  return /\b(?:duoi|toi\s*da|max|khong\s*qua|trong\s*tam)\b/.test(t);
 }
 
 function wantsShippingPrivacy(text) {
@@ -498,6 +514,24 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     return `${product.code}: ${product.price}${details ? ` - ${details}` : ''}`;
   }
 
+  function productPitch(product) {
+    if (typeof config.productPitch === 'function') {
+      const custom = config.productPitch(product);
+      if (custom) return custom;
+    }
+    return product.description || 'đúng mẫu trong menu shop đang tư vấn';
+  }
+
+  function productDetailReply(product) {
+    return render('productDetail', {
+      productCode: displayProductCode(product.code),
+      price: explainPrice(product.price),
+      pitch: productPitch(product),
+      sizeText: product.size ? `, size ${product.size}` : '',
+      giftText: product.gift ? `, bên em đang tặng kèm ${product.gift}` : ''
+    });
+  }
+
   function formatComparisonLine(product) {
     const tags = [
       product.size ? `size ${product.size}` : '',
@@ -533,6 +567,10 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     const wantsPhoto = /\banh\b|\bhinh\b|\bxem\b|\bcoi\b|\bgui\b|\bmenu\b|\bdanh\s*sach\b/.test(t);
     const budgetMatch = t.match(/(?:ngan\s*sach\s*)?(\d{2,4})\s*k\b/);
     const budget = budgetMatch ? Number(budgetMatch[1]) : null;
+    const budgetInquiry = isBudgetInquiry(userText);
+    const budgetLabel = budget
+      ? `${isUpperBoundBudget(userText) ? 'dưới' : 'khoảng'} ${budget}k`
+      : '';
 
     return {
       text: userText,
@@ -551,6 +589,8 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       wantsLarge,
       wantsPhoto,
       budget,
+      budgetLabel,
+      budgetInquiry,
       mentionsKeyword(keyword) {
         const map = config.keywordProducts || {};
         if (!Object.prototype.hasOwnProperty.call(map, keyword)) return false;
@@ -728,12 +768,14 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       match: ctx => {
         if (!isPriceClarification(ctx.text) || !ctx.selectedProduct) return false;
         const t = ctx.normalized;
-        // "loại 150k thế nào" — hỏi mẫu theo mức giá; không báo giá mã lastProduct.
+        // "loại 150k thế nào", "có mã nào dưới 200k không" — hỏi mẫu theo mức giá;
+        // không báo giá mã lastProduct.
         if (
           ctx.budget
           && !ctx.found.length
           && (
-            /\b(?:loai|mau|hang)\b/.test(t)
+            ctx.budgetInquiry
+            || /\b(?:loai|mau|hang)\b/.test(t)
             || /(?:the\s*nao|nhu\s*the\s*nao)/.test(t)
           )
         ) {
@@ -885,6 +927,8 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
       name: 'PRODUCT_LIST',
       match: ctx => ctx.found.length > 0,
       handle: ctx => {
+        if (ctx.found.length === 1) return productDetailReply(ctx.found[0]);
+
         const lines = ctx.found.slice(0, 3).map(formatProductLine).join('\n');
         const photoNote = ctx.wantsPhoto
           ? render('productListPhotoSent')
@@ -905,6 +949,7 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
         if (options.length) {
           return render('budgetOptions', {
             budget: ctx.budget,
+            budgetLabel: ctx.budgetLabel,
             lines: options.map(formatProductLine).join('\n')
           });
         }

@@ -59,7 +59,7 @@ describe('TEMPLATES coverage', () => {
     'phoneWithLeadMissing', 'phoneOnlyMissing',
     'infoMissingWithProduct', 'infoMissingNoProduct',
     'orderInfoRequest', 'orderIntentNoProduct', 'orderIntentWithProduct',
-    'productNotFound', 'priceClarification', 'comparison', 'productList',
+    'productNotFound', 'priceClarification', 'comparison', 'productDetail', 'productList',
     'menuSent', 'productImage', 'gelInfo', 'newProducts',
     'stockInfoSelected', 'stockInfoUnknown', 'bestSeller',
     'sizeInfo', 'giftInfo', 'fitInfo', 'materialInfo', 'easyUseInfo', 'cleaningInfo',

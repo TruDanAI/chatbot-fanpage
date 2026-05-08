@@ -27,6 +27,7 @@ const TEMPLATES = {
   productNotFound: 'Dạ hiện bên em chưa có {{codes}} ạ. Mình xem mã khác trong menu giúp em nhé.',
   priceClarification: 'Dạ {{productCode}} giá {{price}} ạ. Mẫu này {{stockText}}{{giftText}}.',
   comparison: 'Dạ em so sánh nhanh cho mình nhé:\n{{lines}}\nNếu ưu tiên tiết kiệm thì chọn mẫu giá thấp hơn; nếu muốn trải nghiệm thật/to hơn thì chọn mẫu kích thước lớn hơn ạ.',
+  productDetail: 'Dạ {{productCode}} bên em đang {{price}} nha mình 😄\n\nMẫu này {{pitch}}{{sizeText}}{{giftText}} luôn ạ.\n\n🔥 Dòng này hiện nhiều khách lấy lắm bên shop nha.\n\nMình thích kiểu giống thật hay mềm dễ dùng hơn để em tư vấn thêm cho mình ạ?',
   productList: 'Dạ em gửi mình xem qua:\n{{lines}}\n{{photoNote}}',
   productListPhotoSent: 'Ưng mã nào mình nhắn em tư vấn ạ.',
   productListAskPhoto: 'Ưng mã nào mình nhắn em tư vấn ạ.',
