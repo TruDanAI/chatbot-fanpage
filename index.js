@@ -9,6 +9,7 @@ const storage = require('./core/storage');
 const { pushLeadToSheet, startSheetOutboxWorker } = require('./core/sheets-webhook');
 const { loadProducts } = require('./core/products');
 const { createRuleEngine } = require('./core/rules');
+const { buildQuickReplies, resolveQuickReplyPayload } = require('./core/quick-replies');
 
 const ROOT_DIR = __dirname;
 
@@ -355,6 +356,28 @@ async function sendMessage(recipientId, text) {
     await postFb({
       recipient: { id: recipientId },
       message: { text: chunk, metadata: BOT_MESSAGE_METADATA }
+    });
+  }
+}
+
+async function sendQuickReplies(recipientId, text, quickReplies = []) {
+  const replies = Array.isArray(quickReplies) ? quickReplies.filter(Boolean).slice(0, 13) : [];
+  if (!replies.length) return sendMessage(recipientId, text);
+
+  const chunks = [];
+  text = String(text || '');
+  while (text.length > 0) {
+    chunks.push(text.slice(0, 1900));
+    text = text.slice(1900);
+  }
+  if (!chunks.length) chunks.push('');
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    const message = { text: chunks[i], metadata: BOT_MESSAGE_METADATA };
+    if (i === chunks.length - 1) message.quick_replies = replies;
+    await postFb({
+      recipient: { id: recipientId },
+      message
     });
   }
 }
@@ -1101,12 +1124,20 @@ async function handleEvent(event, baseUrlOverride = '') {
   }
 
   let userText = null;
-  if (event.message?.text) userText = event.message.text;
+  let quickReplyPayload = '';
+  if (event.message?.quick_reply?.payload) {
+    quickReplyPayload = event.message.quick_reply.payload;
+    const resolved = resolveQuickReplyPayload(quickReplyPayload, shopConfig);
+    userText = resolved?.text || event.message?.text || quickReplyPayload;
+  } else if (event.message?.text) userText = event.message.text;
   else if (event.postback?.payload) userText = event.postback.payload;
   if (!userText) return;
 
   console.log(`📩 [${senderId}]: ${userText}`);
-  trackEvent(senderId, 'message_received', userText, { messageId: mid || '' });
+  trackEvent(senderId, 'message_received', userText, {
+    messageId: mid || '',
+    quickReplyPayload
+  });
   maybeResetTimedOutSession(senderId, userText);
 
   // Khách yêu cầu gặp nhân viên → tạm dừng bot, ghi log
@@ -1290,9 +1321,24 @@ async function handleEvent(event, baseUrlOverride = '') {
     if (stateBeforeReply !== STATES.COLLECTING_INFO && stateAfterReply === STATES.COLLECTING_INFO) {
       trackEvent(senderId, 'checkout_started', userText, { stateBefore: stateBeforeReply });
     }
+    const quickReplies = buildQuickReplies({
+      stateBeforeReply,
+      stateAfterReply,
+      isGreeting,
+      fallbackUsed: !deterministicMatched,
+      lastProductCode: storage.getLastProductCode(senderId),
+      orderDraft: storage.getOrderDraft(senderId)
+    }, shopConfig);
     console.log(`🤖 reply: ${reply.slice(0, 120).replace(/\n/g, ' ')}`);
     await imagePromise; // đợi ảnh xong rồi mới gửi text để text xuất hiện sau ảnh
-    await sendMessage(senderId, reply);
+    if (quickReplies.length) {
+      trackEvent(senderId, 'quick_replies_sent', userText, {
+        payloads: quickReplies.map(item => item.payload)
+      });
+      await sendQuickReplies(senderId, reply, quickReplies);
+    } else {
+      await sendMessage(senderId, reply);
+    }
     console.log(`✉️  Đã gửi tin tới ${senderId}`);
   } catch (err) {
     const geminiInfo = getGeminiErrorInfo(err);

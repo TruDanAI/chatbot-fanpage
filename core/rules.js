@@ -211,7 +211,7 @@ function isUpperBoundBudget(text) {
 
 function wantsShippingPrivacy(text) {
   const t = preprocess(text);
-  return /(?:bao\s*mat|kin\s*dao|goi\s*kin|dong\s*goi|lo\s*hang|ten\s*shop|noi\s*dung|nhay\s*cam|ship\s*co\s*kin)/.test(t);
+  return /(?:bao\s*mat|kin\s*dao|(?:goi|dong\s*goi|ship|giao|gui)\s*(?:hang\s*)?(?:co\s*)?kin|lo\s*hang|ten\s*shop|noi\s*dung|nhay\s*cam)/.test(t);
 }
 
 function wantsPaymentInfo(text) {

@@ -88,6 +88,16 @@ describe('detectors: BUG FIX wantsHuman dùng preprocess', () => {
   });
 });
 
+describe('detectors: shipping privacy', () => {
+  it('TRUE với "shop có giao kín ko ạ"', () => {
+    expect(detectors.wantsShippingPrivacy('shop có giao kín ko ạ')).toBeTrue();
+  });
+
+  it('FALSE với câu hỏi giao hàng thường', () => {
+    expect(detectors.wantsShippingPrivacy('shop giao hàng mấy ngày ạ')).toBeFalse();
+  });
+});
+
 describe('detectors: BUG FIX substring trong chốt / tôi', () => {
   it('wantsBestSeller FALSE với "chốt đi" ("hot" trong "chot" — BUG cũ)', () => {
     expect(detectors.wantsBestSeller('chốt đi')).toBeFalse();

@@ -3,6 +3,7 @@ const { run } = require('./harness');
 
 require('./nlp.test');
 require('./responses.test');
+require('./quick-replies.test');
 require('./rules.test');
 
 const exitCode = run();
