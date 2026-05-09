@@ -6,6 +6,7 @@ require('./responses.test');
 require('./quick-replies.test');
 require('./rules.test');
 require('./storage-file-adapter.test');
+require('./migration-plan.test');
 require('./index.test');
 
 run()
