@@ -118,12 +118,47 @@ const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOO
 const GOOGLE_CLOUD_LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'global';
 const PORT            = process.env.PORT || 3000;
 const ADMIN_EXPORT_TOKEN = process.env.ADMIN_EXPORT_TOKEN || '';
+const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase();
+const IS_PRODUCTION = NODE_ENV === 'production';
 
 function envPositiveNumber(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function envNumber(name, fallback, opts = {}) {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value)) return fallback;
+  if (opts.min != null && value < opts.min) return fallback;
+  if (opts.max != null && value > opts.max) return fallback;
+  return value;
+}
+
+function envBoolean(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  return /^(1|true|yes|on)$/i.test(String(raw).trim());
+}
+
+function envList(name) {
+  return String(process.env[name] || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeIp(ip) {
+  return String(ip || '').trim().replace(/^::ffff:/, '');
+}
+
+const REQUIRE_FB_APP_SECRET = IS_PRODUCTION || envBoolean('REQUIRE_FB_APP_SECRET', false);
+const GEMINI_TEMPERATURE = envNumber('GEMINI_TEMPERATURE', 0.3, { min: 0, max: 1 });
+const GEMINI_MAX_OUTPUT_TOKENS = Math.floor(envNumber('GEMINI_MAX_OUTPUT_TOKENS', 500, { min: 1, max: 2048 }));
+const WEBHOOK_RATE_LIMIT_WINDOW_MS = envPositiveNumber('WEBHOOK_RATE_LIMIT_WINDOW_MS', 60 * 1000);
+const WEBHOOK_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('WEBHOOK_RATE_LIMIT_MAX', 300)));
+const ADMIN_RATE_LIMIT_WINDOW_MS = envPositiveNumber('ADMIN_RATE_LIMIT_WINDOW_MS', 5 * 60 * 1000);
+const ADMIN_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('ADMIN_RATE_LIMIT_MAX', 60)));
+const ADMIN_IP_ALLOWLIST = envList('ADMIN_IP_ALLOWLIST').map(normalizeIp);
 const TELEGRAM_ALERT_COOLDOWN_MS = Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS || 10 * 60 * 1000);
 const FALLBACK_ALERT_THRESHOLD = Number(process.env.FALLBACK_ALERT_THRESHOLD || 2);
 const FALLBACK_HANDOFF_THRESHOLD = Number(process.env.FALLBACK_HANDOFF_THRESHOLD || 3);
@@ -141,6 +176,9 @@ const PUBLIC_BASE_URL =
   '';
 
 const required = { FB_VERIFY_TOKEN, FB_PAGE_TOKEN };
+if (REQUIRE_FB_APP_SECRET) {
+  required.FB_APP_SECRET = FB_APP_SECRET;
+}
 if (USE_GEMINI) {
   if (GEMINI_PROVIDER === 'api_key') {
     required.GEMINI_API_KEY = GEMINI_API_KEY;
@@ -161,7 +199,7 @@ if (missing.length) {
 }
 if (!FB_APP_SECRET) {
   console.warn('⚠️  Chưa set FB_APP_SECRET — webhook sẽ KHÔNG xác thực chữ ký.');
-  console.warn('   Khuyến nghị thêm để tránh request giả từ ngoài.');
+  console.warn('   Production luôn bắt buộc FB_APP_SECRET; non-prod có thể bật REQUIRE_FB_APP_SECRET=true để kiểm tra sớm.');
 }
 
 // ========== APP ==========
@@ -169,6 +207,17 @@ const app = express();
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf; }
 }));
+const webhookRateLimiter = createFixedWindowRateLimiter({
+  keyPrefix: 'webhook',
+  windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+  max: WEBHOOK_RATE_LIMIT_MAX
+});
+const adminRateLimiter = createFixedWindowRateLimiter({
+  keyPrefix: 'admin',
+  windowMs: ADMIN_RATE_LIMIT_WINDOW_MS,
+  max: ADMIN_RATE_LIMIT_MAX
+});
+app.use('/admin', adminRateLimiter);
 
 const attentionStateByUser = new Map();
 const facebookProfileFetches = new Map();
@@ -329,8 +378,8 @@ async function generateGeminiViaVertex(history) {
     contents: history,
     config: {
       systemInstruction: SYSTEM_PROMPT,
-      temperature: 0.8,
-      maxOutputTokens: 800
+      temperature: GEMINI_TEMPERATURE,
+      maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS
     }
   });
 }
@@ -341,7 +390,7 @@ async function generateGeminiViaApiKey(history) {
     {
       system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: history,
-      generationConfig: { temperature: 0.8, maxOutputTokens: 800 }
+      generationConfig: { temperature: GEMINI_TEMPERATURE, maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS }
     },
     { timeout: 20000 }
   );
@@ -1337,6 +1386,86 @@ function truncateText(text, max = 700) {
   return s.length > max ? `${s.slice(0, max - 3)}...` : s;
 }
 
+function maskPhone(phone) {
+  const raw = String(phone || '');
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 7) return '[redacted-phone]';
+  return `${digits.slice(0, 3)}***${digits.slice(-2)}`;
+}
+
+function redactSensitiveText(text) {
+  let s = String(text || '');
+  if (!s) return s;
+
+  s = s.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]');
+  s = s.replace(/(^|[^\d])((?:\+?84|0)\d(?:[\s.-]?\d){8,10})(?!\d)/g, (_m, prefix, phone) => `${prefix}${maskPhone(phone)}`);
+  s = s.replace(
+    /(^|[\s,;])((?:tên người nhận|ten nguoi nhan|người nhận|nguoi nhan|tên|ten)\s*(?:là|la|:)?\s*)([^\n,;]+?)(?=(?:\s+(?:sđt|sdt|số điện thoại|so dien thoai|địa chỉ|dia chi|dc)\b)|[,;\n]|$)/gi,
+    '$1$2[redacted-name]'
+  );
+  s = s.replace(
+    /(^|[\s,;])((?:địa chỉ|dia chi|dc|ship về|ship ve|giao về|giao ve)\s*(?:là|la|:|-)?\s*)[^\n\r,;]+/gi,
+    '$1$2[redacted-address]'
+  );
+  return s;
+}
+
+function redactEventMeta(value, depth = 0) {
+  if (value == null) return value;
+  if (typeof value === 'string') return redactSensitiveText(value);
+  if (typeof value !== 'object') return value;
+  if (depth > 4) return '[redacted-depth]';
+  if (Array.isArray(value)) return value.map(item => redactEventMeta(item, depth + 1));
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, redactEventMeta(item, depth + 1)])
+  );
+}
+
+function getClientIp(req) {
+  const forwarded = String(req?.get?.('x-forwarded-for') || '')
+    .split(',')[0]
+    .trim();
+  return normalizeIp(forwarded || req?.ip || req?.socket?.remoteAddress || '');
+}
+
+function createFixedWindowRateLimiter({ keyPrefix, windowMs, max }) {
+  const buckets = new Map();
+
+  return (req, res, next) => {
+    const now = Date.now();
+    const clientIp = getClientIp(req) || 'unknown';
+    const key = `${keyPrefix}:${clientIp}`;
+    const current = buckets.get(key);
+
+    if (!current || now - current.startedAt >= windowMs) {
+      buckets.set(key, { startedAt: now, count: 1 });
+      return next();
+    }
+
+    current.count += 1;
+    if (current.count <= max) return next();
+
+    const retryAfter = Math.max(1, Math.ceil((windowMs - (now - current.startedAt)) / 1000));
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).send('Too many requests.');
+  };
+}
+
+function getBearerToken(header = '') {
+  const match = String(header || '').match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+function getAdminRequestToken(req) {
+  return String(req?.get?.('x-admin-token') || getBearerToken(req?.get?.('authorization')) || '').trim();
+}
+
+function isAdminIpAllowed(req) {
+  if (!ADMIN_IP_ALLOWLIST.length) return true;
+  return ADMIN_IP_ALLOWLIST.includes(getClientIp(req));
+}
+
 function wantsUrgentHumanAttention(text) {
   const t = normalizeText(text);
   return /(?:khong\s*hieu|tra\s*loi\s*gi|noi\s*gi|bot|tu\s*van\s*te|hoi\s*mai|lau\s*the|buc\s*minh|kho\s*chiu|lua\s*dao|chan\s*the|mat\s*thoi\s*gian)/.test(t);
@@ -1361,10 +1490,10 @@ function trackEvent(senderId, type, text = '', meta = {}) {
   storage.appendEvent({
     type,
     senderId,
-    text,
+    text: redactSensitiveText(text),
     sessionState: deriveSessionState(senderId),
     productCode: draft.productCode || storage.getLastProductCode(senderId) || '',
-    meta
+    meta: redactEventMeta(meta)
   });
 }
 
@@ -1710,7 +1839,7 @@ app.get('/webhook', (req, res) => {
 });
 
 // ========== NHẬN TIN NHẮN ==========
-app.post('/webhook', (req, res) => {
+app.post('/webhook', webhookRateLimiter, (req, res) => {
   if (!verifySignature(req)) {
     console.warn('⚠️  Sai chữ ký webhook, từ chối request.');
     return res.sendStatus(403);
@@ -1762,7 +1891,7 @@ async function handleEvent(event, baseUrlOverride = '') {
   else if (event.postback?.payload) userText = event.postback.payload;
   if (!userText) return;
 
-  console.log(`📩 [${senderId}]: ${userText}`);
+  console.log(`📩 [${senderId}]: ${redactSensitiveText(userText)}`);
   trackEvent(senderId, 'message_received', userText, {
     messageId: mid || '',
     quickReplyPayload
@@ -1950,7 +2079,7 @@ async function handleEvent(event, baseUrlOverride = '') {
       trackEvent(senderId, 'gemini_reply', userText, { stateBefore: stateBeforeReply });
     }
     if (isProbablyIncompleteReply(reply, userText)) {
-      console.warn(`⚠️  Gemini trả lời có vẻ bị cụt, dùng fallback. Reply gốc: ${reply.replace(/\n/g, ' ')}`);
+      console.warn(`⚠️  Gemini trả lời có vẻ bị cụt, dùng fallback. Reply gốc: ${redactSensitiveText(reply).replace(/\n/g, ' ')}`);
       reply = buildFallbackReply(userText, senderId);
       usedFallbackReply = true;
       trackEvent(senderId, 'fallback_used', userText, { reason: 'incomplete_reply' });
@@ -1977,7 +2106,7 @@ async function handleEvent(event, baseUrlOverride = '') {
       lastProductCode: storage.getLastProductCode(senderId),
       orderDraft: storage.getOrderDraft(senderId)
     }, shopConfig);
-    console.log(`🤖 reply: ${reply.slice(0, 120).replace(/\n/g, ' ')}`);
+    console.log(`🤖 reply: ${redactSensitiveText(reply).slice(0, 120).replace(/\n/g, ' ')}`);
     await imagePromise; // đợi ảnh xong rồi mới gửi text để text xuất hiện sau ảnh
     if (quickReplies.length) {
       trackEvent(senderId, 'quick_replies_sent', userText, {
@@ -2009,7 +2138,7 @@ async function handleEvent(event, baseUrlOverride = '') {
         });
         await sendMessage(senderId, fallback);
         recordConversationTurn(senderId, userText, fallback);
-        console.log(`🛟 Fallback do Gemini lỗi (${geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus}): ${fallback.slice(0, 120).replace(/\n/g, ' ')}`);
+        console.log(`🛟 Fallback do Gemini lỗi (${geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus}): ${redactSensitiveText(fallback).slice(0, 120).replace(/\n/g, ' ')}`);
         await trackFallbackAttention(senderId, userText, fallback);
       } catch {}
       return;
@@ -2035,7 +2164,11 @@ function requireAdminToken(req, res) {
     res.status(503).send('ADMIN_EXPORT_TOKEN chưa được cấu hình.');
     return false;
   }
-  const token = req.query.token || req.get('x-admin-token');
+  if (!isAdminIpAllowed(req)) {
+    res.sendStatus(403);
+    return false;
+  }
+  const token = getAdminRequestToken(req);
   if (token !== ADMIN_EXPORT_TOKEN) {
     res.sendStatus(401);
     return false;
@@ -2136,8 +2269,10 @@ module.exports = {
   buildGeminiRequestHistory,
   buildTelegramLeadAlertText,
   buildTelegramUserLines,
+  getAdminRequestToken,
   getFacebookProfileDisplayName,
   recordConversationTurn,
+  redactSensitiveText,
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,
   startAbandonedCartReminderWorker

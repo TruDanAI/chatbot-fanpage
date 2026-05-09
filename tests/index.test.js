@@ -5,6 +5,7 @@ const path = require('path');
 process.env.DATA_DIR = path.join(os.tmpdir(), 'chatbot-fanpage-tests', String(process.pid));
 process.env.FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || 'test-verify-token';
 process.env.FB_PAGE_TOKEN = process.env.FB_PAGE_TOKEN || 'test-page-token';
+process.env.FB_APP_SECRET = process.env.FB_APP_SECRET || 'test-app-secret';
 process.env.USE_GEMINI = 'false';
 
 const {
@@ -14,8 +15,10 @@ const {
   buildLeadDetails,
   buildTelegramLeadAlertText,
   buildTelegramUserLines,
+  getAdminRequestToken,
   getFacebookProfileDisplayName,
   maybeResetTimedOutSession,
+  redactSensitiveText,
   recordConversationTurn
 } = require('../index');
 const storage = require('../core/storage');
@@ -143,6 +146,40 @@ describe('index: Gemini context smoothing', () => {
     expect(history[2].parts[0].text).toContain('MÃ10 giá 150k');
     expect(history[2].parts[0].text).toContain('Tin nhắn khách cần trả lời');
     expect(history[2].parts[0].text).toContain('mẫu đó dùng sao shop');
+  });
+});
+
+describe('index: security hardening helpers', () => {
+  it('redactSensitiveText che SĐT, email và trường địa chỉ trong log/event', () => {
+    const redacted = redactSensitiveText('Tên Nguyễn A, sdt 0987654321, email a@test.com, địa chỉ 12 Trần Phú');
+
+    expect(redacted.includes('0987654321')).toBeFalse();
+    expect(redacted.includes('a@test.com')).toBeFalse();
+    expect(redacted.includes('12 Trần Phú')).toBeFalse();
+    expect(redacted).toContain('[redacted-email]');
+    expect(redacted).toContain('[redacted-address]');
+  });
+
+  it('getAdminRequestToken chỉ nhận header, không nhận query token', () => {
+    const req = {
+      query: { token: 'from-query' },
+      get(name) {
+        return name === 'x-admin-token' ? 'from-header' : '';
+      }
+    };
+
+    expect(getAdminRequestToken(req)).toBe('from-header');
+  });
+
+  it('getAdminRequestToken nhận Authorization Bearer khi không có x-admin-token', () => {
+    const req = {
+      query: { token: 'from-query' },
+      get(name) {
+        return name === 'authorization' ? 'Bearer bearer-token' : '';
+      }
+    };
+
+    expect(getAdminRequestToken(req)).toBe('bearer-token');
   });
 });
 
