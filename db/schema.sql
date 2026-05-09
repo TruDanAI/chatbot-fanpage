@@ -1,7 +1,7 @@
--- Phase 2 database schema draft.
--- Inert by design: this file is not loaded by runtime code and has not been
--- applied to any database. Backup /data before any future migration or adapter
--- switch.
+-- File storage -> PostgreSQL schema.
+-- Runtime use is opt-in through STORAGE_ADAPTER=postgres and DATABASE_URL.
+-- Do not apply to or switch production until /data is backed up, dry-run and
+-- dev/staging apply are reviewed, and the owner explicitly approves prod DB writes.
 
 CREATE TABLE IF NOT EXISTS profiles (
   tenant_id TEXT NOT NULL,

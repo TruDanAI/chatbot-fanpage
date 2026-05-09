@@ -25,9 +25,9 @@ function readJsonl(file) {
 
 function runStorageAdapterContract({ name, createAdapter }) {
   describe(`${name}: storage adapter contract`, () => {
-    it('exposes data dir and initializes export files', () => {
+    it('exposes data dir and initializes export files', async () => {
       const dataDir = makeTempDataDir('chatbot-storage-contract-paths');
-      const storage = createAdapter({ dataDir });
+      const storage = await createAdapter({ dataDir });
 
       expect(storage.getDataDir()).toBe(dataDir);
       expect(storage.getCustomersFile()).toBe(path.join(dataDir, 'customers.csv'));
@@ -35,8 +35,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(fs.existsSync(storage.getCustomersFile())).toBeTrue();
     });
 
-    it('stores Gemini history and returns a copy of the history array', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-history') });
+    it('stores Gemini history and returns a copy of the history array', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-history') });
       const userId = 'contract_history';
       const history = [
         { role: 'user', parts: [{ text: 'mã 8' }] },
@@ -51,8 +51,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.getHistory('missing_user')).toEqual([]);
     });
 
-    it('stores and expires handoff windows', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-handoff') });
+    it('stores and expires handoff windows', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-handoff') });
       const userId = 'contract_handoff';
 
       storage.setHandoff(userId, Date.now() + 60 * 1000);
@@ -62,8 +62,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.inHandoff(userId)).toBeFalse();
     });
 
-    it('stores product context, last user activity, profile and session state', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-context') });
+    it('stores product context, last user activity, profile and session state', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-context') });
       const userId = 'contract_context';
 
       storage.setLastProductCode(userId, 'MÃ8');
@@ -86,8 +86,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.getSessionState(userId)).toBe('');
     });
 
-    it('merges, normalizes and clears order draft data', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-order') });
+    it('merges, normalizes and clears order draft data', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-order') });
       const userId = 'contract_order';
 
       storage.mergeOrderDraft(userId, {
@@ -116,8 +116,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.getSessionState(userId)).toBe('');
     });
 
-    it('stores staff notification markers inside the current order draft', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-staff') });
+    it('stores staff notification markers inside the current order draft', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-staff') });
       const userId = 'contract_staff';
 
       expect(storage.getOrderStaffNotification(userId)).toEqual({ hash: '', at: '' });
@@ -134,8 +134,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.getOrderDraft(userId).staffNotifiedHash).toBe('hash-1');
     });
 
-    it('resets timed-out sessions and preserves abandoned order snapshot in the return value', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-timeout') });
+    it('resets timed-out sessions and preserves abandoned order snapshot in the return value', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-timeout') });
       const userId = 'contract_timeout';
 
       storage.setLastProductCode(userId, 'MÃ8');
@@ -152,8 +152,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.getSessionState(userId)).toBe('IDLE');
     });
 
-    it('lists and marks abandoned cart reminder candidates', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-abandoned') });
+    it('lists and marks abandoned cart reminder candidates', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-abandoned') });
       const now = Date.parse('2026-05-08T00:00:00.000Z');
       const oldEnough = new Date(now - 21 * 60 * 1000).toISOString();
       const userId = 'contract_abandoned';
@@ -186,8 +186,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.listAbandonedCartReminderCandidates({ now, idleMs: 1, maxAgeMs: 23 * 60 * 60 * 1000 })).toEqual([]);
     });
 
-    it('marks failed abandoned cart reminders to avoid retry loops', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-abandoned-failed') });
+    it('marks failed abandoned cart reminders to avoid retry loops', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-abandoned-failed') });
       const now = Date.parse('2026-05-08T00:00:00.000Z');
       const userId = 'contract_abandoned_failed';
 
@@ -209,8 +209,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.listAbandonedCartReminderCandidates({ now, idleMs: 1, maxAgeMs: 23 * 60 * 60 * 1000 })).toEqual([]);
     });
 
-    it('deduplicates message ids', () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-mids') });
+    it('deduplicates message ids', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-mids') });
 
       expect(storage.seenMid('mid-1')).toBeFalse();
       storage.markMid('mid-1');
@@ -218,7 +218,7 @@ function runStorageAdapterContract({ name, createAdapter }) {
     });
 
     it('appends customers CSV and event JSONL records', async () => {
-      const storage = createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-append') });
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-append') });
 
       await storage.appendCustomer({
         at: '2026-05-08T00:00:00.000Z',

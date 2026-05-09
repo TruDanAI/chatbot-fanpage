@@ -134,4 +134,10 @@ Production database writes remain blocked until:
 - production `/data` has a verified copy outside Railway;
 - production dry-run report from the local copy is reviewed;
 - dev/staging DB apply has passed;
+- `STORAGE_ADAPTER=postgres` has been tested in a non-production runtime or
+  equivalent local smoke test;
 - the owner explicitly says: `duoc ghi DB production`.
+
+The PostgreSQL storage adapter is opt-in only. Do not set
+`STORAGE_ADAPTER=postgres`, `DATABASE_URL`, or related PostgreSQL variables in
+production as part of this backup runbook.

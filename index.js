@@ -429,20 +429,32 @@ function shutdown(signal) {
   if (!server) process.exit(0);
 
   server.close(() => {
-    console.log('✅ Server đã dừng gọn.');
-    process.exit(0);
+    Promise.resolve(storage.close?.())
+      .catch(err => console.error('❌ Lỗi đóng storage:', err.message))
+      .finally(() => {
+        console.log('✅ Server đã dừng gọn.');
+        process.exit(0);
+      });
   });
 
   setTimeout(() => process.exit(0), 8000).unref();
 }
 
-if (require.main === module) {
+async function startServer() {
+  await storage.ready;
   server = app.listen(PORT, async () => {
     const geminiLabel = USE_GEMINI ? `${GEMINI_PROVIDER}/${GEMINI_MODEL}` : 'off';
     console.log(`🚀 Bot shop="${ACTIVE_SHOP_ID}" port ${PORT} (sản phẩm: ${products.length}, Gemini: ${geminiLabel})`);
     await checkPageToken();
     startSheetOutboxWorker();
     startAbandonedCartReminderWorker();
+  });
+}
+
+if (require.main === module) {
+  startServer().catch(err => {
+    console.error('❌ Không khởi động được server:', err.message);
+    process.exit(1);
   });
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));

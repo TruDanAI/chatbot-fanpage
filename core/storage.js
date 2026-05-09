@@ -1,4 +1,5 @@
 const { createFileStorageAdapter } = require('./storage/file-adapter');
+const { createPostgresStorageAdapter } = require('./storage/postgres-adapter');
 
 function normalizeStorageAdapterName(raw) {
   return String(raw || 'file').trim().toLowerCase() || 'file';
@@ -11,7 +12,11 @@ function createStorageAdapter() {
     return createFileStorageAdapter();
   }
 
-  throw new Error(`STORAGE_ADAPTER="${adapterName}" chưa được hỗ trợ. Hiện chỉ hỗ trợ "file".`);
+  if (adapterName === 'postgres') {
+    return createPostgresStorageAdapter();
+  }
+
+  throw new Error(`STORAGE_ADAPTER="${adapterName}" chưa được hỗ trợ. Hiện hỗ trợ "file" và "postgres".`);
 }
 
 module.exports = createStorageAdapter();
