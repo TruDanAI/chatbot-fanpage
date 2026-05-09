@@ -16,6 +16,134 @@ const STORAGE_FILES = {
   sheetOutbox: 'sheet-outbox.jsonl'
 };
 
+const TARGET_TABLES = [
+  'profiles',
+  'conversations',
+  'messages',
+  'orders',
+  'order_items',
+  'events',
+  'processed_mids'
+];
+
+const WRITE_COLUMNS = {
+  profiles: [
+    'tenant_id',
+    'page_id',
+    'sender_id',
+    'first_name',
+    'last_name',
+    'name',
+    'profile_pic',
+    'raw_profile',
+    'created_at',
+    'updated_at'
+  ],
+  conversations: [
+    'tenant_id',
+    'page_id',
+    'sender_id',
+    'session_state',
+    'last_product_code',
+    'last_user_at',
+    'handoff_until',
+    'timed_out_at',
+    'abandoned_order_draft',
+    'meta',
+    'created_at',
+    'updated_at'
+  ],
+  messages: [
+    'tenant_id',
+    'page_id',
+    'sender_id',
+    'facebook_mid',
+    'role',
+    'text',
+    'parts',
+    'source',
+    'migration_source_key',
+    'meta',
+    'created_at'
+  ],
+  orders: [
+    'tenant_id',
+    'page_id',
+    'sender_id',
+    'status',
+    'product_code',
+    'customer_name',
+    'phone',
+    'address',
+    'draft_updated_at',
+    'staff_notified_hash',
+    'staff_notified_at',
+    'abandoned_cart_reminder_sent_at',
+    'abandoned_cart_reminder_idle_ms',
+    'abandoned_cart_reminder_missing_fields',
+    'abandoned_cart_reminder_failed_at',
+    'abandoned_cart_reminder_failed_status',
+    'abandoned_cart_reminder_failed_error',
+    'abandoned_at',
+    'confirmed_at',
+    'sheet_dedupe_key',
+    'product_interest',
+    'migration_source_key',
+    'raw_draft',
+    'created_at',
+    'updated_at'
+  ],
+  order_items: [
+    'order_id',
+    'tenant_id',
+    'page_id',
+    'item_index',
+    'code',
+    'name',
+    'qty',
+    'variant',
+    'display',
+    'raw_item',
+    'created_at'
+  ],
+  events: [
+    'tenant_id',
+    'page_id',
+    'sender_id',
+    'event_at',
+    'type',
+    'source',
+    'migration_source_key',
+    'session_state',
+    'product_code',
+    'text',
+    'meta',
+    'customer_name',
+    'phone',
+    'address',
+    'customer_history',
+    'sheet_dedupe_key',
+    'sheet_synced_at',
+    'created_at'
+  ],
+  processed_mids: [
+    'tenant_id',
+    'page_id',
+    'mid',
+    'sender_id',
+    'first_seen_at',
+    'meta'
+  ]
+};
+
+const REQUIRED_UNIQUE_INDEXES = [
+  'messages_migration_source_unique_idx',
+  'orders_migration_source_unique_idx',
+  'events_migration_source_unique_idx'
+];
+
+const SAFE_APPLY_TARGETS = new Set(['local', 'dev', 'staging']);
+
 const ORDER_DRAFT_FIELDS = [
   'productCode',
   'phone',
@@ -297,6 +425,7 @@ function buildMessageRows({ state, tenantId, pageId, nowIso, warnings }) {
         text: extractPartsText(parts),
         parts,
         source: 'gemini_history',
+        migration_source_key: `history:${trimText(senderId)}:${index}`,
         meta: {},
         created_at: nowIso
       });
@@ -372,6 +501,7 @@ function buildOrderRows({ state, tenantId, pageId, nowIso }) {
         confirmed_at: status === 'confirmed' ? draftUpdatedAt : null,
         sheet_dedupe_key: '',
         product_interest: '',
+        migration_source_key: sourceKey,
         raw_draft: draft,
         created_at: draftUpdatedAt || abandonedAt || nowIso,
         updated_at: draftUpdatedAt || abandonedAt || nowIso
@@ -401,13 +531,14 @@ function buildOrderRows({ state, tenantId, pageId, nowIso }) {
 function buildRuntimeEventRows({ events, tenantId, pageId, nowIso }) {
   return events
     .filter(event => isPlainObject(event) && trimText(event.type))
-    .map(event => ({
+    .map((event, index) => ({
       tenant_id: tenantId,
       page_id: pageId,
       sender_id: trimText(event.senderId),
       event_at: parseTimestamp(event.at) || nowIso,
       type: trimText(event.type),
       source: 'runtime',
+      migration_source_key: `events.jsonl:${index + 1}`,
       session_state: trimText(event.sessionState),
       product_code: trimText(event.productCode),
       text: text(event.text),
@@ -432,6 +563,7 @@ function buildCustomerEventRows({ customers, tenantId, pageId, nowIso, warnings 
       event_at: parseTimestamp(row.at) || nowIso,
       type: trimText(row.type) || 'lead',
       source: 'customer_export',
+      migration_source_key: `customers.csv:${index + 1}`,
       session_state: '',
       product_code: trimText(row.productCode),
       text: text(row.text),
@@ -449,7 +581,7 @@ function buildCustomerEventRows({ customers, tenantId, pageId, nowIso, warnings 
 function buildSheetOutboxEventRows({ outbox, tenantId, pageId, nowIso }) {
   return outbox
     .filter(row => isPlainObject(row))
-    .map(row => {
+    .map((row, index) => {
       const leadData = isPlainObject(row.leadData) ? row.leadData : {};
       return {
         tenant_id: tenantId,
@@ -458,6 +590,7 @@ function buildSheetOutboxEventRows({ outbox, tenantId, pageId, nowIso }) {
         event_at: parseTimestamp(row.enqueuedAt) || nowIso,
         type: row.parseError ? 'sheet_outbox_parse_error' : 'sheet_outbox_pending',
         source: 'sheet_outbox',
+        migration_source_key: `sheet-outbox.jsonl:${index + 1}`,
         session_state: '',
         product_code: trimText(leadData.productCode),
         text: text(leadData.text),
@@ -606,6 +739,328 @@ function formatPlanSummary(plan) {
   return lines.join('\n');
 }
 
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function normalizeMigrationTarget(value) {
+  const target = trimText(value || 'local').toLowerCase();
+  return target || 'local';
+}
+
+function isRailwayProductionRuntime(env = process.env) {
+  const envName = trimText(env.RAILWAY_ENVIRONMENT || env.RAILWAY_ENVIRONMENT_NAME).toLowerCase();
+  return envName === 'production' || envName === 'prod';
+}
+
+function loadPgClient() {
+  try {
+    return require('pg').Client;
+  } catch (err) {
+    throw new Error('Package "pg" is required for --apply. Run npm install pg before using DB apply mode.');
+  }
+}
+
+function buildUpsertSql({ table, columns, conflictClause, updateColumns, returningColumns = [] }) {
+  const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
+  const columnSql = columns.map(quoteIdent).join(', ');
+  const updates = updateColumns
+    .map(column => `${quoteIdent(column)} = EXCLUDED.${quoteIdent(column)}`)
+    .join(', ');
+  const returningSql = returningColumns.length
+    ? ` RETURNING ${returningColumns.map(quoteIdent).join(', ')}`
+    : '';
+  return [
+    `INSERT INTO ${quoteIdent(table)} (${columnSql}) VALUES (${placeholders})`,
+    `ON CONFLICT ${conflictClause}`,
+    updates ? `DO UPDATE SET ${updates}` : 'DO NOTHING',
+    returningSql
+  ].join(' ');
+}
+
+function valuesForColumns(row, columns) {
+  return columns.map(column => row[column]);
+}
+
+function updateColumns(columns, excluded = []) {
+  const excludedSet = new Set(excluded);
+  return columns.filter(column => !excludedSet.has(column));
+}
+
+async function verifyPostgresSchema(client) {
+  const expectedColumns = Object.entries(WRITE_COLUMNS)
+    .flatMap(([table, columns]) => columns.map(column => ({ table, column })));
+  const tableNames = TARGET_TABLES;
+  const columnsResult = await client.query(
+    `
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = ANY($1::text[])
+    `,
+    [tableNames]
+  );
+  const existingColumns = new Set(
+    columnsResult.rows.map(row => `${row.table_name}.${row.column_name}`)
+  );
+  const missingColumns = expectedColumns
+    .filter(({ table, column }) => !existingColumns.has(`${table}.${column}`))
+    .map(({ table, column }) => `${table}.${column}`);
+
+  const indexesResult = await client.query(
+    `
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname = ANY($1::text[])
+    `,
+    [REQUIRED_UNIQUE_INDEXES]
+  );
+  const existingIndexes = new Set(indexesResult.rows.map(row => row.indexname));
+  const missingIndexes = REQUIRED_UNIQUE_INDEXES.filter(index => !existingIndexes.has(index));
+
+  if (missingColumns.length || missingIndexes.length) {
+    const details = [];
+    if (missingColumns.length) details.push(`missing columns: ${missingColumns.join(', ')}`);
+    if (missingIndexes.length) details.push(`missing indexes: ${missingIndexes.join(', ')}`);
+    throw new Error(`PostgreSQL schema is not ready for migration (${details.join('; ')}). Review and apply db/schema.sql to a dev/staging DB first.`);
+  }
+}
+
+async function countTargetRows(client, tenantId, pageId) {
+  const counts = {};
+  for (const table of TARGET_TABLES) {
+    const result = await client.query(
+      `SELECT COUNT(*)::int AS count FROM ${quoteIdent(table)} WHERE tenant_id = $1 AND page_id = $2`,
+      [tenantId, pageId]
+    );
+    counts[table] = Number(result.rows[0] && result.rows[0].count) || 0;
+  }
+  return counts;
+}
+
+async function upsertRows(client, table, rows, config) {
+  if (!rows.length) return 0;
+  const sql = buildUpsertSql({
+    table,
+    columns: config.columns,
+    conflictClause: config.conflictClause,
+    updateColumns: config.updateColumns,
+    returningColumns: config.returningColumns || []
+  });
+
+  for (const row of rows) {
+    await client.query(sql, valuesForColumns(row, config.columns));
+  }
+  return rows.length;
+}
+
+async function upsertOrdersAndItems(client, plan) {
+  const orderIdBySource = new Map();
+  const orderConfig = {
+    columns: WRITE_COLUMNS.orders,
+    conflictClause: '(tenant_id, page_id, migration_source_key) WHERE migration_source_key <> \'\'',
+    updateColumns: updateColumns(WRITE_COLUMNS.orders, ['tenant_id', 'page_id', 'migration_source_key']),
+    returningColumns: ['id', 'migration_source_key']
+  };
+  const orderSql = buildUpsertSql({
+    table: 'orders',
+    columns: orderConfig.columns,
+    conflictClause: orderConfig.conflictClause,
+    updateColumns: orderConfig.updateColumns,
+    returningColumns: orderConfig.returningColumns
+  });
+
+  for (const order of plan.rows.orders) {
+    const result = await client.query(orderSql, valuesForColumns(order, orderConfig.columns));
+    const row = result.rows[0];
+    orderIdBySource.set(order.source_key, Number(row.id));
+  }
+
+  const itemConfig = {
+    columns: WRITE_COLUMNS.order_items,
+    conflictClause: '(order_id, item_index)',
+    updateColumns: updateColumns(WRITE_COLUMNS.order_items, ['order_id', 'item_index'])
+  };
+  const itemSql = buildUpsertSql({
+    table: 'order_items',
+    columns: itemConfig.columns,
+    conflictClause: itemConfig.conflictClause,
+    updateColumns: itemConfig.updateColumns
+  });
+
+  for (const item of plan.rows.order_items) {
+    const orderId = orderIdBySource.get(item.order_source_key);
+    if (!orderId) {
+      throw new Error(`order_items row references unknown order_source_key "${item.order_source_key}"`);
+    }
+    const row = { ...item, order_id: orderId };
+    await client.query(itemSql, valuesForColumns(row, itemConfig.columns));
+  }
+
+  return {
+    orders: plan.rows.orders.length,
+    order_items: plan.rows.order_items.length
+  };
+}
+
+function assertApplyOptions(options, plan, env = process.env) {
+  if (!options.iHaveBackedUpData) {
+    throw new Error('--apply requires --i-have-backed-up-data. Back up file storage before any DB write.');
+  }
+
+  const migrationTarget = normalizeMigrationTarget(options.migrationTarget || env.MIGRATION_TARGET);
+  if (!SAFE_APPLY_TARGETS.has(migrationTarget)) {
+    throw new Error('--apply only accepts --migration-target local, dev, or staging. Production apply is refused in this script.');
+  }
+
+  if (isRailwayProductionRuntime(env)) {
+    throw new Error('--apply is refused inside Railway production runtime. Use a dev/staging DB and a reviewed production runbook later.');
+  }
+
+  if (plan.warnings.length && !options.allowWarnings) {
+    throw new Error('Apply refused because dry-run produced warnings. Fix the source data or pass --allow-warnings for a dev/staging test only.');
+  }
+
+  const databaseUrl = trimText(options.databaseUrl || env.DATABASE_URL);
+  if (!databaseUrl) {
+    throw new Error('--apply requires --database-url or DATABASE_URL for a local/dev/staging PostgreSQL database.');
+  }
+
+  return { migrationTarget, databaseUrl };
+}
+
+async function applyMigrationPlan(plan, options = {}) {
+  const env = options.env || process.env;
+  const { migrationTarget, databaseUrl } = assertApplyOptions(options, plan, env);
+  const Client = options.Client || loadPgClient();
+  const client = options.client || new Client({ connectionString: databaseUrl });
+  const ownsClient = !options.client;
+
+  if (ownsClient) await client.connect();
+
+  try {
+    await client.query('BEGIN');
+    if (!options.skipSchemaCheck) await verifyPostgresSchema(client);
+    const beforeCounts = await countTargetRows(client, plan.tenantId, plan.pageId);
+
+    const appliedCounts = {};
+    appliedCounts.profiles = await upsertRows(client, 'profiles', plan.rows.profiles, {
+      columns: WRITE_COLUMNS.profiles,
+      conflictClause: '(tenant_id, page_id, sender_id)',
+      updateColumns: updateColumns(WRITE_COLUMNS.profiles, ['tenant_id', 'page_id', 'sender_id', 'created_at'])
+    });
+    appliedCounts.conversations = await upsertRows(client, 'conversations', plan.rows.conversations, {
+      columns: WRITE_COLUMNS.conversations,
+      conflictClause: '(tenant_id, page_id, sender_id)',
+      updateColumns: updateColumns(WRITE_COLUMNS.conversations, ['tenant_id', 'page_id', 'sender_id', 'created_at'])
+    });
+    appliedCounts.messages = await upsertRows(client, 'messages', plan.rows.messages, {
+      columns: WRITE_COLUMNS.messages,
+      conflictClause: '(tenant_id, page_id, source, migration_source_key) WHERE migration_source_key <> \'\'',
+      updateColumns: updateColumns(WRITE_COLUMNS.messages, ['tenant_id', 'page_id', 'source', 'migration_source_key'])
+    });
+    const orderCounts = await upsertOrdersAndItems(client, plan);
+    appliedCounts.orders = orderCounts.orders;
+    appliedCounts.order_items = orderCounts.order_items;
+    appliedCounts.events = await upsertRows(client, 'events', plan.rows.events, {
+      columns: WRITE_COLUMNS.events,
+      conflictClause: '(tenant_id, page_id, source, migration_source_key) WHERE migration_source_key <> \'\'',
+      updateColumns: updateColumns(WRITE_COLUMNS.events, ['tenant_id', 'page_id', 'source', 'migration_source_key'])
+    });
+    appliedCounts.processed_mids = await upsertRows(client, 'processed_mids', plan.rows.processed_mids, {
+      columns: WRITE_COLUMNS.processed_mids,
+      conflictClause: '(tenant_id, page_id, mid)',
+      updateColumns: updateColumns(WRITE_COLUMNS.processed_mids, ['tenant_id', 'page_id', 'mid'])
+    });
+
+    const afterCounts = await countTargetRows(client, plan.tenantId, plan.pageId);
+    await client.query('COMMIT');
+
+    return {
+      dryRun: false,
+      migrationTarget,
+      dataDir: plan.dataDir,
+      tenantId: plan.tenantId,
+      pageId: plan.pageId,
+      generatedAt: plan.generatedAt,
+      files: plan.files,
+      plannedCounts: plan.counts,
+      appliedCounts,
+      beforeCounts,
+      afterCounts,
+      warnings: plan.warnings
+    };
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackErr) {
+      err.message = `${err.message}; rollback failed: ${rollbackErr.message}`;
+    }
+    throw err;
+  } finally {
+    if (ownsClient) await client.end();
+  }
+}
+
+function summarizeApplyResult(result) {
+  return {
+    dryRun: result.dryRun,
+    migrationTarget: result.migrationTarget,
+    dataDir: result.dataDir,
+    tenantId: result.tenantId,
+    pageId: result.pageId,
+    generatedAt: result.generatedAt,
+    files: result.files,
+    plannedCounts: result.plannedCounts,
+    appliedCounts: result.appliedCounts,
+    beforeCounts: result.beforeCounts,
+    afterCounts: result.afterCounts,
+    warnings: result.warnings
+  };
+}
+
+function formatApplySummary(result) {
+  const summary = summarizeApplyResult(result);
+  const lines = [
+    'File storage -> PostgreSQL migration apply',
+    `target: ${summary.migrationTarget}`,
+    `dataDir: ${summary.dataDir}`,
+    `tenantId: ${summary.tenantId}`,
+    `pageId: ${summary.pageId}`,
+    '',
+    'Files:'
+  ];
+
+  for (const [name, info] of Object.entries(summary.files)) {
+    lines.push(`- ${name}: ${info.exists ? 'found' : 'missing'}`);
+  }
+
+  lines.push('', 'Planned rows:');
+  for (const [table, count] of Object.entries(summary.plannedCounts)) {
+    lines.push(`- ${table}: ${count}`);
+  }
+
+  lines.push('', 'Rows before:');
+  for (const [table, count] of Object.entries(summary.beforeCounts)) {
+    lines.push(`- ${table}: ${count}`);
+  }
+
+  lines.push('', 'Rows after:');
+  for (const [table, count] of Object.entries(summary.afterCounts)) {
+    lines.push(`- ${table}: ${count}`);
+  }
+
+  if (summary.warnings.length) {
+    lines.push('', 'Warnings:');
+    summary.warnings.forEach(warning => lines.push(`- ${warning}`));
+  }
+
+  lines.push('', 'Database writes were performed inside one transaction.');
+  lines.push('Source file storage was not modified or deleted.');
+  return lines.join('\n');
+}
+
 function parseCliArgs(argv) {
   const options = {
     dryRun: true,
@@ -622,12 +1077,20 @@ function parseCliArgs(argv) {
       options.dryRun = false;
     } else if (arg === '--json') {
       options.json = true;
+    } else if (arg === '--i-have-backed-up-data') {
+      options.iHaveBackedUpData = true;
+    } else if (arg === '--allow-warnings') {
+      options.allowWarnings = true;
     } else if (arg === '--data-dir') {
       options.dataDir = argv[++i];
     } else if (arg === '--tenant-id') {
       options.tenantId = argv[++i];
     } else if (arg === '--page-id') {
       options.pageId = argv[++i];
+    } else if (arg === '--database-url' || arg === '--db-url') {
+      options.databaseUrl = argv[++i];
+    } else if (arg === '--migration-target') {
+      options.migrationTarget = argv[++i];
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -642,7 +1105,11 @@ function helpText() {
     '',
     'Options:',
     '  --dry-run              Build and print a migration plan. This is the default.',
-    '  --apply                Refused for now. DB writes are not implemented yet.',
+    '  --apply                Write to a local/dev/staging PostgreSQL DB using a transaction.',
+    '  --i-have-backed-up-data Required with --apply. Refuses DB writes without this flag.',
+    '  --database-url <url>   PostgreSQL URL for --apply. Defaults to DATABASE_URL.',
+    '  --migration-target <t> Apply target label: local, dev, or staging. Production is refused.',
+    '  --allow-warnings       Allow dev/staging apply when dry-run produced warnings.',
     '  --data-dir <path>      File storage directory. Defaults to DATA_DIR or ./data.',
     '  --tenant-id <id>       Tenant id to stamp on planned rows. Defaults to "default".',
     '  --page-id <id>         Page id to stamp on planned rows. Defaults to PAGE_ID/FB_PAGE_ID/default.',
@@ -651,7 +1118,7 @@ function helpText() {
   ].join('\n');
 }
 
-async function runCli(argv = process.argv.slice(2), io = console) {
+async function runCli(argv = process.argv.slice(2), io = console, deps = {}) {
   const options = parseCliArgs(argv);
   if (options.help) {
     io.log(helpText());
@@ -659,10 +1126,20 @@ async function runCli(argv = process.argv.slice(2), io = console) {
   }
 
   if (!options.dryRun) {
-    throw new Error('Apply mode is intentionally not implemented. Back up /data and add DB write support in a separate reviewed step.');
+    assertApplyOptions(options, { warnings: [] }, deps.env || process.env);
   }
 
   const plan = buildMigrationPlan(options);
+  if (!options.dryRun) {
+    const result = await applyMigrationPlan(plan, { ...deps, ...options });
+    if (options.json) {
+      io.log(JSON.stringify(summarizeApplyResult(result), null, 2));
+    } else {
+      io.log(formatApplySummary(result));
+    }
+    return 0;
+  }
+
   if (options.json) {
     io.log(JSON.stringify(summarizePlan(plan), null, 2));
   } else {
@@ -681,10 +1158,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyMigrationPlan,
   buildMigrationPlan,
+  formatApplySummary,
   formatPlanSummary,
   helpText,
   parseCliArgs,
   runCli,
+  summarizeApplyResult,
   summarizePlan
 };

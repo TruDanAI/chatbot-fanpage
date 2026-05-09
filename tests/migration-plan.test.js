@@ -3,7 +3,9 @@ const os = require('os');
 const path = require('path');
 const { describe, it, expect } = require('./harness');
 const {
+  applyMigrationPlan,
   buildMigrationPlan,
+  formatApplySummary,
   formatPlanSummary,
   parseCliArgs,
   runCli
@@ -34,6 +36,56 @@ function writeCustomersCsv(file, rows) {
     ...rows.map(row => headers.map(header => csvCell(row[header])).join(','))
   ].join('\n') + '\n';
   fs.writeFileSync(file, body, 'utf8');
+}
+
+class FakePgClient {
+  constructor() {
+    this.queries = [];
+    this.counts = {
+      profiles: 0,
+      conversations: 0,
+      messages: 0,
+      orders: 0,
+      order_items: 0,
+      events: 0,
+      processed_mids: 0
+    };
+    this.nextOrderId = 1;
+    this.connected = false;
+    this.ended = false;
+  }
+
+  async connect() {
+    this.connected = true;
+  }
+
+  async end() {
+    this.ended = true;
+  }
+
+  async query(sql) {
+    this.queries.push(sql);
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+
+    const countMatch = sql.match(/FROM "([^"]+)"/);
+    if (countMatch && sql.includes('COUNT(*)')) {
+      return { rows: [{ count: this.counts[countMatch[1]] || 0 }] };
+    }
+
+    const insertMatch = sql.match(/^INSERT INTO "([^"]+)"/);
+    if (insertMatch) {
+      const table = insertMatch[1];
+      this.counts[table] += 1;
+      if (table === 'orders') {
+        const id = this.nextOrderId;
+        this.nextOrderId += 1;
+        return { rows: [{ id, migration_source_key: `order-${id}` }] };
+      }
+      return { rows: [] };
+    }
+
+    throw new Error(`Unexpected fake query: ${sql}`);
+  }
 }
 
 describe('migration planner: file storage to postgres', () => {
@@ -172,7 +224,7 @@ describe('migration planner: file storage to postgres', () => {
     expect(plan.warnings).toEqual([]);
   });
 
-  it('prints count-only summaries and refuses apply mode', async () => {
+  it('prints count-only summaries and guards apply mode', async () => {
     const dataDir = makeTempDataDir('chatbot-migration-cli');
     const plan = buildMigrationPlan({
       dataDir,
@@ -206,6 +258,69 @@ describe('migration planner: file storage to postgres', () => {
     } catch (err) {
       applyError = err.message;
     }
-    expect(applyError).toContain('Apply mode is intentionally not implemented');
+    expect(applyError).toContain('--i-have-backed-up-data');
+
+    applyError = '';
+    try {
+      await runCli(['--apply', '--i-have-backed-up-data'], { log() {} }, { env: {} });
+    } catch (err) {
+      applyError = err.message;
+    }
+    expect(applyError).toContain('--database-url');
+  });
+
+  it('applies a plan through a guarded PostgreSQL writer transaction', async () => {
+    const dataDir = makeTempDataDir('chatbot-migration-apply');
+    writeJson(path.join(dataDir, 'chat-state.json'), {
+      history: {
+        user_1: [{ role: 'user', parts: [{ text: 'ma 8' }] }]
+      },
+      context: {
+        user_1: {
+          sessionState: 'READY_TO_CONFIRM',
+          lastProductCode: 'M8',
+          orderDraft: {
+            productCode: 'M8',
+            phone: '0987654321',
+            name: 'An',
+            address: '12 Tran Phu',
+            updatedAt: '2026-05-08T00:10:00.000Z',
+            cartItems: [{ code: 'M8', name: 'M8', qty: 1 }]
+          }
+        }
+      },
+      profiles: {
+        user_1: { firstName: 'Nguyen', lastName: 'An' }
+      }
+    });
+    writeJson(path.join(dataDir, 'processed-mids.json'), ['mid-1']);
+    fs.writeFileSync(
+      path.join(dataDir, 'events.jsonl'),
+      JSON.stringify({ at: '2026-05-08T00:20:00.000Z', type: 'message_received', senderId: 'user_1' }) + '\n',
+      'utf8'
+    );
+
+    const plan = buildMigrationPlan({
+      dataDir,
+      tenantId: 'tenant_1',
+      pageId: 'page_1',
+      now: '2026-05-09T00:00:00.000Z'
+    });
+    const client = new FakePgClient();
+    const result = await applyMigrationPlan(plan, {
+      client,
+      databaseUrl: 'postgres://dev.example/chatbot',
+      iHaveBackedUpData: true,
+      migrationTarget: 'dev',
+      skipSchemaCheck: true
+    });
+
+    expect(result.dryRun).toBeFalse();
+    expect(result.appliedCounts).toEqual(plan.counts);
+    expect(result.beforeCounts.profiles).toBe(0);
+    expect(result.afterCounts.profiles).toBe(1);
+    expect(client.queries).toContain('BEGIN');
+    expect(client.queries).toContain('COMMIT');
+    expect(formatApplySummary(result)).toContain('Database writes were performed inside one transaction.');
   });
 });
