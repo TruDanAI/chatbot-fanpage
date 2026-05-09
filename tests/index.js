@@ -5,7 +5,12 @@ require('./nlp.test');
 require('./responses.test');
 require('./quick-replies.test');
 require('./rules.test');
+require('./storage-file-adapter.test');
 require('./index.test');
 
-const exitCode = run();
-process.exit(exitCode);
+run()
+  .then(exitCode => process.exit(exitCode))
+  .catch(err => {
+    console.error(err);
+    process.exit(1);
+  });

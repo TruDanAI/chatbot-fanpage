@@ -4,7 +4,7 @@
 //   describe('group', () => {
 //     it('case', () => expect(value).toEqual(other));
 //   });
-//   run();    // hoặc trả về exit code
+//   await run();    // hoặc trả về Promise<exit code>
 
 const groups = [];
 let current = null;
@@ -60,7 +60,7 @@ function expect(actual) {
   };
 }
 
-function run() {
+async function run() {
   let pass = 0;
   let fail = 0;
   const failures = [];
@@ -69,7 +69,7 @@ function run() {
     console.log(`\n  ${group.name}`);
     for (const c of group.cases) {
       try {
-        c.fn();
+        await c.fn();
         pass += 1;
         console.log(`    ✓ ${c.name}`);
       } catch (err) {
