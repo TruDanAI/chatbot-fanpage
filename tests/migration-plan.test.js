@@ -41,6 +41,7 @@ function writeCustomersCsv(file, rows) {
 class FakePgClient {
   constructor() {
     this.queries = [];
+    this.queryCalls = [];
     this.counts = {
       profiles: 0,
       conversations: 0,
@@ -63,8 +64,9 @@ class FakePgClient {
     this.ended = true;
   }
 
-  async query(sql) {
+  async query(sql, values = []) {
     this.queries.push(sql);
+    this.queryCalls.push({ sql, values });
     if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 
     const countMatch = sql.match(/FROM "([^"]+)"/);
@@ -322,5 +324,11 @@ describe('migration planner: file storage to postgres', () => {
     expect(client.queries).toContain('BEGIN');
     expect(client.queries).toContain('COMMIT');
     expect(formatApplySummary(result)).toContain('Database writes were performed inside one transaction.');
+
+    const messageInsert = client.queryCalls.find(call => call.sql.startsWith('INSERT INTO "messages"'));
+    expect(typeof messageInsert.values[6]).toBe('string');
+    expect(JSON.parse(messageInsert.values[6])).toEqual([{ text: 'ma 8' }]);
+    expect(typeof messageInsert.values[9]).toBe('string');
+    expect(JSON.parse(messageInsert.values[9])).toEqual({});
   });
 });

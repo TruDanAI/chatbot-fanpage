@@ -136,6 +136,16 @@ const WRITE_COLUMNS = {
   ]
 };
 
+const JSON_COLUMNS = {
+  profiles: new Set(['raw_profile']),
+  conversations: new Set(['abandoned_order_draft', 'meta']),
+  messages: new Set(['parts', 'meta']),
+  orders: new Set(['raw_draft']),
+  order_items: new Set(['raw_item']),
+  events: new Set(['meta', 'customer_history']),
+  processed_mids: new Set(['meta'])
+};
+
 const REQUIRED_UNIQUE_INDEXES = [
   'messages_migration_source_unique_idx',
   'orders_migration_source_unique_idx',
@@ -778,8 +788,15 @@ function buildUpsertSql({ table, columns, conflictClause, updateColumns, returni
   ].join(' ');
 }
 
-function valuesForColumns(row, columns) {
-  return columns.map(column => row[column]);
+function serializeColumnValue(table, column, value) {
+  if (JSON_COLUMNS[table] && JSON_COLUMNS[table].has(column)) {
+    return JSON.stringify(value == null ? null : value);
+  }
+  return value;
+}
+
+function valuesForColumns(table, row, columns) {
+  return columns.map(column => serializeColumnValue(table, column, row[column]));
 }
 
 function updateColumns(columns, excluded = []) {
@@ -850,7 +867,7 @@ async function upsertRows(client, table, rows, config) {
   });
 
   for (const row of rows) {
-    await client.query(sql, valuesForColumns(row, config.columns));
+    await client.query(sql, valuesForColumns(table, row, config.columns));
   }
   return rows.length;
 }
@@ -872,7 +889,7 @@ async function upsertOrdersAndItems(client, plan) {
   });
 
   for (const order of plan.rows.orders) {
-    const result = await client.query(orderSql, valuesForColumns(order, orderConfig.columns));
+    const result = await client.query(orderSql, valuesForColumns('orders', order, orderConfig.columns));
     const row = result.rows[0];
     orderIdBySource.set(order.source_key, Number(row.id));
   }
@@ -895,7 +912,7 @@ async function upsertOrdersAndItems(client, plan) {
       throw new Error(`order_items row references unknown order_source_key "${item.order_source_key}"`);
     }
     const row = { ...item, order_id: orderId };
-    await client.query(itemSql, valuesForColumns(row, itemConfig.columns));
+    await client.query(itemSql, valuesForColumns('order_items', row, itemConfig.columns));
   }
 
   return {
