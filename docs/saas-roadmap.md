@@ -33,8 +33,14 @@ Last verified baseline from May 10, 2026:
 - Production storage: PostgreSQL
 - Production runtime health: `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`
-- Latest deployed commit at that time: `bce4550 Add read-only dashboard filters`
-- Local committed phase after that: `e14692c Add admin RBAC audit scaffolding`
+- Latest deployed commit at that time:
+  `c9ff1df Handle missing audit schema gracefully`
+- Latest Railway production deployment at that time:
+  `fa6d0939-4fb4-437c-b159-7b21fa323712 SUCCESS`
+- Phase commits already pushed:
+  `e14692c Add admin RBAC audit scaffolding`,
+  `a28c0e5 Add SaaS roadmap and handoff prompt`,
+  `c9ff1df Handle missing audit schema gracefully`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120`
 - Latest known backup SHA256:
   `0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4`
@@ -121,10 +127,11 @@ Done:
 - RBAC/audit helper scaffolding.
 - `/admin/audit` route in code.
 - Audit schema proposal and runbook.
+- Missing audit schema is handled gracefully in `/admin/audit`; the page can
+  render a schema-not-ready message before production schema apply.
 
 Remaining:
 
-- Push/deploy code after approval.
 - Apply audit schema after fresh backup and approval.
 - Enable `ADMIN_AUDIT_LOG_ENABLED=true` after schema verification.
 - Add smoke checks for `/admin/dashboard` and `/admin/audit` after deploy.
