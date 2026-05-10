@@ -75,6 +75,8 @@ Current shape:
 
 - Express backend.
 - Admin route wiring in `core/admin-routes.js`.
+- Admin route authorization helper in `core/admin/route-auth.js`.
+- Admin read-only page handlers in `core/admin/read-routes.js`.
 - Server-rendered admin HTML in `core/admin/views.js`.
 - Admin PostgreSQL read model in `core/admin/reader.js`.
 - Admin audit writer in `core/admin/audit.js`.
@@ -137,6 +139,10 @@ Done:
   render a schema-not-ready message before production schema apply.
 - Admin dashboard modules split into route wiring, PostgreSQL reader, audit
   writer, and server-rendered views.
+- Admin route authorization/audit request handling extracted to
+  `core/admin/route-auth.js`.
+- Admin dashboard, user detail, and audit page handlers extracted to
+  `core/admin/read-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
   after the refactor deploy.
 
@@ -288,8 +294,8 @@ Priority improvements:
 
 Refactor targets:
 
-- Continue shrinking `core/admin-routes.js` by extracting route auth/wiring
-  helpers when the next admin slice needs it.
+- Continue shrinking `core/admin-routes.js` by extracting legacy export/state
+  handlers when the next admin slice needs it.
 - Extract dashboard SQL into a repository module.
 - Keep HTML view helpers pure and testable.
 - Keep storage writes behind service functions.

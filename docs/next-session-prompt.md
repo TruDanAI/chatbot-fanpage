@@ -62,14 +62,18 @@ Trạng thái production mới nhất đã biết:
 - schema_message=true là kỳ vọng hiện tại vì audit schema production chưa apply.
 
 Git state mới nhất đã biết:
-- Worktree clean.
-- origin/main...HEAD = 0 0.
+- Worktree có thay đổi chưa commit từ phiên code-only hiện tại.
+- origin/main...HEAD = 0 1.
+- Local HEAD:
+  5ec0902 Expand next session handoff prompt
+- origin/main latest known:
+  5851368 Update handoff docs after admin refactor deploy
 - Latest commits:
+  5ec0902 Expand next session handoff prompt
   5851368 Update handoff docs after admin refactor deploy
   20676a3 Refactor admin dashboard modules
   b90c5de Update handoff docs after production deploy
   c9ff1df Handle missing audit schema gracefully
-  a28c0e5 Add SaaS roadmap and handoff prompt
 
 Backup production mới nhất đã biết:
 - Path:
@@ -128,6 +132,28 @@ Backup production mới nhất đã biết:
      /healthz ok=true, storage.adapter=postgres, storage.ready=true
      /admin/dashboard 200
      /admin/audit 200, schema_message=true
+6. Phiên code-only tiếp theo, chưa push/chưa deploy:
+   - Re-check production deployment:
+     7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS ở commit 5851368.
+   - /healthz production:
+     ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+   - Local git sau fetch:
+     worktree bắt đầu sạch, origin/main...HEAD = 0 1, local HEAD 5ec0902.
+   - Tách route auth/audit request handling ra:
+     core/admin/route-auth.js
+   - Tách dashboard/user detail/audit page handlers ra:
+     core/admin/read-routes.js
+   - core/admin-routes.js giờ giữ route wiring, legacy export/state handlers, và dùng createAdminRouteAuthorizer()/createAdminReadHandlers().
+   - Export tương thích cũ vẫn giữ qua core/admin-routes.js.
+   - Thêm tests cho parseAdminRoles và IP allowlist denied audit.
+   - Không đổi schema.
+   - Không đổi env.
+   - Không thêm production write workflow.
+   - Không bật ADMIN_AUDIT_LOG_ENABLED.
+   - node --check pass cho core/admin-routes.js, core/admin/route-auth.js, core/admin/read-routes.js, tests/admin-routes.test.js.
+   - npm test: 270 passed.
+   - npm audit --omit=dev: 0 vulnerabilities.
+   - git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -138,6 +164,8 @@ Tính năng admin hiện có:
   - Dashboard chỉ nhận Authorization: Bearer <ADMIN_EXPORT_TOKEN>.
   - Không nhận token qua query param.
   - Legacy export/debug route còn x-admin-token compatibility.
+- Route authorization/audit request handling đã tách vào core/admin/route-auth.js.
+- Dashboard/user detail/audit page handlers đã tách vào core/admin/read-routes.js.
 - RBAC:
   - viewer: dashboard + user detail read
   - support: viewer + legacy state read
@@ -160,6 +188,8 @@ File quan trọng:
 - core/admin-routes.js
 - core/admin/audit.js
 - core/admin/reader.js
+- core/admin/read-routes.js
+- core/admin/route-auth.js
 - core/admin/views.js
 - db/admin-auth-rbac-audit-proposal.sql
 - docs/admin-auth-rbac-audit-runbook.md
@@ -226,7 +256,7 @@ Nếu muốn bật audit production thật:
 
 Nếu chưa muốn ghi production DB:
 - Tiếp tục nhánh code-only an toàn:
-  - Tách route auth/wiring khỏi core/admin-routes.js thành module nhỏ.
+  - Tách legacy export/state handlers khỏi core/admin-routes.js.
   - Hoặc tạo admin dashboard repository/API read-only có test.
   - Hoặc thêm pagination read-only cho dashboard.
 - Không thêm write workflow cho tới khi audit production ổn định.

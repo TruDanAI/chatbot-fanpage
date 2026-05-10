@@ -1,8 +1,10 @@
 const { describe, it, expect } = require('./harness');
 const {
   assertReadOnlySql,
+  createAdminRouteAuthorizer,
   createPostgresAuditLogger,
   createPostgresDashboardReader,
+  parseAdminRoles,
   registerAdminRoutes
 } = require('../core/admin-routes');
 const { PERMISSIONS } = require('../core/admin-auth');
@@ -200,6 +202,43 @@ function createAuditLoggerStub() {
 }
 
 describe('admin dashboard routes', () => {
+  it('parseAdminRoles chuẩn hóa role list từ env', () => {
+    expect(parseAdminRoles(' Viewer, maintainer ,unknown-role ')).toEqual(['viewer', 'maintainer', 'unknown-role']);
+    expect(parseAdminRoles('')).toEqual(['owner']);
+  });
+
+  it('admin route authorizer chặn IP trước auth token và ghi audit denied', async () => {
+    const auditLogger = createAuditLoggerStub();
+    const authorizer = createAdminRouteAuthorizer({
+      adminExportToken: 'secret',
+      adminIpAllowlist: ['127.0.0.1'],
+      getClientIp: () => '203.0.113.5',
+      auditLogger,
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const res = createRes();
+    const principal = await authorizer.authorizeAdminRequest(createReq({
+      headers: {
+        authorization: 'Bearer secret',
+        'user-agent': 'unit-test'
+      }
+    }), res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'dashboard'
+    });
+
+    expect(principal).toBe(null);
+    expect(res.statusCode).toBe(403);
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].outcome).toBe('denied');
+    expect(auditLogger.entries[0].metadata.reason).toBe('ip_not_allowed');
+    expect(JSON.stringify(auditLogger.entries[0]).includes('secret')).toBeFalse();
+  });
+
   it('dashboard chỉ nhận Authorization Bearer, không nhận x-admin-token hay query token', async () => {
     const app = createApp();
     const reader = createDashboardReaderStub();
