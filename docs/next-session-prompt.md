@@ -1,17 +1,20 @@
 # Next Session Prompt
 
-Paste this prompt into the next Codex session before continuing work.
+Paste this full prompt into the next Codex session before continuing work.
 
 ```text
 Tiếp tục repo chatbot-fanpage.
 
-Ngữ cảnh máy:
-- Repo path: c:\Users\Pc\Desktop\New folder\chatbot-fanpage
-- Branch: main
-- Timezone người dùng: Asia/Bangkok
-- Production Railway project: graceful-harmony
-- Production service: chatbot-fanpage
-- Production Postgres service: Postgres-TQuc
+Repo path:
+c:\Users\Pc\Desktop\New folder\chatbot-fanpage
+
+Timezone người dùng: Asia/Bangkok
+Branch chính: main
+
+Mục tiêu sản phẩm:
+- Biến chatbot Messenger hiện tại thành một hệ thống admin/SaaS nội bộ ổn định.
+- Ưu tiên an toàn dữ liệu production hơn tốc độ làm tính năng.
+- Admin dashboard hiện vẫn read-only. Không thêm write workflow cho tới khi audit production ổn định.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -19,46 +22,140 @@ Quy tắc an toàn bắt buộc:
 - Không deploy nếu tôi chưa xác nhận riêng trong phiên này.
 - Không push nếu tôi chưa xác nhận riêng trong phiên này.
 - Không đổi production env nếu tôi chưa xác nhận riêng.
-- Không xóa/sửa/truncate production DB.
 - Không ghi production PostgreSQL nếu chưa có backup mới và xác nhận riêng.
+- Không xóa/sửa/truncate/drop/reset production DB.
 - Không switch production về file storage.
 - Không đụng production /data trừ khi chỉ đọc để kiểm tra.
 - Không in dữ liệu khách, token, DATABASE_URL, Facebook token, Google service account, Telegram token ra chat.
+- Không in raw customer rows/messages/orders ra chat. Nếu cần verify thì dùng counts, status code, title, masked snippets.
 - Nếu tính năng mới cần env setup, phải thêm key tương ứng vào .env.example với comment rõ local/production, optional/bắt buộc, và rủi ro nếu bật.
+- Migration production phải additive/idempotent, có backup mới, có verify count-only, và có xác nhận riêng.
 
-Trạng thái đã biết từ phiên trước, cần kiểm tra lại chứ không được giả định:
-- Production đang dùng PostgreSQL:
+Production:
+- Railway project: graceful-harmony
+- Railway production service: chatbot-fanpage
+- Railway production Postgres service: Postgres-TQuc
+- Public domain đã dùng smoke test:
+  https://chatbot-fanpage-production.up.railway.app
+- Storage production đang dùng PostgreSQL.
+- Các biến production đã biết từ phiên trước, phải kiểm tra lại chứ không được giả định:
   - STORAGE_ADAPTER=postgres
   - DATABASE_URL=${{Postgres-TQuc.DATABASE_URL}}
   - ALLOW_PRODUCTION_DB_WRITES=true
   - TENANT_ID=default
   - PAGE_ID=1026325343908119
-- Latest deployed commit khi đó:
-  - 20676a3 Refactor admin dashboard modules
-- Latest Railway production deployment khi đó:
-  - 81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS
-- Commits đã push sau dashboard filters:
-  - e14692c Add admin RBAC audit scaffolding
-  - a28c0e5 Add SaaS roadmap and handoff prompt
-  - c9ff1df Handle missing audit schema gracefully
-  - b90c5de Update handoff docs after production deploy
-  - 20676a3 Refactor admin dashboard modules
-- Git sau push khi đó:
-  - clean
-  - origin/main...HEAD = 0 0
-- Backup PostgreSQL production mới nhất đã biết:
-  - C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120
-  - SHA256: 0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4
-  - counts: profiles 1, conversations 4, messages 37, orders 6, order_items 7, events 223, processed_mids 85
-- Tests gần nhất:
-  - npm test: 268 passed
-  - npm audit --omit=dev: 0 vulnerabilities
-- Production smoke gần nhất:
-  - /healthz: ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
-  - /admin/dashboard with Bearer header: 200
-  - /admin/audit with Bearer header: 200, shows schema-not-ready message until audit schema is applied
 
-Các file quan trọng đã thêm/cập nhật:
+Trạng thái production mới nhất đã biết:
+- Latest deployed commit:
+  5851368 Update handoff docs after admin refactor deploy
+- Commit code admin refactor đang chạy:
+  20676a3 Refactor admin dashboard modules
+- Latest Railway production deployment:
+  7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS
+- Deployment admin refactor trước đó:
+  81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS
+- /healthz gần nhất:
+  ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
+- Admin smoke gần nhất bằng Bearer header:
+  /admin/dashboard: 200, title=Admin Dashboard
+  /admin/audit: 200, title=Admin Audit Log, schema_message=true
+- schema_message=true là kỳ vọng hiện tại vì audit schema production chưa apply.
+
+Git state mới nhất đã biết:
+- Worktree clean.
+- origin/main...HEAD = 0 0.
+- Latest commits:
+  5851368 Update handoff docs after admin refactor deploy
+  20676a3 Refactor admin dashboard modules
+  b90c5de Update handoff docs after production deploy
+  c9ff1df Handle missing audit schema gracefully
+  a28c0e5 Add SaaS roadmap and handoff prompt
+
+Backup production mới nhất đã biết:
+- Path:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120
+- SHA256:
+  0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4
+- Counts:
+  profiles 1, conversations 4, messages 37, orders 6, order_items 7, events 223, processed_mids 85
+- Backup này không được coi là đủ nếu chuẩn bị ghi production DB/env trong phiên mới. Trước mọi production DB write/env rollout phải tạo backup PostgreSQL production mới ngoài repo, read-only SELECT, verify SHA256/counts.
+
+Đã làm vừa qua:
+1. Baseline đầu phiên:
+   - git clean.
+   - origin/main...HEAD = 0 0.
+   - Latest production deployment lúc đó là eb864ef9... ở commit b90c5de.
+   - /healthz production ok=true, storage.adapter=postgres, storage.ready=true.
+   - npm test: 268 passed.
+   - npm audit --omit=dev: 0 vulnerabilities.
+2. Refactor admin dashboard an toàn:
+   - Tách PostgreSQL dashboard/audit reader ra:
+     core/admin/reader.js
+   - Tách audit writer ra:
+     core/admin/audit.js
+   - Tách server-rendered admin HTML/views ra:
+     core/admin/views.js
+   - Giữ route wiring và export tương thích cũ trong:
+     core/admin-routes.js
+   - Không đổi schema.
+   - Không đổi env.
+   - Không thêm production write workflow.
+   - Không bật ADMIN_AUDIT_LOG_ENABLED.
+3. Verify trước deploy refactor:
+   - node --check pass cho core/admin-routes.js, core/admin/reader.js, core/admin/audit.js, core/admin/views.js.
+   - npm test: 268 passed.
+   - npm audit --omit=dev: 0 vulnerabilities.
+   - git diff --check pass.
+4. Push/deploy refactor sau khi có xác nhận riêng:
+   - Commit:
+     20676a3 Refactor admin dashboard modules
+   - Pushed origin/main.
+   - Railway deployment:
+     81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS
+   - Smoke:
+     /healthz ok=true, storage.adapter=postgres, storage.ready=true
+     /admin/dashboard 200
+     /admin/audit 200, schema message vẫn hiện như kỳ vọng
+5. Cập nhật docs handoff/roadmap:
+   - docs/next-session-prompt.md
+   - docs/saas-roadmap.md
+   - Commit:
+     5851368 Update handoff docs after admin refactor deploy
+   - Pushed origin/main.
+   - Railway auto-deploy docs-only:
+     7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS
+   - Smoke lại:
+     /healthz ok=true, storage.adapter=postgres, storage.ready=true
+     /admin/dashboard 200
+     /admin/audit 200, schema_message=true
+
+Tính năng admin hiện có:
+- Dashboard read-only với filters.
+- Bounded user detail view.
+- Mask phone/address/snippets trong admin UI.
+- Read-only SQL guard cho dashboard reader.
+- Admin auth hardening:
+  - Dashboard chỉ nhận Authorization: Bearer <ADMIN_EXPORT_TOKEN>.
+  - Không nhận token qua query param.
+  - Legacy export/debug route còn x-admin-token compatibility.
+- RBAC:
+  - viewer: dashboard + user detail read
+  - support: viewer + legacy state read
+  - maintainer: support + export + audit read
+  - owner: full admin gates hiện tại
+- /admin/audit read-only.
+- /admin/audit xử lý thiếu schema gracefully, không 500.
+- Audit writer PostgreSQL opt-in:
+  - mặc định tắt nếu ADMIN_AUDIT_LOG_ENABLED không phải true
+  - không tạo DB connection khi disabled
+- Audit metadata redaction:
+  - token, DB URL, phone, address, email, service account-like fields
+- Audit schema proposal additive/idempotent:
+  db/admin-auth-rbac-audit-proposal.sql
+- Production audit schema chưa apply.
+- ADMIN_AUDIT_LOG_ENABLED chưa bật.
+
+File quan trọng:
 - core/admin-auth.js
 - core/admin-routes.js
 - core/admin/audit.js
@@ -74,66 +171,78 @@ Các file quan trọng đã thêm/cập nhật:
 - tests/admin-routes.test.js
 - tests/index.js
 
-Tính năng đã làm ở phase trước:
-- RBAC cho admin routes:
-  - viewer: dashboard + user detail read
-  - support: viewer + legacy state read
-  - maintainer: support + export + audit read
-  - owner: full admin gates hiện tại
-- Route /admin/audit read-only.
-- /admin/audit now handles missing audit schema gracefully instead of returning 500.
-- Audit writer PostgreSQL opt-in, mặc định tắt nếu ADMIN_AUDIT_LOG_ENABLED không phải true.
-- Audit metadata redaction cho token, DB URL, phone, address, email, service account-like fields.
-- Dashboard vẫn yêu cầu Authorization: Bearer <ADMIN_EXPORT_TOKEN>.
-- Legacy export/debug vẫn giữ x-admin-token compatibility.
-- Admin dashboard refactor đã deploy ở `20676a3`:
-  - route wiring còn trong `core/admin-routes.js`
-  - PostgreSQL dashboard/audit reader ở `core/admin/reader.js`
-  - audit writer ở `core/admin/audit.js`
-  - server-rendered admin HTML ở `core/admin/views.js`
-- Schema proposal additive/idempotent, chưa được apply production.
-
-Việc cần làm đầu phiên:
-1. Kiểm tra trạng thái:
+Việc bắt buộc làm đầu phiên mới:
+1. Chạy trạng thái local/remote:
    - git status --short --untracked-files=all
    - git rev-list --left-right --count origin/main...HEAD
    - git log --oneline -5
+2. Kiểm tra production deployment:
    - railway deployment list --environment production --service chatbot-fanpage --limit 1 --json
-   - GET production /healthz
-2. Không tạo backup mới trừ khi chuẩn bị production DB/env/deploy work. Nếu có production write/env/deploy phase, phải tạo backup PostgreSQL mới trước.
-3. Đọc:
+3. GET production /healthz:
+   - Không cần token.
+   - Chỉ báo metadata an toàn: ok, storage.adapter, storage.ready, messenger.dryRun.
+4. Đọc lại:
    - docs/saas-roadmap.md
    - docs/admin-auth-rbac-audit-runbook.md
    - DESIGN.md
-4. Chạy local:
+5. Chạy local:
    - npm test
    - npm audit --omit=dev
 
-Hướng phát triển đề xuất tiếp theo:
-- Nếu muốn bật audit production thật:
-  1. Tạo backup PostgreSQL production mới ngoài repo bằng SELECT/read-only.
-  2. Verify SHA256/counts.
-  3. Apply db/admin-auth-rbac-audit-proposal.sql vào non-production trước nếu có môi trường.
-  4. Code đã deploy ở commit 20676a3, nhưng vẫn verify deployment trước khi làm tiếp.
-  5. Sau xác nhận riêng, apply schema production.
-  6. Verify count-only admin tables.
-  7. Sau xác nhận riêng, set ADMIN_AUDIT_LOG_ENABLED=true.
-  8. Test /admin/dashboard và /admin/audit bằng Bearer header.
-- Nếu muốn phát triển SaaS:
-  - Tách tiếp route auth/wiring trong core/admin-routes.js nếu muốn giảm file này thêm.
-  - Hoặc bắt đầu dashboard repository/API read-only nhỏ, có test trước.
-  - Không thêm write workflow cho đến khi audit production ổn định.
+Hướng tốt nhất cho phiên tới:
+Ưu tiên Phase 2: production audit rollout, nhưng chỉ khi tôi xác nhận muốn làm production DB/env work.
 
-Cuối lượt luôn báo:
+Nếu muốn bật audit production thật:
+1. Re-check git/deployment/healthz.
+2. Tạo backup PostgreSQL production mới ngoài repo bằng read-only SELECT.
+3. Verify backup:
+   - folder path
+   - SHA256
+   - count-only: profiles, conversations, messages, orders, order_items, events, processed_mids
+   - Không in raw customer data.
+4. Review SQL:
+   - db/admin-auth-rbac-audit-proposal.sql
+   - Xác nhận additive/idempotent:
+     CREATE TABLE IF NOT EXISTS
+     CREATE INDEX IF NOT EXISTS
+     INSERT ... ON CONFLICT DO NOTHING
+     Không DROP/TRUNCATE/DELETE/destructive ALTER.
+5. Apply SQL vào non-production/staging trước nếu môi trường dùng được.
+6. Chạy npm test và npm audit --omit=dev.
+7. Chỉ sau xác nhận riêng:
+   - apply schema production.
+8. Verify production bằng count-only:
+   - admin_users
+   - admin_roles
+   - admin_user_roles
+   - admin_audit_log
+9. Chỉ sau xác nhận riêng tiếp theo:
+   - set ADMIN_AUDIT_LOG_ENABLED=true
+10. Smoke:
+   - /healthz
+   - /admin/dashboard bằng Bearer header
+   - /admin/audit bằng Bearer header
+11. Không thêm admin user production cho tới khi identity provisioning/session/token rotation được review riêng.
+
+Nếu chưa muốn ghi production DB:
+- Tiếp tục nhánh code-only an toàn:
+  - Tách route auth/wiring khỏi core/admin-routes.js thành module nhỏ.
+  - Hoặc tạo admin dashboard repository/API read-only có test.
+  - Hoặc thêm pagination read-only cho dashboard.
+- Không thêm write workflow cho tới khi audit production ổn định.
+- Không deploy/push nếu chưa có xác nhận riêng.
+
+Cuối mỗi lượt phải báo rõ:
 - Có backup mới không, nằm ở đâu, SHA256/counts.
-- Có deploy không.
 - Có push không.
+- Có deploy không.
 - Có đổi env production không.
 - Có ghi production DB không.
 - Có ghi production /data không.
 - Đã thay đổi gì.
 - Tests/audit kết quả.
 - Production healthz.
+- Admin smoke nếu có deploy.
 - Git state.
 - Rủi ro còn lại.
 - Bước tiếp theo cần tôi xác nhận gì.
