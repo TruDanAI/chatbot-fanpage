@@ -375,6 +375,20 @@ describe('Engine: checkout context không rơi về gel/fallback', () => {
     expect(store.getOrderDraft('u_checkout_gel').cartItems.length).toBe(2);
   });
 
+  it('order intent nhiều mã chốt đủ các sản phẩm được nhắc tới', () => {
+    const store = makeStore();
+    const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });
+    const userId = 'u_checkout_multiple_codes';
+    const reply = engine.buildDeterministicReply('lấy mã 8, 9 đi shop', userId);
+    const cartItems = store.getOrderDraft(userId).cartItems;
+
+    expect(reply).toContain('Dạ em chốt giúp mình');
+    expect(reply).toContain('MÃ8');
+    expect(reply).toContain('MÃ9');
+    expect(cartItems.length).toBe(2);
+    expect(cartItems.map(item => item.code)).toEqual(['MÃ8', 'MÃ9']);
+  });
+
   it('lấy gel đào và MÃ8 vẫn vào checkout, không trả lại giá gel', () => {
     const store = makeStore();
     const engine = createRuleEngine({ products, config: adultConfig, contextStore: store });

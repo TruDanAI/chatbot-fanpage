@@ -14,6 +14,7 @@ function createImageService({
   publicBaseUrl,
   normalizeText,
   extractRequestedProductCodes,
+  isOrderIntent = () => false,
   wantsKeywordImage,
   wantsMenuImages,
   wantsProductImage,
@@ -212,6 +213,8 @@ function createImageService({
   function buildRequestedImages(userText, userId) {
     const files = [];
     const reasons = [];
+    const explicitImageRequest = wantsMenuImages(userText) || wantsProductImage(userText);
+    if (isOrderIntent(userText) && !explicitImageRequest) return files;
 
     if (wantsMenuImages(userText)) {
       const menu1 = getImageFilename('menu1');

@@ -553,12 +553,14 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     existing.forEach(addItem);
     const gelItem = extractGelCartItem(ctx.text);
     const selectedIsGel = isGelProduct(ctx.selectedProduct);
-    if (ctx.selectedProduct && !selectedIsGel) {
+    const selectedProducts = ctx.found.length ? ctx.found : [ctx.selectedProduct].filter(Boolean);
+    for (const product of selectedProducts) {
+      if (!product || isGelProduct(product)) continue;
       addItem({
-        code: ctx.selectedProduct.code,
-        name: ctx.selectedProduct.code,
+        code: product.code,
+        name: product.code,
         qty: 1,
-        display: displayCartProductCode(ctx.selectedProduct.code)
+        display: displayCartProductCode(product.code)
       });
     }
     if (selectedIsGel) {
@@ -1265,6 +1267,7 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
     looksLikePhone,
     normalizeText,
     shouldSilenceAfterCompleteOrder,
+    isOrderIntent,
     wantsHuman,
     wantsKeywordImage: (text, kw) => wantsKeywordImage(text, kw, config),
     wantsMenuImages,

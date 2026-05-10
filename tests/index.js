@@ -5,6 +5,7 @@ require('./nlp.test');
 require('./responses.test');
 require('./quick-replies.test');
 require('./messenger-client.test');
+require('./image-service.test');
 require('./rules.test');
 require('./storage-config.test');
 require('./storage-file-adapter.test');
