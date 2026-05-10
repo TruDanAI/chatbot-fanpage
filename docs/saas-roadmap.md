@@ -35,8 +35,10 @@ Last verified baseline from May 10, 2026:
   `storage.ready=true`, `messenger.dryRun=false`
 - Latest verified code deployment at that time:
   `fd5a9a0 Extract admin route handlers`
-- Latest verified Railway production deployment at that time:
+- Latest verified Railway code deployment at that time:
   `6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS`
+- Latest verified Railway docs-only deployment at that time:
+  `5e84718a-8ea4-4ad0-8767-20052dd38cd3 SUCCESS`
 - Phase commits already pushed:
   `e14692c Add admin RBAC audit scaffolding`,
   `a28c0e5 Add SaaS roadmap and handoff prompt`,
@@ -45,7 +47,8 @@ Last verified baseline from May 10, 2026:
   `20676a3 Refactor admin dashboard modules`,
   `5851368 Update handoff docs after admin refactor deploy`,
   `5ec0902 Expand next session handoff prompt`,
-  `fd5a9a0 Extract admin route handlers`
+  `fd5a9a0 Extract admin route handlers`,
+  `70ac695 Update handoff docs after route handler deploy`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120`
 - Latest known backup SHA256:
   `0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4`
@@ -79,6 +82,7 @@ Current shape:
 - Admin route wiring in `core/admin-routes.js`.
 - Admin route authorization helper in `core/admin/route-auth.js`.
 - Admin read-only page handlers in `core/admin/read-routes.js`.
+- Admin legacy export/state handlers in `core/admin/legacy-routes.js`.
 - Server-rendered admin HTML in `core/admin/views.js`.
 - Admin PostgreSQL read model in `core/admin/reader.js`.
 - Admin audit writer in `core/admin/audit.js`.
@@ -145,6 +149,8 @@ Done:
   `core/admin/route-auth.js`.
 - Admin dashboard, user detail, and audit page handlers extracted to
   `core/admin/read-routes.js`.
+- Admin legacy export and state handlers extracted to
+  `core/admin/legacy-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
   after the refactor deploy.
 
@@ -296,9 +302,9 @@ Priority improvements:
 
 Refactor targets:
 
-- Continue shrinking `core/admin-routes.js` by extracting legacy export/state
-  handlers when the next admin slice needs it.
 - Extract dashboard SQL into a repository module.
+- Add read-only pagination for dashboard tables when fixed limits become too
+  restrictive.
 - Keep HTML view helpers pure and testable.
 - Keep storage writes behind service functions.
 

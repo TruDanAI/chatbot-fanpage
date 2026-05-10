@@ -53,6 +53,8 @@ Trạng thái production mới nhất đã biết:
 - Previous admin refactor code commit:
   20676a3 Refactor admin dashboard modules
 - Latest Railway production deployment:
+  5e84718a-8ea4-4ad0-8767-20052dd38cd3 SUCCESS
+- Latest code Railway deployment:
   6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS
 - Previous docs-only Railway deployment:
   7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS
@@ -68,14 +70,16 @@ Trạng thái production mới nhất đã biết:
 Git state mới nhất đã biết:
 - Code refactor commit đã push/deploy:
   fd5a9a0 Extract admin route handlers
-- Trước docs-only handoff update cuối phiên:
-  worktree clean, origin/main...HEAD = 0 0.
+- Latest docs-only handoff commit đã push/deploy:
+  70ac695 Update handoff docs after route handler deploy
+- Sau khi bắt đầu slice code-only legacy handlers:
+  worktree có thay đổi chưa commit, origin/main...HEAD = 0 0.
 - Latest commits:
+  70ac695 Update handoff docs after route handler deploy
   fd5a9a0 Extract admin route handlers
   5ec0902 Expand next session handoff prompt
   5851368 Update handoff docs after admin refactor deploy
   20676a3 Refactor admin dashboard modules
-  b90c5de Update handoff docs after production deploy
 
 Backup production mới nhất đã biết:
 - Path:
@@ -165,6 +169,21 @@ Backup production mới nhất đã biết:
      /healthz ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
      /admin/dashboard 200, title=Admin Dashboard
      /admin/audit 200, title=Admin Audit Log, schema_message=true
+7. Phiên code-only legacy handlers, chưa push/chưa deploy:
+   - Local git đầu slice:
+     worktree clean, origin/main...HEAD = 0 0, HEAD 70ac695.
+   - Tách legacy export/state handlers ra:
+     core/admin/legacy-routes.js
+   - core/admin-routes.js giờ chủ yếu giữ dependency setup và route wiring.
+   - Thêm tests cho:
+     legacy export 404 audit khi file chưa có
+     legacy state support read audit success
+   - Không đổi schema.
+   - Không đổi env.
+   - Không thêm production write workflow.
+   - Không bật ADMIN_AUDIT_LOG_ENABLED.
+   - node --check pass cho core/admin-routes.js, core/admin/legacy-routes.js, tests/admin-routes.test.js.
+   - npm test: 272 passed.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -177,6 +196,7 @@ Tính năng admin hiện có:
   - Legacy export/debug route còn x-admin-token compatibility.
 - Route authorization/audit request handling đã tách vào core/admin/route-auth.js.
 - Dashboard/user detail/audit page handlers đã tách vào core/admin/read-routes.js.
+- Legacy export/state handlers đã tách vào core/admin/legacy-routes.js.
 - RBAC:
   - viewer: dashboard + user detail read
   - support: viewer + legacy state read
@@ -198,6 +218,7 @@ File quan trọng:
 - core/admin-auth.js
 - core/admin-routes.js
 - core/admin/audit.js
+- core/admin/legacy-routes.js
 - core/admin/reader.js
 - core/admin/read-routes.js
 - core/admin/route-auth.js
@@ -267,8 +288,7 @@ Nếu muốn bật audit production thật:
 
 Nếu chưa muốn ghi production DB:
 - Tiếp tục nhánh code-only an toàn:
-  - Tách legacy export/state handlers khỏi core/admin-routes.js.
-  - Hoặc tạo admin dashboard repository/API read-only có test.
+  - Tạo admin dashboard repository/API read-only có test.
   - Hoặc thêm pagination read-only cho dashboard.
 - Không thêm write workflow cho tới khi audit production ổn định.
 - Không deploy/push nếu chưa có xác nhận riêng.

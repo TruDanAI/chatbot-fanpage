@@ -236,6 +236,7 @@ Frontend/runtime location:
 
 - Admin frontend is server-rendered HTML/CSS in `core/admin/views.js`.
 - Admin read page handlers live in `core/admin/read-routes.js`.
+- Legacy export/state handlers live in `core/admin/legacy-routes.js`.
 - Route wiring stays in `core/admin-routes.js`.
 - There is no separate React/Vite frontend app for these screens.
 

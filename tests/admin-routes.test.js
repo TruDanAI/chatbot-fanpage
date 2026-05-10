@@ -397,6 +397,60 @@ describe('admin dashboard routes', () => {
     expect(auditLogger.entries[0].actor_id).toBe('viewer-1');
   });
 
+  it('legacy export route ghi audit 404 khi file chưa có', async () => {
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      auditLogger,
+      adminPrincipalId: 'maintainer-1',
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/customers.csv'](createReq({
+      headers: { 'x-admin-token': 'secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(404);
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].actor_id).toBe('maintainer-1');
+    expect(auditLogger.entries[0].resource_id).toBe('customers.csv');
+    expect(auditLogger.entries[0].outcome).toBe('error');
+    expect(auditLogger.entries[0].metadata.statusCode).toBe(404);
+  });
+
+  it('legacy state route cho support đọc state và ghi audit success', async () => {
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      auditLogger,
+      adminPrincipalId: 'support-1',
+      adminPrincipalRoles: ['support']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/state/:userId'](createReq({
+      headers: { 'x-admin-token': 'secret' },
+      params: { userId: 'sender_1' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.userId).toBe('sender_1');
+    expect(body.historyLength).toBe(0);
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].action).toBe(PERMISSIONS.LEGACY_STATE_READ);
+    expect(auditLogger.entries[0].outcome).toBe('success');
+  });
+
   it('audit log route cần quyền audit read và render bảng read-only', async () => {
     const app = createApp();
     registerAdminRoutes(app, {

@@ -34,6 +34,7 @@ tokens, database URLs, full phone numbers, addresses, or customer export rows.
 
 Admin screens are server-rendered through `core/admin/views.js` and
 `core/admin/read-routes.js`; there is no separate frontend app.
+Legacy export and state handlers live in `core/admin/legacy-routes.js`.
 
 Routes:
 
