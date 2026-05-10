@@ -33,17 +33,19 @@ Last verified baseline from May 10, 2026:
 - Production storage: PostgreSQL
 - Production runtime health: `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`
-- Latest deployed commit at that time:
-  `5851368 Update handoff docs after admin refactor deploy`
-- Latest Railway production deployment at that time:
-  `7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS`
+- Latest verified code deployment at that time:
+  `fd5a9a0 Extract admin route handlers`
+- Latest verified Railway production deployment at that time:
+  `6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS`
 - Phase commits already pushed:
   `e14692c Add admin RBAC audit scaffolding`,
   `a28c0e5 Add SaaS roadmap and handoff prompt`,
   `c9ff1df Handle missing audit schema gracefully`,
   `b90c5de Update handoff docs after production deploy`,
   `20676a3 Refactor admin dashboard modules`,
-  `5851368 Update handoff docs after admin refactor deploy`
+  `5851368 Update handoff docs after admin refactor deploy`,
+  `5ec0902 Expand next session handoff prompt`,
+  `fd5a9a0 Extract admin route handlers`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120`
 - Latest known backup SHA256:
   `0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4`

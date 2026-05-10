@@ -46,13 +46,17 @@ Production:
   - PAGE_ID=1026325343908119
 
 Trạng thái production mới nhất đã biết:
-- Latest deployed commit:
+- Latest verified code deployment:
+  fd5a9a0 Extract admin route handlers
+- Previous docs-only deployed commit:
   5851368 Update handoff docs after admin refactor deploy
-- Commit code admin refactor đang chạy:
+- Previous admin refactor code commit:
   20676a3 Refactor admin dashboard modules
 - Latest Railway production deployment:
+  6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS
+- Previous docs-only Railway deployment:
   7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS
-- Deployment admin refactor trước đó:
+- Previous admin refactor Railway deployment:
   81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS
 - /healthz gần nhất:
   ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
@@ -62,18 +66,16 @@ Trạng thái production mới nhất đã biết:
 - schema_message=true là kỳ vọng hiện tại vì audit schema production chưa apply.
 
 Git state mới nhất đã biết:
-- Worktree có thay đổi chưa commit từ phiên code-only hiện tại.
-- origin/main...HEAD = 0 1.
-- Local HEAD:
-  5ec0902 Expand next session handoff prompt
-- origin/main latest known:
-  5851368 Update handoff docs after admin refactor deploy
+- Code refactor commit đã push/deploy:
+  fd5a9a0 Extract admin route handlers
+- Trước docs-only handoff update cuối phiên:
+  worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  fd5a9a0 Extract admin route handlers
   5ec0902 Expand next session handoff prompt
   5851368 Update handoff docs after admin refactor deploy
   20676a3 Refactor admin dashboard modules
   b90c5de Update handoff docs after production deploy
-  c9ff1df Handle missing audit schema gracefully
 
 Backup production mới nhất đã biết:
 - Path:
@@ -132,7 +134,7 @@ Backup production mới nhất đã biết:
      /healthz ok=true, storage.adapter=postgres, storage.ready=true
      /admin/dashboard 200
      /admin/audit 200, schema_message=true
-6. Phiên code-only tiếp theo, chưa push/chưa deploy:
+6. Phiên code-only route handler, đã push/deploy sau xác nhận:
    - Re-check production deployment:
      7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS ở commit 5851368.
    - /healthz production:
@@ -154,6 +156,15 @@ Backup production mới nhất đã biết:
    - npm test: 270 passed.
    - npm audit --omit=dev: 0 vulnerabilities.
    - git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Commit:
+     fd5a9a0 Extract admin route handlers
+   - Pushed origin/main.
+   - Railway deployment:
+     6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS
+   - Smoke:
+     /healthz ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
+     /admin/dashboard 200, title=Admin Dashboard
+     /admin/audit 200, title=Admin Audit Log, schema_message=true
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
