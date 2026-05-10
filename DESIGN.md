@@ -96,6 +96,15 @@ Tables:
 - Rows should not shift size on hover.
 - Links should use the Link token and remain text-only.
 
+Filters:
+
+- Use compact form controls above the metric strip.
+- Allow only low-risk operational filters: sender id, order status, product
+  code, event type, and row limit.
+- Do not provide phone or address filters because those values would be easy to
+  place into URLs, logs, screenshots, or browser history.
+- Filters must remain read-only and parameterized at the database layer.
+
 Status badge:
 
 - Compact inline label with 999px radius.
@@ -138,7 +147,8 @@ Auth:
 Admin Dashboard:
 
 - Route: `/admin/dashboard` and `/admin/db`.
-- Top metadata: tenant, page, list limit.
+- Top metadata: tenant, page, list limit, active filter count.
+- Filters: sender id, order status, product code, event type, row limit.
 - Metric strip: profiles, conversations, messages, orders, order_items, events,
   processed_mids.
 - Tables: Orders, Conversations, Recent Events.
@@ -161,4 +171,3 @@ Before adding write workflows, add:
 - Audit log for every admin action.
 - Explicit confirmation flows.
 - Production backup and rollback checklist for each write feature.
-

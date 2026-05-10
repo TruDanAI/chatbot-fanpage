@@ -77,6 +77,72 @@ function renderStatus(value = '') {
   return `<span class="${statusClass(label)}">${escapeHtml(label)}</span>`;
 }
 
+function normalizeFilterText(value = '', max = 80) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function escapeSqlLike(value = '') {
+  return String(value || '').replace(/[\\%_]/g, char => `\\${char}`);
+}
+
+function likeParam(value = '') {
+  return `%${escapeSqlLike(value)}%`;
+}
+
+const ORDER_STATUS_FILTERS = new Set(['draft', 'ready_to_confirm', 'confirmed', 'cancelled', 'abandoned']);
+
+function normalizeDashboardFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS) {
+  const status = normalizeFilterText(query.status, 40).toLowerCase();
+  const filters = {
+    senderId: normalizeFilterText(query.senderId, 100),
+    status: ORDER_STATUS_FILTERS.has(status) ? status : '',
+    productCode: normalizeFilterText(query.productCode, 40),
+    eventType: normalizeFilterText(query.eventType, 40),
+    limit: toInteger(query.limit, limits.overviewRows, { min: 1, max: 100 })
+  };
+  filters.activeCount = ['senderId', 'status', 'productCode', 'eventType']
+    .filter(key => Boolean(filters[key]))
+    .length;
+  return filters;
+}
+
+function addSqlCondition(conditions, params, sql, value, paramOffset = 2) {
+  params.push(value);
+  conditions.push(sql.replace('?', `$${paramOffset + params.length}`));
+}
+
+function buildOverviewQueryScope(filters, { tableAlias, productColumn, statusColumn, eventTypeColumn } = {}) {
+  const conditions = [`${tableAlias}.tenant_id = $1`, `${tableAlias}.page_id = $2`];
+  const params = [];
+  if (filters.senderId) {
+    addSqlCondition(conditions, params, `${tableAlias}.sender_id ILIKE ? ESCAPE '\\'`, likeParam(filters.senderId));
+  }
+  if (filters.productCode && productColumn) {
+    addSqlCondition(conditions, params, `${productColumn} ILIKE ? ESCAPE '\\'`, likeParam(filters.productCode));
+  }
+  if (filters.status && statusColumn) {
+    addSqlCondition(conditions, params, `${statusColumn} = ?`, filters.status);
+  }
+  if (filters.eventType && eventTypeColumn) {
+    addSqlCondition(conditions, params, `${eventTypeColumn} ILIKE ? ESCAPE '\\'`, likeParam(filters.eventType));
+  }
+  return {
+    whereSql: conditions.join(' AND '),
+    filterParams: params
+  };
+}
+
+function dashboardQueryString(filters = {}, overrides = {}) {
+  const params = new URLSearchParams();
+  const next = { ...filters, ...overrides };
+  for (const key of ['senderId', 'status', 'productCode', 'eventType', 'limit']) {
+    const value = String(next[key] || '').trim();
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
 function assertReadOnlySql(sql) {
   const normalized = String(sql || '').trim().replace(/\s+/g, ' ');
   if (!/^SELECT\b/i.test(normalized)) {
@@ -146,9 +212,27 @@ function createPostgresDashboardReader({
     }
   }
 
-  async function getOverview() {
+  async function getOverview(rawFilters = {}) {
+    const filters = normalizeDashboardFilters(rawFilters, config);
     return withClient(async client => {
       const params = [tenantId, pageId];
+      const conversationsScope = buildOverviewQueryScope(filters, {
+        tableAlias: 'c',
+        productColumn: 'c.last_product_code'
+      });
+      const ordersScope = buildOverviewQueryScope(filters, {
+        tableAlias: 'o',
+        productColumn: 'o.product_code',
+        statusColumn: 'o.status'
+      });
+      const eventsScope = buildOverviewQueryScope(filters, {
+        tableAlias: 'e',
+        productColumn: 'e.product_code',
+        eventTypeColumn: 'e.type'
+      });
+      const conversationsLimitParam = 3 + conversationsScope.filterParams.length;
+      const ordersLimitParam = 3 + ordersScope.filterParams.length;
+      const eventsLimitParam = 3 + eventsScope.filterParams.length;
       const counts = await client.query(`
         SELECT
           (SELECT COUNT(*)::int FROM profiles WHERE tenant_id = $1 AND page_id = $2) AS profiles,
@@ -161,29 +245,29 @@ function createPostgresDashboardReader({
       `, params);
       const conversations = await client.query(`
         SELECT sender_id, session_state, last_product_code, last_user_at, updated_at
-        FROM conversations
-        WHERE tenant_id = $1 AND page_id = $2
+        FROM conversations c
+        WHERE ${conversationsScope.whereSql}
         ORDER BY updated_at DESC, sender_id ASC
-        LIMIT $3
-      `, [...params, config.overviewRows]);
+        LIMIT $${conversationsLimitParam}
+      `, [...params, ...conversationsScope.filterParams, filters.limit]);
       const orders = await client.query(`
         SELECT o.id, o.sender_id, o.status, o.product_code, o.customer_name,
                o.phone, o.address, o.updated_at, COUNT(oi.id)::int AS item_count
         FROM orders o
         LEFT JOIN order_items oi ON oi.order_id = o.id
-        WHERE o.tenant_id = $1 AND o.page_id = $2
+        WHERE ${ordersScope.whereSql}
         GROUP BY o.id, o.sender_id, o.status, o.product_code, o.customer_name,
                  o.phone, o.address, o.updated_at
         ORDER BY o.updated_at DESC, o.id DESC
-        LIMIT $3
-      `, [...params, config.overviewRows]);
+        LIMIT $${ordersLimitParam}
+      `, [...params, ...ordersScope.filterParams, filters.limit]);
       const events = await client.query(`
         SELECT id, sender_id, type, source, session_state, product_code, event_at, text
-        FROM events
-        WHERE tenant_id = $1 AND page_id = $2
+        FROM events e
+        WHERE ${eventsScope.whereSql}
         ORDER BY event_at DESC, id DESC
-        LIMIT $3
-      `, [...params, config.overviewRows]);
+        LIMIT $${eventsLimitParam}
+      `, [...params, ...eventsScope.filterParams, filters.limit]);
 
       return {
         tenantId,
@@ -192,7 +276,8 @@ function createPostgresDashboardReader({
         conversations: conversations.rows,
         orders: orders.rows,
         events: events.rows,
-        limits: config
+        filters,
+        limits: { ...config, overviewRows: filters.limit }
       };
     });
   }
@@ -303,6 +388,12 @@ function renderLayout(title, body) {
     a { color: var(--link); font-weight: 700; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .meta { color: var(--muted); font-size: 13px; }
+    .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; margin: 18px 0 20px; }
+    .filters label { display: grid; gap: 4px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+    .filters input, .filters select { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: #17202a; background: #ffffff; font: inherit; }
+    .filters button, .filters a { min-height: 34px; border-radius: 6px; padding: 7px 10px; font-size: 14px; font-weight: 700; text-align: center; box-sizing: border-box; }
+    .filters button { border: 1px solid var(--primary); color: #ffffff; background: var(--primary); cursor: pointer; }
+    .filters a { border: 1px solid var(--border); color: #334155; background: #ffffff; text-decoration: none; }
     .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
     .count { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
     .count span { color: var(--muted); font-size: 13px; }
@@ -339,16 +430,42 @@ function renderTable(headers, rows, renderRow) {
   return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table>`;
 }
 
+function renderFilterForm(filters = {}) {
+  const statusOptions = ['', 'draft', 'ready_to_confirm', 'confirmed', 'cancelled', 'abandoned']
+    .map(value => `<option value="${escapeHtml(value)}"${filters.status === value ? ' selected' : ''}>${escapeHtml(value || 'Any')}</option>`)
+    .join('');
+  return `<form class="filters" method="get" action="/admin/dashboard">
+    <label>Sender
+      <input name="senderId" value="${escapeHtml(filters.senderId)}" maxlength="100">
+    </label>
+    <label>Order Status
+      <select name="status">${statusOptions}</select>
+    </label>
+    <label>Product
+      <input name="productCode" value="${escapeHtml(filters.productCode)}" maxlength="40">
+    </label>
+    <label>Event Type
+      <input name="eventType" value="${escapeHtml(filters.eventType)}" maxlength="40">
+    </label>
+    <label>Limit
+      <input name="limit" type="number" min="1" max="100" value="${escapeHtml(filters.limit || 25)}">
+    </label>
+    <button type="submit">Filter</button>
+    <a href="/admin/dashboard">Clear</a>
+  </form>`;
+}
+
 function renderDashboardHtml(model) {
   const body = `
-    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | list limit ${escapeHtml(model.limits.overviewRows)}</p>
+    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+    ${renderFilterForm(model.filters || {})}
     ${renderCounts(model.counts)}
 
     <h2>Orders</h2>
     ${renderTable(['updated', 'sender', 'status', 'product', 'name', 'phone', 'address', 'items'], model.orders, order => `
       <tr>
         <td>${escapeHtml(formatDate(order.updated_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(order.sender_id)}">${escapeHtml(order.sender_id)}</a></td>
+        <td><a href="/admin/dashboard/users/${encodeRoutePart(order.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(order.sender_id)}</a></td>
         <td>${renderStatus(order.status)}</td>
         <td>${escapeHtml(order.product_code)}</td>
         <td>${escapeHtml(limitText(order.customer_name, 80))}</td>
@@ -362,7 +479,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['updated', 'sender', 'state', 'last product', 'last user at'], model.conversations, item => `
       <tr>
         <td>${escapeHtml(formatDate(item.updated_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(item.sender_id)}">${escapeHtml(item.sender_id)}</a></td>
+        <td><a href="/admin/dashboard/users/${encodeRoutePart(item.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(item.sender_id)}</a></td>
         <td>${escapeHtml(item.session_state)}</td>
         <td>${escapeHtml(item.last_product_code)}</td>
         <td>${escapeHtml(formatDate(item.last_user_at))}</td>
@@ -373,7 +490,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['time', 'sender', 'type', 'source', 'product', 'text'], model.events, event => `
       <tr>
         <td>${escapeHtml(formatDate(event.event_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(event.sender_id)}">${escapeHtml(event.sender_id)}</a></td>
+        <td><a href="/admin/dashboard/users/${encodeRoutePart(event.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(event.sender_id)}</a></td>
         <td>${escapeHtml(event.type)}</td>
         <td>${escapeHtml(event.source)}</td>
         <td>${escapeHtml(event.product_code)}</td>
@@ -394,7 +511,7 @@ function renderUserDetailHtml(model) {
   const profile = model.profile || {};
   const conversation = model.conversation || {};
   const body = `
-    <p><a href="/admin/dashboard">Back to dashboard</a></p>
+    <p><a href="/admin/dashboard${dashboardQueryString(model.filters || {})}">Back to dashboard</a></p>
     <p class="meta">Sender <code>${escapeHtml(model.senderId)}</code> | detail limits: ${escapeHtml(model.limits.detailOrders)} orders, ${escapeHtml(model.limits.detailMessages)} messages, ${escapeHtml(model.limits.detailEvents)} events.</p>
 
     <h2>Profile</h2>
@@ -508,7 +625,7 @@ function registerAdminRoutes(app, {
   async function sendDashboard(req, res) {
     if (!requireAdminBearerToken(req, res)) return;
     try {
-      const model = await reader.getOverview();
+      const model = await reader.getOverview(req.query || {});
       res.type('html').send(renderDashboardHtml(model));
     } catch (err) {
       res.status(err.statusCode || 500).send('Không đọc được dashboard.');
@@ -519,6 +636,7 @@ function registerAdminRoutes(app, {
     if (!requireAdminBearerToken(req, res)) return;
     try {
       const model = await reader.getUserDetail(req.params.senderId);
+      model.filters = normalizeDashboardFilters(req.query || {});
       res.type('html').send(renderUserDetailHtml(model));
     } catch (err) {
       res.status(err.statusCode || 500).send('Không đọc được dashboard detail.');

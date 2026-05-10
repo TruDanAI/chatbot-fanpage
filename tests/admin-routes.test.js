@@ -72,12 +72,17 @@ function createStorageStub() {
 
 function createDashboardReaderStub() {
   let calls = 0;
+  let lastOverviewFilters = null;
   return {
     get calls() {
       return calls;
     },
-    async getOverview() {
+    get lastOverviewFilters() {
+      return lastOverviewFilters;
+    },
+    async getOverview(filters = {}) {
       calls += 1;
+      lastOverviewFilters = filters;
       return {
         tenantId: 'default',
         pageId: 'page',
@@ -118,6 +123,14 @@ function createDashboardReaderStub() {
           event_at: '2026-05-10T00:00:01.000Z',
           text: 'sdt 0987654321 dia chi 12 Tran Phu'
         }],
+        filters: {
+          senderId: filters.senderId || '',
+          status: filters.status || '',
+          productCode: filters.productCode || '',
+          eventType: filters.eventType || '',
+          limit: Number(filters.limit || 25),
+          activeCount: 0
+        },
         limits: { overviewRows: 25 }
       };
     },
@@ -187,6 +200,41 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('[masked-address]');
   });
 
+  it('dashboard truyền filter query vào reader và render form filter', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: {
+        senderId: 'sender_1',
+        status: 'confirmed',
+        productCode: 'MÃ8',
+        eventType: 'lead',
+        limit: '5'
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(reader.lastOverviewFilters).toEqual({
+      senderId: 'sender_1',
+      status: 'confirmed',
+      productCode: 'MÃ8',
+      eventType: 'lead',
+      limit: '5'
+    });
+    expect(res.body).toContain('name="senderId"');
+    expect(res.body).toContain('name="productCode"');
+    expect(res.body).toContain('Order Status');
+  });
+
   it('dashboard detail giới hạn theo senderId và vẫn cần Bearer token', async () => {
     const app = createApp();
     const reader = createDashboardReaderStub();
@@ -225,8 +273,8 @@ describe('admin dashboard PostgreSQL reader', () => {
     class FakeClient {
       async connect() {}
       async end() {}
-      async query(sql) {
-        queries.push(sql);
+      async query(sql, params = []) {
+        queries.push({ sql, params });
         if (sql.includes('AS profiles')) {
           return { rows: [{ profiles: 0, conversations: 0, messages: 0, orders: 0, order_items: 0, events: 0, processed_mids: 0 }] };
         }
@@ -244,11 +292,50 @@ describe('admin dashboard PostgreSQL reader', () => {
     await reader.getUserDetail('sender_1');
 
     if (!queries.length) throw new Error('expected dashboard reader to query database');
-    for (const sql of queries) {
+    for (const { sql } of queries) {
       expect(sql.trim()).toMatch(/^SELECT/i);
       if (/\b(INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP)\b/i.test(sql)) {
         throw new Error(`unexpected write SQL: ${sql}`);
       }
     }
+  });
+
+  it('reader dùng filter parameterized và giới hạn limit', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        if (sql.includes('AS profiles')) {
+          return { rows: [{ profiles: 0, conversations: 0, messages: 0, orders: 0, order_items: 0, events: 0, processed_mids: 0 }] };
+        }
+        return { rows: [] };
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    await reader.getOverview({
+      senderId: 'sender_1',
+      status: 'confirmed',
+      productCode: 'MÃ8',
+      eventType: 'lead',
+      limit: '5'
+    });
+
+    const orderQuery = queries.find(item => item.sql.includes('FROM orders o'));
+    const eventQuery = queries.find(item => item.sql.includes('FROM events e'));
+    expect(Boolean(orderQuery)).toBeTrue();
+    expect(Boolean(eventQuery)).toBeTrue();
+    expect(orderQuery.params).toEqual(['default', 'page', '%sender\\_1%', '%MÃ8%', 'confirmed', 5]);
+    expect(eventQuery.params).toEqual(['default', 'page', '%sender\\_1%', '%MÃ8%', '%lead%', 5]);
+    expect(orderQuery.sql).toContain('o.sender_id ILIKE $3');
+    expect(orderQuery.sql).toContain('o.status = $5');
+    expect(orderQuery.sql).toContain('LIMIT $6');
   });
 });
