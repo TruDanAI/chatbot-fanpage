@@ -34,13 +34,15 @@ Last verified baseline from May 10, 2026:
 - Production runtime health: `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`
 - Latest deployed commit at that time:
-  `c9ff1df Handle missing audit schema gracefully`
+  `20676a3 Refactor admin dashboard modules`
 - Latest Railway production deployment at that time:
-  `fa6d0939-4fb4-437c-b159-7b21fa323712 SUCCESS`
+  `81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS`
 - Phase commits already pushed:
   `e14692c Add admin RBAC audit scaffolding`,
   `a28c0e5 Add SaaS roadmap and handoff prompt`,
-  `c9ff1df Handle missing audit schema gracefully`
+  `c9ff1df Handle missing audit schema gracefully`,
+  `b90c5de Update handoff docs after production deploy`,
+  `20676a3 Refactor admin dashboard modules`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120`
 - Latest known backup SHA256:
   `0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4`
@@ -71,7 +73,10 @@ The system should evolve in small, reversible steps.
 Current shape:
 
 - Express backend.
-- Server-rendered admin HTML in `core/admin-routes.js`.
+- Admin route wiring in `core/admin-routes.js`.
+- Server-rendered admin HTML in `core/admin/views.js`.
+- Admin PostgreSQL read model in `core/admin/reader.js`.
+- Admin audit writer in `core/admin/audit.js`.
 - PostgreSQL storage adapter.
 - Rule-based chatbot with optional AI fallback.
 - Railway production deployment.
@@ -129,12 +134,17 @@ Done:
 - Audit schema proposal and runbook.
 - Missing audit schema is handled gracefully in `/admin/audit`; the page can
   render a schema-not-ready message before production schema apply.
+- Admin dashboard modules split into route wiring, PostgreSQL reader, audit
+  writer, and server-rendered views.
+- Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
+  after the refactor deploy.
 
 Remaining:
 
 - Apply audit schema after fresh backup and approval.
 - Enable `ADMIN_AUDIT_LOG_ENABLED=true` after schema verification.
-- Add smoke checks for `/admin/dashboard` and `/admin/audit` after deploy.
+- Keep smoke checks for `/admin/dashboard` and `/admin/audit` after each
+  future deploy.
 
 ### Phase 2: production audit rollout
 
@@ -277,7 +287,8 @@ Priority improvements:
 
 Refactor targets:
 
-- Split `core/admin-routes.js` into auth, reader, audit, and view modules.
+- Continue shrinking `core/admin-routes.js` by extracting route auth/wiring
+  helpers when the next admin slice needs it.
 - Extract dashboard SQL into a repository module.
 - Keep HTML view helpers pure and testable.
 - Keep storage writes behind service functions.
