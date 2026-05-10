@@ -152,7 +152,9 @@ const REQUIRED_UNIQUE_INDEXES = [
   'events_migration_source_unique_idx'
 ];
 
-const SAFE_APPLY_TARGETS = new Set(['local', 'dev', 'staging']);
+const PRODUCTION_DB_WRITE_UNLOCK_ENV = 'ALLOW_PRODUCTION_DB_WRITES';
+const PRODUCTION_CONFIRMATION = 'duoc ghi DB production';
+const SAFE_APPLY_TARGETS = new Set(['local', 'dev', 'staging', 'production']);
 
 const ORDER_DRAFT_FIELDS = [
   'productCode',
@@ -758,6 +760,10 @@ function normalizeMigrationTarget(value) {
   return target || 'local';
 }
 
+function envFlagEnabled(value) {
+  return /^(1|true|yes|on)$/i.test(trimText(value));
+}
+
 function isRailwayProductionRuntime(env = process.env) {
   const envName = trimText(env.RAILWAY_ENVIRONMENT || env.RAILWAY_ENVIRONMENT_NAME).toLowerCase();
   return envName === 'production' || envName === 'prod';
@@ -928,20 +934,28 @@ function assertApplyOptions(options, plan, env = process.env) {
 
   const migrationTarget = normalizeMigrationTarget(options.migrationTarget || env.MIGRATION_TARGET);
   if (!SAFE_APPLY_TARGETS.has(migrationTarget)) {
-    throw new Error('--apply only accepts --migration-target local, dev, or staging. Production apply is refused in this script.');
+    throw new Error('--apply only accepts --migration-target local, dev, staging, or production.');
   }
 
-  if (isRailwayProductionRuntime(env)) {
-    throw new Error('--apply is refused inside Railway production runtime. Use a dev/staging DB and a reviewed production runbook later.');
+  const isProductionTarget = migrationTarget === 'production';
+  if (isProductionTarget) {
+    if (!envFlagEnabled(env[PRODUCTION_DB_WRITE_UNLOCK_ENV])) {
+      throw new Error(`--apply --migration-target production requires ${PRODUCTION_DB_WRITE_UNLOCK_ENV}=true in the command environment.`);
+    }
+    if (trimText(options.productionConfirmation || env.PRODUCTION_DB_WRITE_CONFIRMATION) !== PRODUCTION_CONFIRMATION) {
+      throw new Error(`--apply --migration-target production requires --production-confirmation "${PRODUCTION_CONFIRMATION}".`);
+    }
+  } else if (isRailwayProductionRuntime(env)) {
+    throw new Error('--apply inside Railway production runtime requires --migration-target production and explicit production write confirmation.');
   }
 
-  if (plan.warnings.length && !options.allowWarnings) {
+  if (plan.warnings.length && (isProductionTarget || !options.allowWarnings)) {
     throw new Error('Apply refused because dry-run produced warnings. Fix the source data or pass --allow-warnings for a dev/staging test only.');
   }
 
   const databaseUrl = trimText(options.databaseUrl || env.DATABASE_URL);
   if (!databaseUrl) {
-    throw new Error('--apply requires --database-url or DATABASE_URL for a local/dev/staging PostgreSQL database.');
+    throw new Error('--apply requires --database-url or DATABASE_URL for a local/dev/staging/production PostgreSQL database.');
   }
 
   return { migrationTarget, databaseUrl };
@@ -1098,6 +1112,8 @@ function parseCliArgs(argv) {
       options.iHaveBackedUpData = true;
     } else if (arg === '--allow-warnings') {
       options.allowWarnings = true;
+    } else if (arg === '--production-confirmation') {
+      options.productionConfirmation = argv[++i];
     } else if (arg === '--data-dir') {
       options.dataDir = argv[++i];
     } else if (arg === '--tenant-id') {
@@ -1122,10 +1138,11 @@ function helpText() {
     '',
     'Options:',
     '  --dry-run              Build and print a migration plan. This is the default.',
-    '  --apply                Write to a local/dev/staging PostgreSQL DB using a transaction.',
+    '  --apply                Write to a local/dev/staging/production PostgreSQL DB using a transaction.',
     '  --i-have-backed-up-data Required with --apply. Refuses DB writes without this flag.',
     '  --database-url <url>   PostgreSQL URL for --apply. Defaults to DATABASE_URL.',
-    '  --migration-target <t> Apply target label: local, dev, or staging. Production is refused.',
+    '  --migration-target <t> Apply target label: local, dev, staging, or production.',
+    `  --production-confirmation <text> Required for production apply. Must equal "${PRODUCTION_CONFIRMATION}".`,
     '  --allow-warnings       Allow dev/staging apply when dry-run produced warnings.',
     '  --data-dir <path>      File storage directory. Defaults to DATA_DIR or ./data.',
     '  --tenant-id <id>       Tenant id to stamp on planned rows. Defaults to "default".',

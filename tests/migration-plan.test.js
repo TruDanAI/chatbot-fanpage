@@ -269,6 +269,30 @@ describe('migration planner: file storage to postgres', () => {
       applyError = err.message;
     }
     expect(applyError).toContain('--database-url');
+
+    applyError = '';
+    try {
+      await runCli(
+        ['--apply', '--i-have-backed-up-data', '--migration-target', 'production'],
+        { log() {} },
+        { env: { DATABASE_URL: 'postgres://example' } }
+      );
+    } catch (err) {
+      applyError = err.message;
+    }
+    expect(applyError).toContain('ALLOW_PRODUCTION_DB_WRITES=true');
+
+    applyError = '';
+    try {
+      await runCli(
+        ['--apply', '--i-have-backed-up-data', '--migration-target', 'production'],
+        { log() {} },
+        { env: { DATABASE_URL: 'postgres://example', ALLOW_PRODUCTION_DB_WRITES: 'true' } }
+      );
+    } catch (err) {
+      applyError = err.message;
+    }
+    expect(applyError).toContain('--production-confirmation "duoc ghi DB production"');
   });
 
   it('applies a plan through a guarded PostgreSQL writer transaction', async () => {
