@@ -141,3 +141,13 @@ Production database writes remain blocked until:
 The PostgreSQL storage adapter is opt-in only. Do not set
 `STORAGE_ADAPTER=postgres`, `DATABASE_URL`, or related PostgreSQL variables in
 production as part of this backup runbook.
+
+Production runtime has an additional code guard: when `NODE_ENV=production`,
+`STORAGE_ADAPTER=postgres` is refused unless
+`ALLOW_PRODUCTION_DB_WRITES=true` is also set. Do not set that unlock variable
+until the production write approval above is explicit.
+
+The same guard also treats `RAILWAY_ENVIRONMENT=production` and
+`RAILWAY_ENVIRONMENT_NAME=production` as production runtime signals. Production
+also refuses `MESSENGER_DRY_RUN=true` so a staging-only smoke flag cannot
+silence real Messenger sends by accident.

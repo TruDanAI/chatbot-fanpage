@@ -4,6 +4,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const storage = require('./core/storage');
+const { assertMessengerDryRunAllowed } = require('./core/storage-config');
 const { pushLeadToSheet, startSheetOutboxWorker } = require('./core/sheets-webhook');
 const { loadProducts } = require('./core/products');
 const { createRuleEngine } = require('./core/rules');
@@ -132,6 +133,10 @@ const GEMINI_API_KEY  = process.env.GEMINI_API_KEY;
 const GEMINI_PROVIDER = String(process.env.GEMINI_PROVIDER || 'vertex').trim().toLowerCase();
 const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const USE_GEMINI      = String(process.env.USE_GEMINI || 'true').toLowerCase() !== 'false';
+const MESSENGER_DRY_RUN = assertMessengerDryRunAllowed(
+  envBoolean('MESSENGER_DRY_RUN', false),
+  process.env
+);
 const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_PROJECT_ID || '';
 const GOOGLE_CLOUD_LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'global';
 const PORT            = process.env.PORT || 3000;
@@ -275,7 +280,10 @@ const {
   sendMessage,
   sendQuickReplies,
   showTyping
-} = createMessengerClient({ fbPageToken: FB_PAGE_TOKEN });
+} = createMessengerClient({
+  fbPageToken: FB_PAGE_TOKEN,
+  dryRun: MESSENGER_DRY_RUN
+});
 const {
   resetFallbackAttention,
   sendTelegramAlert,
@@ -404,14 +412,27 @@ const { registerWebhookRoutes } = createWebhook({
 });
 registerWebhookRoutes(app);
 
+function buildHealthPayload() {
+  return {
+    ok: true,
+    shop: ACTIVE_SHOP_ID,
+    products: products.length,
+    uptime: Math.round(process.uptime()),
+    storage: {
+      adapter: typeof storage.getAdapterName === 'function'
+        ? storage.getAdapterName()
+        : 'unknown',
+      ready: true
+    },
+    messenger: {
+      dryRun: MESSENGER_DRY_RUN
+    }
+  };
+}
+
 // ========== HEALTH CHECK ==========
 app.get('/', (_req, res) => res.send('🤖 Shop Bot đang chạy!'));
-app.get('/healthz', (_req, res) => res.json({
-  ok: true,
-  shop: ACTIVE_SHOP_ID,
-  products: products.length,
-  uptime: Math.round(process.uptime())
-}));
+app.get('/healthz', (_req, res) => res.json(buildHealthPayload()));
 
 registerAdminRoutes(app, {
   storage,
@@ -468,6 +489,7 @@ module.exports = {
   buildAbandonedCartReminderText,
   buildGeminiRuntimeContext,
   buildGeminiRequestHistory,
+  buildHealthPayload,
   buildTelegramLeadAlertText,
   buildTelegramUserLines,
   getAdminRequestToken,

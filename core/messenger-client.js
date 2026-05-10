@@ -6,8 +6,12 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function createMessengerClient({ fbPageToken }) {
+function createMessengerClient({ fbPageToken, dryRun = false }) {
   async function postFb(payload, attempts = 2, options = {}) {
+    if (dryRun) {
+      return { data: { dryRun: true, payloadType: payload?.sender_action ? 'sender_action' : 'message' } };
+    }
+
     const timeout = options.timeout || 10000;
     let lastErr;
     for (let i = 0; i < attempts; i += 1) {
@@ -107,6 +111,11 @@ function createMessengerClient({ fbPageToken }) {
   }
 
   async function checkPageToken() {
+    if (dryRun) {
+      console.log('🧪 Messenger dry-run đang bật — bỏ qua kiểm tra Page Token và không gửi Facebook thật.');
+      return;
+    }
+
     try {
       await axios.get(
         `https://graph.facebook.com/v19.0/me/messenger_profile?fields=greeting&access_token=${fbPageToken}`,

@@ -12,6 +12,7 @@ const {
   buildAbandonedCartReminderText,
   buildGeminiRequestHistory,
   buildGeminiRuntimeContext,
+  buildHealthPayload,
   buildLeadDetails,
   buildTelegramLeadAlertText,
   buildTelegramUserLines,
@@ -150,6 +151,20 @@ describe('index: Gemini context smoothing', () => {
 });
 
 describe('index: security hardening helpers', () => {
+  it('health payload exposes safe runtime metadata only', () => {
+    const health = buildHealthPayload();
+
+    expect(health.ok).toBeTrue();
+    expect(health.shop).toBe('adult-shop');
+    expect(health.products).toBe(12);
+    expect(health.storage.adapter).toBe('file');
+    expect(health.storage.ready).toBeTrue();
+    expect(health.messenger.dryRun).toBeFalse();
+    const serialized = JSON.stringify(health);
+    expect(serialized.includes(process.env.FB_PAGE_TOKEN)).toBeFalse();
+    expect(serialized.includes(process.env.FB_APP_SECRET)).toBeFalse();
+  });
+
   it('redactSensitiveText che SĐT, email và trường địa chỉ trong log/event', () => {
     const redacted = redactSensitiveText('Tên Nguyễn A, sdt 0987654321, email a@test.com, địa chỉ 12 Trần Phú');
 
