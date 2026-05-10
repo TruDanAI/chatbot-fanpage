@@ -513,6 +513,29 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(queries[0].sql).toContain('outcome = $5');
     expect(queries[0].sql).toContain('LIMIT $6');
   });
+
+  it('reader audit log trả trạng thái chưa sẵn sàng khi thiếu schema audit', async () => {
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query() {
+        const err = new Error('relation "admin_audit_log" does not exist');
+        err.code = '42P01';
+        throw err;
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    const model = await reader.getAuditLog();
+
+    expect(model.schemaReady).toBeFalse();
+    expect(model.rows).toEqual([]);
+  });
 });
 
 describe('admin audit PostgreSQL writer', () => {

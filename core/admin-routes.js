@@ -175,6 +175,10 @@ function assertReadOnlySql(sql) {
   return normalized;
 }
 
+function isMissingAuditSchemaError(err) {
+  return err && ['42P01', '42703'].includes(String(err.code || ''));
+}
+
 function loadPgClient() {
   try {
     return require('pg').Client;
@@ -386,19 +390,28 @@ function createPostgresDashboardReader({
         addSqlCondition(conditions, filterParams, 'outcome = ?', filters.outcome);
       }
       const limitParam = 3 + filterParams.length;
-      const audit = await client.query(`
-        SELECT occurred_at, actor_id, actor_roles, action, resource_type,
-               resource_id, outcome, request_id, user_agent
-        FROM admin_audit_log
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY occurred_at DESC, id DESC
-        LIMIT $${limitParam}
-      `, [tenantId, pageId, ...filterParams, filters.limit]);
+      let audit;
+      let schemaReady = true;
+      try {
+        audit = await client.query(`
+          SELECT occurred_at, actor_id, actor_roles, action, resource_type,
+                 resource_id, outcome, request_id, user_agent
+          FROM admin_audit_log
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY occurred_at DESC, id DESC
+          LIMIT $${limitParam}
+        `, [tenantId, pageId, ...filterParams, filters.limit]);
+      } catch (err) {
+        if (!isMissingAuditSchemaError(err)) throw err;
+        schemaReady = false;
+        audit = { rows: [] };
+      }
 
       return {
         tenantId,
         pageId,
         rows: audit.rows,
+        schemaReady,
         filters,
         limits: { ...config, auditRows: filters.limit }
       };
@@ -643,6 +656,7 @@ function renderAuditHtml(model) {
   const body = `
     <p><a href="/admin/dashboard">Back to dashboard</a></p>
     <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | audit limit ${escapeHtml(model.limits.auditRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+    ${model.schemaReady === false ? '<div class="empty">Audit schema chưa được apply. Hãy chạy migration theo runbook trước khi bật audit log.</div>' : ''}
     ${renderAuditFilterForm(model.filters || {})}
     ${renderTable(['time', 'actor', 'roles', 'action', 'resource', 'outcome', 'request', 'user agent'], model.rows, row => `
       <tr>
