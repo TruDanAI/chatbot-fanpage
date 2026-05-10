@@ -34,9 +34,9 @@ Last verified baseline from May 10, 2026:
 - Production runtime health: `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`
 - Latest verified code deployment at that time:
-  `fd5a9a0 Extract admin route handlers`
+  `da48d2a Extract admin legacy handlers`
 - Latest verified Railway code deployment at that time:
-  `6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS`
+  `69552f93-f4ee-4ef6-b382-7e7891e409df SUCCESS`
 - Latest verified Railway docs-only deployment at that time:
   `5e84718a-8ea4-4ad0-8767-20052dd38cd3 SUCCESS`
 - Phase commits already pushed:
@@ -48,7 +48,8 @@ Last verified baseline from May 10, 2026:
   `5851368 Update handoff docs after admin refactor deploy`,
   `5ec0902 Expand next session handoff prompt`,
   `fd5a9a0 Extract admin route handlers`,
-  `70ac695 Update handoff docs after route handler deploy`
+  `70ac695 Update handoff docs after route handler deploy`,
+  `da48d2a Extract admin legacy handlers`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120`
 - Latest known backup SHA256:
   `0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4`

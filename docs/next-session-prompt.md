@@ -47,17 +47,19 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified code deployment:
+  da48d2a Extract admin legacy handlers
+- Previous route handler code deployment:
   fd5a9a0 Extract admin route handlers
 - Previous docs-only deployed commit:
-  5851368 Update handoff docs after admin refactor deploy
+  70ac695 Update handoff docs after route handler deploy
 - Previous admin refactor code commit:
   20676a3 Refactor admin dashboard modules
-- Latest Railway production deployment:
-  5e84718a-8ea4-4ad0-8767-20052dd38cd3 SUCCESS
 - Latest code Railway deployment:
-  6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS
+  69552f93-f4ee-4ef6-b382-7e7891e409df SUCCESS
 - Previous docs-only Railway deployment:
-  7d0d93fb-4537-4849-a765-0f0c9c37a1fb SUCCESS
+  5e84718a-8ea4-4ad0-8767-20052dd38cd3 SUCCESS
+- Previous route handler Railway deployment:
+  6e26df2d-2cff-4634-b4b2-6fb5ffaf523c SUCCESS
 - Previous admin refactor Railway deployment:
   81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS
 - /healthz gần nhất:
@@ -69,17 +71,19 @@ Trạng thái production mới nhất đã biết:
 
 Git state mới nhất đã biết:
 - Code refactor commit đã push/deploy:
+  da48d2a Extract admin legacy handlers
+- Previous route handler commit đã push/deploy:
   fd5a9a0 Extract admin route handlers
-- Latest docs-only handoff commit đã push/deploy:
+- Previous docs-only handoff commit đã push/deploy:
   70ac695 Update handoff docs after route handler deploy
-- Sau khi bắt đầu slice code-only legacy handlers:
-  worktree có thay đổi chưa commit, origin/main...HEAD = 0 0.
+- Trước docs-only handoff update cuối phiên:
+  worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  da48d2a Extract admin legacy handlers
   70ac695 Update handoff docs after route handler deploy
   fd5a9a0 Extract admin route handlers
   5ec0902 Expand next session handoff prompt
   5851368 Update handoff docs after admin refactor deploy
-  20676a3 Refactor admin dashboard modules
 
 Backup production mới nhất đã biết:
 - Path:
@@ -169,7 +173,7 @@ Backup production mới nhất đã biết:
      /healthz ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
      /admin/dashboard 200, title=Admin Dashboard
      /admin/audit 200, title=Admin Audit Log, schema_message=true
-7. Phiên code-only legacy handlers, chưa push/chưa deploy:
+7. Phiên code-only legacy handlers, đã push/deploy sau xác nhận:
    - Local git đầu slice:
      worktree clean, origin/main...HEAD = 0 0, HEAD 70ac695.
    - Tách legacy export/state handlers ra:
@@ -184,6 +188,17 @@ Backup production mới nhất đã biết:
    - Không bật ADMIN_AUDIT_LOG_ENABLED.
    - node --check pass cho core/admin-routes.js, core/admin/legacy-routes.js, tests/admin-routes.test.js.
    - npm test: 272 passed.
+   - npm audit --omit=dev: 0 vulnerabilities.
+   - git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Commit:
+     da48d2a Extract admin legacy handlers
+   - Pushed origin/main.
+   - Railway deployment:
+     69552f93-f4ee-4ef6-b382-7e7891e409df SUCCESS
+   - Smoke:
+     /healthz ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
+     /admin/dashboard 200, title=Admin Dashboard
+     /admin/audit 200, title=Admin Audit Log, schema_message=true
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
