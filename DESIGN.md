@@ -162,6 +162,14 @@ User Detail:
 - Recent orders with masked customer fields.
 - Recent messages and events with masked snippets.
 
+Admin Audit Log:
+
+- Route: `/admin/audit`.
+- Requires the audit read permission.
+- Shows time, actor, roles, action, resource, outcome, request id, and user
+  agent only.
+- Does not render raw audit metadata by default.
+
 ## Future Direction
 
 Before adding write workflows, add:
@@ -171,3 +179,66 @@ Before adding write workflows, add:
 - Audit log for every admin action.
 - Explicit confirmation flows.
 - Production backup and rollback checklist for each write feature.
+
+## Admin Auth/RBAC/Audit Proposal
+
+This phase wires local RBAC/audit helpers into admin routes, but production
+deployment and production schema apply remain separate approvals. Do not apply
+the schema proposal to production until there is a fresh PostgreSQL backup,
+non-production apply proof, passing tests, and explicit owner approval for
+production writes.
+
+Auth model:
+
+- Dashboard/admin routes should use `Authorization: Bearer <token>` only.
+- Tokens must never be accepted through query parameters.
+- Runtime principals should contain only safe metadata: admin id, display name,
+  roles, permissions, tenant id, page id, and auth method.
+- Static bearer auth can bridge the current single-token setup, but the next
+  production design should move to per-user identities and token/session
+  rotation.
+- The current compatibility principal is configured by `ADMIN_PRINCIPAL_ID`,
+  `ADMIN_PRINCIPAL_DISPLAY_NAME`, and comma-separated `ADMIN_ROLES`. If
+  `ADMIN_ROLES` is unset, it defaults to `owner` to preserve existing access.
+
+RBAC model:
+
+- `viewer`: read dashboard and bounded user detail.
+- `support`: viewer plus legacy user state read.
+- `maintainer`: support plus export and audit read.
+- `owner`: full admin access, including future write/admin management gates.
+- Future write permissions must stay disconnected from production routes until
+  their own workflow, tests, confirmation UI, backup plan, and owner approval
+  are complete.
+
+Audit model:
+
+- Every admin action should produce an audit event before a response is sent.
+- Audit events record actor, roles, action, resource, outcome, tenant/page,
+  request id, hashed IP, user agent, and redacted metadata.
+- Audit metadata must redact tokens, database URLs, service account values,
+  phone numbers, addresses, and raw customer export rows.
+- Audit write failures should fail closed for future write actions. For
+  read-only dashboard views, the rollout decision can be fail-open with an
+  application error counter, but that must be explicit before production use.
+- PostgreSQL audit writes are disabled unless `ADMIN_AUDIT_LOG_ENABLED=true`.
+  This prevents accidental writes before the audit schema is applied.
+
+Schema proposal:
+
+- See `db/admin-auth-rbac-audit-proposal.sql`.
+- It is additive and idempotent: admin users, roles, user-role grants, and
+  audit log tables plus indexes.
+- It is not part of the runtime schema bootstrap and must not be run against
+  production without the migration runbook.
+
+Frontend/runtime location:
+
+- Admin frontend is server-rendered HTML/CSS in `core/admin-routes.js`.
+- There is no separate React/Vite frontend app for these screens.
+
+Production runbook:
+
+- See `docs/admin-auth-rbac-audit-runbook.md`.
+- The runbook requires backup first, dev/staging apply, read-only verification,
+  passing local tests/audit, and separate production write approval.

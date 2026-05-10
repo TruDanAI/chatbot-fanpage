@@ -1,17 +1,13 @@
 const fs = require('fs');
-
-function getBearerToken(header = '') {
-  const match = String(header || '').match(/^Bearer\s+(.+)$/i);
-  return match ? match[1].trim() : '';
-}
-
-function getAdminRequestToken(req) {
-  return String(req?.get?.('x-admin-token') || getBearerToken(req?.get?.('authorization')) || '').trim();
-}
-
-function getAdminBearerToken(req) {
-  return getBearerToken(req?.get?.('authorization'));
-}
+const {
+  PERMISSIONS,
+  authenticateStaticBearer,
+  authenticateStaticRequestToken,
+  buildAuditLogEntry,
+  getAdminBearerToken,
+  getAdminRequestToken,
+  requirePermission
+} = require('./admin-auth');
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -66,8 +62,8 @@ function formatLabel(value = '') {
 
 function statusClass(value = '') {
   const status = String(value || '').toLowerCase();
-  if (status === 'confirmed' || status === 'ready_to_confirm') return 'status status-success';
-  if (status === 'cancelled' || status.includes('failed') || status.includes('error')) return 'status status-danger';
+  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success') return 'status status-success';
+  if (status === 'cancelled' || status === 'denied' || status.includes('failed') || status.includes('error')) return 'status status-danger';
   if (status === 'abandoned') return 'status status-warning';
   return 'status status-neutral';
 }
@@ -90,6 +86,17 @@ function likeParam(value = '') {
 }
 
 const ORDER_STATUS_FILTERS = new Set(['draft', 'ready_to_confirm', 'confirmed', 'cancelled', 'abandoned']);
+const AUDIT_OUTCOME_FILTERS = new Set(['success', 'denied', 'error', 'noop']);
+
+function parseAdminRoles(value = 'owner') {
+  const list = Array.isArray(value)
+    ? value
+    : String(value || 'owner').split(',');
+  const roles = list
+    .map(role => normalizeFilterText(role, 60).toLowerCase().replace(/\s+/g, '_'))
+    .filter(Boolean);
+  return roles.length ? roles : ['owner'];
+}
 
 function normalizeDashboardFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS) {
   const status = normalizeFilterText(query.status, 40).toLowerCase();
@@ -101,6 +108,20 @@ function normalizeDashboardFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS
     limit: toInteger(query.limit, limits.overviewRows, { min: 1, max: 100 })
   };
   filters.activeCount = ['senderId', 'status', 'productCode', 'eventType']
+    .filter(key => Boolean(filters[key]))
+    .length;
+  return filters;
+}
+
+function normalizeAuditFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS) {
+  const outcome = normalizeFilterText(query.outcome, 40).toLowerCase();
+  const filters = {
+    actorId: normalizeFilterText(query.actorId, 100),
+    action: normalizeFilterText(query.action, 120),
+    outcome: AUDIT_OUTCOME_FILTERS.has(outcome) ? outcome : '',
+    limit: toInteger(query.limit, limits.auditRows, { min: 1, max: 100 })
+  };
+  filters.activeCount = ['actorId', 'action', 'outcome']
     .filter(key => Boolean(filters[key]))
     .length;
   return filters;
@@ -173,7 +194,8 @@ const DEFAULT_DASHBOARD_LIMITS = {
   detailOrders: 10,
   detailItems: 50,
   detailMessages: 30,
-  detailEvents: 30
+  detailEvents: 30,
+  auditRows: 50
 };
 
 function createPostgresDashboardReader({
@@ -188,7 +210,8 @@ function createPostgresDashboardReader({
     detailOrders: toInteger(limits.detailOrders, DEFAULT_DASHBOARD_LIMITS.detailOrders, { min: 1, max: 30 }),
     detailItems: toInteger(limits.detailItems, DEFAULT_DASHBOARD_LIMITS.detailItems, { min: 1, max: 100 }),
     detailMessages: toInteger(limits.detailMessages, DEFAULT_DASHBOARD_LIMITS.detailMessages, { min: 1, max: 100 }),
-    detailEvents: toInteger(limits.detailEvents, DEFAULT_DASHBOARD_LIMITS.detailEvents, { min: 1, max: 100 })
+    detailEvents: toInteger(limits.detailEvents, DEFAULT_DASHBOARD_LIMITS.detailEvents, { min: 1, max: 100 }),
+    auditRows: toInteger(limits.auditRows, DEFAULT_DASHBOARD_LIMITS.auditRows, { min: 1, max: 100 })
   };
 
   async function withClient(fn) {
@@ -348,9 +371,102 @@ function createPostgresDashboardReader({
     });
   }
 
+  async function getAuditLog(rawFilters = {}) {
+    const filters = normalizeAuditFilters(rawFilters, config);
+    return withClient(async client => {
+      const conditions = ['tenant_id = $1', 'page_id = $2'];
+      const filterParams = [];
+      if (filters.actorId) {
+        addSqlCondition(conditions, filterParams, "actor_id ILIKE ? ESCAPE '\\'", likeParam(filters.actorId));
+      }
+      if (filters.action) {
+        addSqlCondition(conditions, filterParams, "action ILIKE ? ESCAPE '\\'", likeParam(filters.action));
+      }
+      if (filters.outcome) {
+        addSqlCondition(conditions, filterParams, 'outcome = ?', filters.outcome);
+      }
+      const limitParam = 3 + filterParams.length;
+      const audit = await client.query(`
+        SELECT occurred_at, actor_id, actor_roles, action, resource_type,
+               resource_id, outcome, request_id, user_agent
+        FROM admin_audit_log
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT $${limitParam}
+      `, [tenantId, pageId, ...filterParams, filters.limit]);
+
+      return {
+        tenantId,
+        pageId,
+        rows: audit.rows,
+        filters,
+        limits: { ...config, auditRows: filters.limit }
+      };
+    });
+  }
+
   return {
     getOverview,
-    getUserDetail
+    getUserDetail,
+    getAuditLog
+  };
+}
+
+function createPostgresAuditLogger({
+  enabled = false,
+  databaseUrl = process.env.DATABASE_URL,
+  Client
+} = {}) {
+  if (!enabled) {
+    return {
+      enabled: false,
+      async record() {
+        return { skipped: true, reason: 'disabled' };
+      }
+    };
+  }
+
+  async function record(entry = {}) {
+    if (!databaseUrl) {
+      const err = new Error('DATABASE_URL is required for admin audit logging.');
+      err.statusCode = 503;
+      throw err;
+    }
+    const PgClient = Client || loadPgClient();
+    const client = new PgClient({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      await client.query(`
+        INSERT INTO admin_audit_log (
+          occurred_at, tenant_id, page_id, actor_id, actor_roles, action,
+          resource_type, resource_id, outcome, request_id, request_ip_hash,
+          user_agent, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+      `, [
+        entry.occurred_at,
+        entry.tenant_id || '',
+        entry.page_id || '',
+        entry.actor_id || 'anonymous',
+        Array.isArray(entry.actor_roles) ? entry.actor_roles : [],
+        entry.action || '',
+        entry.resource_type || '',
+        entry.resource_id || '',
+        entry.outcome || 'error',
+        entry.request_id || '',
+        entry.request_ip_hash || '',
+        entry.user_agent || '',
+        JSON.stringify(entry.metadata || {})
+      ]);
+      return { recorded: true };
+    } finally {
+      await client.end();
+    }
+  }
+
+  return {
+    enabled: true,
+    record
   };
 }
 
@@ -455,6 +571,28 @@ function renderFilterForm(filters = {}) {
   </form>`;
 }
 
+function renderAuditFilterForm(filters = {}) {
+  const outcomeOptions = ['', 'success', 'denied', 'error', 'noop']
+    .map(value => `<option value="${escapeHtml(value)}"${filters.outcome === value ? ' selected' : ''}>${escapeHtml(value || 'Any')}</option>`)
+    .join('');
+  return `<form class="filters" method="get" action="/admin/audit">
+    <label>Actor
+      <input name="actorId" value="${escapeHtml(filters.actorId)}" maxlength="100">
+    </label>
+    <label>Action
+      <input name="action" value="${escapeHtml(filters.action)}" maxlength="120">
+    </label>
+    <label>Outcome
+      <select name="outcome">${outcomeOptions}</select>
+    </label>
+    <label>Limit
+      <input name="limit" type="number" min="1" max="100" value="${escapeHtml(filters.limit || 50)}">
+    </label>
+    <button type="submit">Filter</button>
+    <a href="/admin/audit">Clear</a>
+  </form>`;
+}
+
 function renderDashboardHtml(model) {
   const body = `
     <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
@@ -499,6 +637,27 @@ function renderDashboardHtml(model) {
     `)}
   `;
   return renderLayout('Admin Dashboard', body);
+}
+
+function renderAuditHtml(model) {
+  const body = `
+    <p><a href="/admin/dashboard">Back to dashboard</a></p>
+    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | audit limit ${escapeHtml(model.limits.auditRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+    ${renderAuditFilterForm(model.filters || {})}
+    ${renderTable(['time', 'actor', 'roles', 'action', 'resource', 'outcome', 'request', 'user agent'], model.rows, row => `
+      <tr>
+        <td>${escapeHtml(formatDate(row.occurred_at))}</td>
+        <td>${escapeHtml(row.actor_id)}</td>
+        <td>${escapeHtml(Array.isArray(row.actor_roles) ? row.actor_roles.join(', ') : '')}</td>
+        <td>${escapeHtml(row.action)}</td>
+        <td>${escapeHtml([row.resource_type, row.resource_id].filter(Boolean).join(':'))}</td>
+        <td>${renderStatus(row.outcome)}</td>
+        <td>${escapeHtml(row.request_id)}</td>
+        <td>${escapeHtml(limitText(row.user_agent, 90))}</td>
+      </tr>
+    `)}
+  `;
+  return renderLayout('Admin Audit Log', body);
 }
 
 function renderUserDetailHtml(model) {
@@ -575,45 +734,18 @@ function registerAdminRoutes(app, {
   dashboardReader,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
   tenantId = process.env.TENANT_ID || 'default',
-  pageId = process.env.PAGE_ID || ''
+  pageId = process.env.PAGE_ID || '',
+  adminPrincipalId = process.env.ADMIN_PRINCIPAL_ID || 'legacy-admin',
+  adminPrincipalDisplayName = process.env.ADMIN_PRINCIPAL_DISPLAY_NAME || '',
+  adminPrincipalRoles = parseAdminRoles(process.env.ADMIN_ROLES || 'owner'),
+  adminPrincipalPermissions = [],
+  auditLogger,
+  adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
+  adminAuditFailClosed = false
 }) {
   function isAdminIpAllowed(req) {
     if (!adminIpAllowlist.length) return true;
-    return adminIpAllowlist.includes(getClientIp(req));
-  }
-
-  function requireAdminToken(req, res) {
-    if (!adminExportToken) {
-      res.status(503).send('ADMIN_EXPORT_TOKEN chưa được cấu hình.');
-      return false;
-    }
-    if (!isAdminIpAllowed(req)) {
-      res.sendStatus(403);
-      return false;
-    }
-    const token = getAdminRequestToken(req);
-    if (token !== adminExportToken) {
-      res.sendStatus(401);
-      return false;
-    }
-    return true;
-  }
-
-  function requireAdminBearerToken(req, res) {
-    if (!adminExportToken) {
-      res.status(503).send('ADMIN_EXPORT_TOKEN chưa được cấu hình.');
-      return false;
-    }
-    if (!isAdminIpAllowed(req)) {
-      res.sendStatus(403);
-      return false;
-    }
-    const token = getAdminBearerToken(req);
-    if (token !== adminExportToken) {
-      res.sendStatus(401);
-      return false;
-    }
-    return true;
+    return adminIpAllowlist.includes(getRequestIp(req));
   }
 
   const reader = dashboardReader || createPostgresDashboardReader({
@@ -621,25 +753,229 @@ function registerAdminRoutes(app, {
     tenantId,
     pageId
   });
+  const audit = auditLogger || createPostgresAuditLogger({
+    enabled: adminAuditLogEnabled,
+    databaseUrl: dashboardDatabaseUrl
+  });
+
+  function getRequestHeader(req, name) {
+    return String(req?.get?.(name) || '');
+  }
+
+  function getRequestId(req) {
+    return getRequestHeader(req, 'x-request-id') || getRequestHeader(req, 'x-correlation-id');
+  }
+
+  function getRequestIp(req) {
+    if (typeof getClientIp === 'function') return getClientIp(req);
+    return String(req?.ip || req?.socket?.remoteAddress || '');
+  }
+
+  function authOptions() {
+    return {
+      token: adminExportToken,
+      principalId: adminPrincipalId,
+      displayName: adminPrincipalDisplayName,
+      roles: adminPrincipalRoles,
+      permissions: adminPrincipalPermissions,
+      tenantId,
+      pageId
+    };
+  }
+
+  async function recordAdminAudit(req, {
+    principal,
+    action,
+    resourceType,
+    resourceId = '',
+    outcome,
+    metadata = {}
+  }) {
+    if (!audit || typeof audit.record !== 'function') return null;
+    const entry = buildAuditLogEntry({
+      principal,
+      action,
+      resourceType,
+      resourceId,
+      outcome,
+      requestId: getRequestId(req),
+      ip: getRequestIp(req),
+      userAgent: getRequestHeader(req, 'user-agent'),
+      metadata
+    });
+    try {
+      await audit.record(entry);
+    } catch (err) {
+      if (adminAuditFailClosed) throw err;
+    }
+    return entry;
+  }
+
+  async function authorizeAdminRequest(req, res, {
+    permission,
+    bearerOnly = false,
+    action = permission,
+    resourceType = 'admin',
+    resourceId = ''
+  } = {}) {
+    if (!isAdminIpAllowed(req)) {
+      await recordAdminAudit(req, {
+        principal: null,
+        action,
+        resourceType,
+        resourceId,
+        outcome: 'denied',
+        metadata: { reason: 'ip_not_allowed' }
+      });
+      res.sendStatus(403);
+      return null;
+    }
+
+    const auth = bearerOnly
+      ? authenticateStaticBearer(req, authOptions())
+      : authenticateStaticRequestToken(req, authOptions());
+    if (!auth.ok) {
+      await recordAdminAudit(req, {
+        principal: null,
+        action,
+        resourceType,
+        resourceId,
+        outcome: 'denied',
+        metadata: { reason: auth.reason, bearerOnly }
+      });
+      if (auth.statusCode === 503) {
+        res.status(503).send('ADMIN_EXPORT_TOKEN chưa được cấu hình.');
+      } else {
+        res.sendStatus(auth.statusCode || 401);
+      }
+      return null;
+    }
+
+    const decision = requirePermission(auth.principal, permission);
+    if (!decision.ok) {
+      await recordAdminAudit(req, {
+        principal: auth.principal,
+        action,
+        resourceType,
+        resourceId,
+        outcome: 'denied',
+        metadata: { reason: decision.reason, permission: decision.permission }
+      });
+      res.sendStatus(decision.statusCode || 403);
+      return null;
+    }
+
+    return auth.principal;
+  }
+
+  async function requireAdminToken(req, res) {
+    return Boolean(await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.EXPORT_READ,
+      action: PERMISSIONS.EXPORT_READ,
+      resourceType: 'legacy_admin'
+    }));
+  }
+
+  async function requireAdminBearerToken(req, res) {
+    return Boolean(await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'dashboard'
+    }));
+  }
 
   async function sendDashboard(req, res) {
-    if (!requireAdminBearerToken(req, res)) return;
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'dashboard'
+    });
+    if (!principal) return;
     try {
       const model = await reader.getOverview(req.query || {});
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'dashboard',
+        outcome: 'success',
+        metadata: { filters: req.query || {} }
+      });
       res.type('html').send(renderDashboardHtml(model));
     } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'dashboard',
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
       res.status(err.statusCode || 500).send('Không đọc được dashboard.');
     }
   }
 
   async function sendUserDetail(req, res) {
-    if (!requireAdminBearerToken(req, res)) return;
+    const senderId = String(req.params.senderId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.USER_DETAIL_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.USER_DETAIL_READ,
+      resourceType: 'sender',
+      resourceId: senderId
+    });
+    if (!principal) return;
     try {
-      const model = await reader.getUserDetail(req.params.senderId);
+      const model = await reader.getUserDetail(senderId);
       model.filters = normalizeDashboardFilters(req.query || {});
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.USER_DETAIL_READ,
+        resourceType: 'sender',
+        resourceId: senderId,
+        outcome: 'success'
+      });
       res.type('html').send(renderUserDetailHtml(model));
     } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.USER_DETAIL_READ,
+        resourceType: 'sender',
+        resourceId: senderId,
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
       res.status(err.statusCode || 500).send('Không đọc được dashboard detail.');
+    }
+  }
+
+  async function sendAuditLog(req, res) {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.AUDIT_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.AUDIT_READ,
+      resourceType: 'audit_log'
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getAuditLog(req.query || {});
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.AUDIT_READ,
+        resourceType: 'audit_log',
+        outcome: 'success',
+        metadata: { filters: req.query || {} }
+      });
+      res.type('html').send(renderAuditHtml(model));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.AUDIT_READ,
+        resourceType: 'audit_log',
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      res.status(err.statusCode || 500).send('Không đọc được audit log.');
     }
   }
 
@@ -647,33 +983,89 @@ function registerAdminRoutes(app, {
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
   app.get('/admin/db/users/:senderId', sendUserDetail);
+  app.get('/admin/audit', sendAuditLog);
 
-  app.get('/admin/customers.csv', (req, res) => {
-    if (!requireAdminToken(req, res)) return;
+  app.get('/admin/customers.csv', async (req, res) => {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.EXPORT_READ,
+      action: PERMISSIONS.EXPORT_READ,
+      resourceType: 'file_export',
+      resourceId: 'customers.csv'
+    });
+    if (!principal) return;
 
     const file = storage.getCustomersFile();
     if (!fs.existsSync(file)) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.EXPORT_READ,
+        resourceType: 'file_export',
+        resourceId: 'customers.csv',
+        outcome: 'error',
+        metadata: { statusCode: 404 }
+      });
       return res.status(404).send('Chưa có file customers.csv.');
     }
 
+    await recordAdminAudit(req, {
+      principal,
+      action: PERMISSIONS.EXPORT_READ,
+      resourceType: 'file_export',
+      resourceId: 'customers.csv',
+      outcome: 'success'
+    });
     res.download(file, 'customers.csv');
   });
 
-  app.get('/admin/events.jsonl', (req, res) => {
-    if (!requireAdminToken(req, res)) return;
+  app.get('/admin/events.jsonl', async (req, res) => {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.EXPORT_READ,
+      action: PERMISSIONS.EXPORT_READ,
+      resourceType: 'file_export',
+      resourceId: 'events.jsonl'
+    });
+    if (!principal) return;
 
     const file = storage.getEventsFile();
     if (!fs.existsSync(file)) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.EXPORT_READ,
+        resourceType: 'file_export',
+        resourceId: 'events.jsonl',
+        outcome: 'error',
+        metadata: { statusCode: 404 }
+      });
       res.status(404).send('Chưa có events.jsonl');
       return;
     }
+    await recordAdminAudit(req, {
+      principal,
+      action: PERMISSIONS.EXPORT_READ,
+      resourceType: 'file_export',
+      resourceId: 'events.jsonl',
+      outcome: 'success'
+    });
     res.download(file, 'events.jsonl');
   });
 
-  app.get('/admin/state/:userId', (req, res) => {
-    if (!requireAdminToken(req, res)) return;
+  app.get('/admin/state/:userId', async (req, res) => {
     const userId = req.params.userId;
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.LEGACY_STATE_READ,
+      action: PERMISSIONS.LEGACY_STATE_READ,
+      resourceType: 'state',
+      resourceId: userId
+    });
+    if (!principal) return;
     const orderDraft = storage.getOrderDraft(userId);
+    await recordAdminAudit(req, {
+      principal,
+      action: PERMISSIONS.LEGACY_STATE_READ,
+      resourceType: 'state',
+      resourceId: userId,
+      outcome: 'success'
+    });
     res.json({
       userId,
       inHandoff: storage.inHandoff(userId),
@@ -688,6 +1080,7 @@ function registerAdminRoutes(app, {
   });
 
   return {
+    authorizeAdminRequest,
     requireAdminToken,
     requireAdminBearerToken
   };
@@ -695,6 +1088,7 @@ function registerAdminRoutes(app, {
 
 module.exports = {
   assertReadOnlySql,
+  createPostgresAuditLogger,
   createPostgresDashboardReader,
   getAdminBearerToken,
   getAdminRequestToken,

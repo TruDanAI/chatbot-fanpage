@@ -1,9 +1,11 @@
 const { describe, it, expect } = require('./harness');
 const {
   assertReadOnlySql,
+  createPostgresAuditLogger,
   createPostgresDashboardReader,
   registerAdminRoutes
 } = require('../core/admin-routes');
+const { PERMISSIONS } = require('../core/admin-auth');
 
 function createApp() {
   const routes = {};
@@ -52,6 +54,10 @@ function createRes() {
     },
     download(file, name) {
       this.body = `${name}:${file}`;
+      return this;
+    },
+    json(body) {
+      this.body = JSON.stringify(body);
       return this;
     }
   };
@@ -152,6 +158,43 @@ function createDashboardReaderStub() {
         events: [],
         limits: { detailOrders: 10, detailMessages: 30, detailEvents: 30 }
       };
+    },
+    async getAuditLog(filters = {}) {
+      calls += 1;
+      return {
+        tenantId: 'default',
+        pageId: 'page',
+        rows: [{
+          occurred_at: '2026-05-10T00:00:02.000Z',
+          actor_id: 'admin-1',
+          actor_roles: ['maintainer'],
+          action: PERMISSIONS.DASHBOARD_READ,
+          resource_type: 'dashboard',
+          resource_id: '',
+          outcome: 'success',
+          request_id: 'req-1',
+          user_agent: 'test-agent'
+        }],
+        filters: {
+          actorId: filters.actorId || '',
+          action: filters.action || '',
+          outcome: filters.outcome || '',
+          limit: Number(filters.limit || 50),
+          activeCount: 0
+        },
+        limits: { auditRows: Number(filters.limit || 50) }
+      };
+    }
+  };
+}
+
+function createAuditLoggerStub() {
+  const entries = [];
+  return {
+    entries,
+    async record(entry) {
+      entries.push(entry);
+      return { recorded: true };
     }
   };
 }
@@ -255,6 +298,105 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Admin User Detail');
     expect(res.body).toContain('sender_1');
   });
+
+  it('dashboard dùng RBAC và ghi audit success khi audit logger được bật', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      auditLogger,
+      adminPrincipalId: 'viewer-1',
+      adminPrincipalRoles: ['viewer'],
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard'](createReq({
+      headers: {
+        authorization: 'Bearer secret',
+        'x-request-id': 'req-1',
+        'user-agent': 'unit-test'
+      },
+      query: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].actor_id).toBe('viewer-1');
+    expect(auditLogger.entries[0].action).toBe(PERMISSIONS.DASHBOARD_READ);
+    expect(auditLogger.entries[0].outcome).toBe('success');
+    expect(JSON.stringify(auditLogger.entries[0]).includes('secret')).toBeFalse();
+  });
+
+  it('RBAC chặn export với viewer nhưng vẫn giữ legacy x-admin-token compatibility', async () => {
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      auditLogger,
+      adminPrincipalId: 'viewer-1',
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/customers.csv'](createReq({
+      headers: { 'x-admin-token': 'secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].action).toBe(PERMISSIONS.EXPORT_READ);
+    expect(auditLogger.entries[0].outcome).toBe('denied');
+    expect(auditLogger.entries[0].actor_id).toBe('viewer-1');
+  });
+
+  it('audit log route cần quyền audit read và render bảng read-only', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/audit'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: { action: 'dashboard', outcome: 'success', limit: '10' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Admin Audit Log');
+    expect(res.body).toContain(PERMISSIONS.DASHBOARD_READ);
+    expect(res.body.includes('metadata')).toBeFalse();
+  });
+
+  it('audit log route từ chối viewer', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/audit'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
 });
 
 describe('admin dashboard PostgreSQL reader', () => {
@@ -337,5 +479,97 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(orderQuery.sql).toContain('o.sender_id ILIKE $3');
     expect(orderQuery.sql).toContain('o.status = $5');
     expect(orderQuery.sql).toContain('LIMIT $6');
+  });
+
+  it('reader audit log chỉ gửi SELECT parameterized', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        return { rows: [] };
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    await reader.getAuditLog({
+      actorId: 'admin_1',
+      action: 'dashboard',
+      outcome: 'success',
+      limit: '7'
+    });
+
+    expect(queries.length).toBe(1);
+    expect(queries[0].sql.trim()).toMatch(/^SELECT/i);
+    expect(queries[0].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard%', 'success', 7]);
+    expect(queries[0].sql).toContain('actor_id ILIKE $3');
+    expect(queries[0].sql).toContain('action ILIKE $4');
+    expect(queries[0].sql).toContain('outcome = $5');
+    expect(queries[0].sql).toContain('LIMIT $6');
+  });
+});
+
+describe('admin audit PostgreSQL writer', () => {
+  it('disabled audit logger không tạo kết nối database', async () => {
+    let constructed = false;
+    class FakeClient {
+      constructor() {
+        constructed = true;
+      }
+    }
+    const logger = createPostgresAuditLogger({
+      enabled: false,
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    const result = await logger.record({ action: PERMISSIONS.DASHBOARD_READ });
+
+    expect(result.skipped).toBeTrue();
+    expect(constructed).toBeFalse();
+  });
+
+  it('enabled audit logger ghi INSERT parameterized', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        return { rows: [] };
+      }
+    }
+    const logger = createPostgresAuditLogger({
+      enabled: true,
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    await logger.record({
+      occurred_at: '2026-05-10T00:00:00.000Z',
+      tenant_id: 'default',
+      page_id: 'page',
+      actor_id: 'admin-1',
+      actor_roles: ['maintainer'],
+      action: PERMISSIONS.DASHBOARD_READ,
+      resource_type: 'dashboard',
+      resource_id: '',
+      outcome: 'success',
+      request_id: 'req-1',
+      request_ip_hash: 'hash',
+      user_agent: 'unit-test',
+      metadata: { filter: 'masked' }
+    });
+
+    expect(queries.length).toBe(1);
+    expect(queries[0].sql.trim()).toMatch(/^INSERT INTO admin_audit_log/i);
+    expect(queries[0].params[5]).toBe(PERMISSIONS.DASHBOARD_READ);
+    expect(queries[0].params[12]).toBe(JSON.stringify({ filter: 'masked' }));
   });
 });

@@ -11,6 +11,7 @@ require('./storage-config.test');
 require('./storage-file-adapter.test');
 require('./storage-postgres-adapter.test');
 require('./migration-plan.test');
+require('./admin-auth.test');
 require('./admin-routes.test');
 require('./index.test');
 
