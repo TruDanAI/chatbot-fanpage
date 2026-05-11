@@ -3,6 +3,7 @@ const {
   authenticateStaticBearer,
   authenticateStaticRequestToken,
   buildAuditLogEntry,
+  getAdminBearerToken,
   requirePermission
 } = require('../admin-auth');
 
@@ -30,6 +31,7 @@ function createAdminRouteAuthorizer({
   adminPrincipalDisplayName = '',
   adminPrincipalRoles = ['owner'],
   adminPrincipalPermissions = [],
+  sessionManager,
   auditLogger,
   adminAuditFailClosed = false
 } = {}) {
@@ -111,8 +113,13 @@ function createAdminRouteAuthorizer({
       return null;
     }
 
+    const hasBearerToken = Boolean(getAdminBearerToken(req));
     const auth = bearerOnly
-      ? authenticateStaticBearer(req, authOptions())
+      ? (
+        hasBearerToken || !sessionManager?.isConfigured?.()
+          ? authenticateStaticBearer(req, authOptions())
+          : sessionManager.authenticateSessionRequest(req)
+      )
       : authenticateStaticRequestToken(req, authOptions());
     if (!auth.ok) {
       await recordAdminAudit(req, {

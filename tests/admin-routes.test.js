@@ -15,15 +15,19 @@ function createApp() {
     routes,
     get(path, handler) {
       routes[path] = handler;
+    },
+    post(path, handler) {
+      routes[`POST ${path}`] = handler;
     }
   };
 }
 
-function createReq({ headers = {}, params = {}, query = {} } = {}) {
+function createReq({ headers = {}, params = {}, query = {}, body = {} } = {}) {
   const normalized = Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
   );
   return {
+    body,
     params,
     query,
     get(name) {
@@ -52,6 +56,21 @@ function createRes() {
     },
     type(value) {
       this.headers['content-type'] = value;
+      return this;
+    },
+    setHeader(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+      return this;
+    },
+    redirect(statusOrLocation, maybeLocation) {
+      if (typeof statusOrLocation === 'number') {
+        this.statusCode = statusOrLocation;
+        this.headers.location = maybeLocation;
+      } else {
+        this.statusCode = 302;
+        this.headers.location = statusOrLocation;
+      }
+      this.body = 'Redirect';
       return this;
     },
     download(file, name) {
@@ -201,6 +220,8 @@ function createAuditLoggerStub() {
   };
 }
 
+const TEST_SESSION_SECRET = 'test-session-secret-64-characters-minimum-value-for-admin-login';
+
 describe('admin dashboard routes', () => {
   it('parseAdminRoles chuẩn hóa role list từ env', () => {
     expect(parseAdminRoles(' Viewer, maintainer ,unknown-role ')).toEqual(['viewer', 'maintainer', 'unknown-role']);
@@ -257,6 +278,123 @@ describe('admin dashboard routes', () => {
 
     expect(res.statusCode).toBe(401);
     expect(reader.calls).toBe(0);
+  });
+
+  it('admin login tạo HttpOnly session cookie và ghi audit success', async () => {
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      auditLogger,
+      adminSessionSecret: TEST_SESSION_SECRET,
+      adminPublicBaseUrl: 'https://admin.example.test',
+      adminPrincipalId: 'owner-1',
+      adminPrincipalRoles: ['owner']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      headers: { 'user-agent': 'unit-test' },
+      body: { adminToken: 'secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/dashboard');
+    expect(res.headers['set-cookie']).toContain('chatbot_admin_session=');
+    expect(res.headers['set-cookie']).toContain('HttpOnly');
+    expect(res.headers['set-cookie']).toContain('Secure');
+    expect(res.headers['set-cookie']).toContain('SameSite=Lax');
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].action).toBe('admin.login');
+    expect(auditLogger.entries[0].outcome).toBe('success');
+    expect(JSON.stringify(auditLogger.entries[0]).includes('secret')).toBeFalse();
+  });
+
+  it('admin login từ chối token sai và không set cookie', async () => {
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      auditLogger,
+      adminSessionSecret: TEST_SESSION_SECRET
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'wrong-secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(401);
+    expect(Boolean(res.headers['set-cookie'])).toBeFalse();
+    expect(res.body).toContain('Admin Login');
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].action).toBe('admin.login');
+    expect(auditLogger.entries[0].outcome).toBe('denied');
+    expect(JSON.stringify(auditLogger.entries[0]).includes('wrong-secret')).toBeFalse();
+  });
+
+  it('dashboard nhận session cookie sau login nhưng vẫn không nhận query token', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminSessionSecret: TEST_SESSION_SECRET,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const loginRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'secret' }
+    }), loginRes);
+    const cookie = loginRes.headers['set-cookie'].split(';')[0];
+
+    const queryOnlyRes = createRes();
+    await app.routes['/admin/dashboard'](createReq({
+      query: { token: 'secret' }
+    }), queryOnlyRes);
+    expect(queryOnlyRes.statusCode).toBe(401);
+
+    const sessionRes = createRes();
+    await app.routes['/admin/dashboard'](createReq({
+      headers: { cookie }
+    }), sessionRes);
+
+    expect(sessionRes.statusCode).toBe(200);
+    expect(sessionRes.body).toContain('Admin Dashboard');
+  });
+
+  it('admin logout xóa session cookie', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminSessionSecret: TEST_SESSION_SECRET
+    });
+
+    const loginRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'secret' }
+    }), loginRes);
+
+    const logoutRes = createRes();
+    await app.routes['POST /admin/logout'](createReq({
+      headers: { cookie: loginRes.headers['set-cookie'].split(';')[0] }
+    }), logoutRes);
+
+    expect(logoutRes.statusCode).toBe(303);
+    expect(logoutRes.headers.location).toBe('/admin/login');
+    expect(logoutRes.headers['set-cookie']).toContain('Max-Age=0');
   });
 
   it('dashboard trả HTML với list đã mask SĐT và địa chỉ', async () => {

@@ -228,6 +228,7 @@ const app = express();
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf; }
 }));
+app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 const webhookRateLimiter = createFixedWindowRateLimiter({
   keyPrefix: 'webhook',
   windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,

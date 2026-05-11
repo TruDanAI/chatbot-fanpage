@@ -88,6 +88,7 @@ Current shape:
 - Express backend.
 - Admin route wiring in `core/admin-routes.js`.
 - Admin route authorization helper in `core/admin/route-auth.js`.
+- Admin session helper in `core/admin/session.js`.
 - Admin read-only page handlers in `core/admin/read-routes.js`.
 - Admin legacy export/state handlers in `core/admin/legacy-routes.js`.
 - Server-rendered admin HTML in `core/admin/views.js`.
@@ -200,14 +201,19 @@ Rollback stance:
 
 ### Phase 3: admin login/session
 
+Status: code-only browser login/session foundation implemented locally; not
+deployed until production env and deploy are separately approved.
+
 Goal: replace manual Bearer-header usage for the dashboard with a usable browser
 login flow.
 
 Recommended approach:
 
-- Add secure cookie sessions.
+- Add secure cookie sessions. Initial implementation signs stateless
+  HttpOnly/SameSite=Lax cookies and rotates the session token on login.
 - Keep `Authorization: Bearer` support for automation.
-- Store admin users and roles in PostgreSQL.
+- Store admin users and roles in PostgreSQL later, after identity provisioning
+  and token/session rotation are reviewed.
 - Add passwordless magic link or passkey later; avoid rolling custom password
   auth too early unless there is a clear operational need.
 
@@ -339,6 +345,7 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The next product phase should start with production audit observation
-and then Phase 3 admin login/session design, keeping implementation code-only
-until deployment or production env changes are separately approved.
+session. The next step is to review the Phase 3 code-only admin login/session
+foundation, then decide whether to deploy it and set the required production
+session env variables. Production env changes and deploy still need separate
+approval in that session.

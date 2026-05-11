@@ -14,9 +14,18 @@ const {
   parseAdminRoles
 } = require('./admin/route-auth');
 const {
+  createAdminSessionHandlers,
+  createAdminSessionManager
+} = require('./admin/session');
+const {
   maskAddress,
   maskPhone
 } = require('./admin/views');
+
+function parsePositiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
 
 function registerAdminRoutes(app, {
   storage,
@@ -31,6 +40,11 @@ function registerAdminRoutes(app, {
   adminPrincipalDisplayName = process.env.ADMIN_PRINCIPAL_DISPLAY_NAME || '',
   adminPrincipalRoles = parseAdminRoles(process.env.ADMIN_ROLES || 'owner'),
   adminPrincipalPermissions = [],
+  adminSessionManager,
+  adminSessionSecret = process.env.SESSION_SECRET || '',
+  adminSessionCookieName = process.env.ADMIN_SESSION_COOKIE_NAME || 'chatbot_admin_session',
+  adminPublicBaseUrl = process.env.ADMIN_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || '',
+  adminSessionTtlMs = parsePositiveInteger(process.env.ADMIN_SESSION_TTL_MS, 8 * 60 * 60 * 1000),
   auditLogger,
   adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
   adminAuditFailClosed = false
@@ -43,6 +57,13 @@ function registerAdminRoutes(app, {
   const audit = auditLogger || createPostgresAuditLogger({
     enabled: adminAuditLogEnabled,
     databaseUrl: dashboardDatabaseUrl
+  });
+  const sessionManager = adminSessionManager || createAdminSessionManager({
+    sessionSecret: adminSessionSecret,
+    cookieName: adminSessionCookieName,
+    publicBaseUrl: adminPublicBaseUrl,
+    nodeEnv: process.env.NODE_ENV || '',
+    ttlMs: adminSessionTtlMs
   });
   const {
     authorizeAdminRequest,
@@ -59,8 +80,24 @@ function registerAdminRoutes(app, {
     adminPrincipalDisplayName,
     adminPrincipalRoles,
     adminPrincipalPermissions,
+    sessionManager,
     auditLogger: audit,
     adminAuditFailClosed
+  });
+  const {
+    sendLoginForm,
+    submitLogin,
+    submitLogout
+  } = createAdminSessionHandlers({
+    sessionManager,
+    adminExportToken,
+    tenantId,
+    pageId,
+    adminPrincipalId,
+    adminPrincipalDisplayName,
+    adminPrincipalRoles,
+    adminPrincipalPermissions,
+    recordAdminAudit
   });
   const {
     sendAuditLog,
@@ -81,6 +118,9 @@ function registerAdminRoutes(app, {
     recordAdminAudit
   });
 
+  app.get('/admin/login', sendLoginForm);
+  app.post('/admin/login', submitLogin);
+  app.post('/admin/logout', submitLogout);
   app.get('/admin/dashboard', sendDashboard);
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
@@ -92,6 +132,7 @@ function registerAdminRoutes(app, {
 
   return {
     authorizeAdminRequest,
+    sessionManager,
     requireAdminToken,
     requireAdminBearerToken
   };
@@ -104,6 +145,8 @@ module.exports = {
   createPostgresAuditLogger,
   createPostgresDashboardReader,
   createAdminRouteAuthorizer,
+  createAdminSessionHandlers,
+  createAdminSessionManager,
   getAdminBearerToken,
   getAdminRequestToken,
   maskAddress,

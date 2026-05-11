@@ -243,6 +243,39 @@ Backup production mới nhất đã biết:
      admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 2, outcomes success=2.
    - Không push code trong phiên audit rollout.
    - Không ghi production /data.
+9. Phiên Phase 3 code-only admin login/session:
+   - Thêm browser login flow:
+     GET /admin/login
+     POST /admin/login
+     POST /admin/logout
+   - Thêm signed stateless admin session cookie:
+     core/admin/session.js
+   - Cookie dùng HttpOnly, SameSite=Lax, Secure khi production hoặc ADMIN_PUBLIC_BASE_URL là https.
+   - Session token được rotate khi login.
+   - Dashboard/user detail/audit read routes nhận session cookie hoặc Authorization Bearer.
+   - Legacy export/state routes vẫn giữ compatibility x-admin-token/Authorization Bearer qua static admin token, không chuyển sang browser session.
+   - Giữ Authorization: Bearer cho automation.
+   - Login success/failure ghi audit, không ghi raw token.
+   - Thêm express.urlencoded để nhận form login.
+   - Thêm env docs trong .env.example:
+     SESSION_SECRET
+     ADMIN_PUBLIC_BASE_URL
+     ADMIN_SESSION_COOKIE_NAME
+   - Nếu SESSION_SECRET chưa set hoặc ngắn hơn 32 ký tự, /admin/login trả 503; Bearer token vẫn hoạt động.
+   - Tests mới cho:
+     login set HttpOnly/Secure/SameSite cookie
+     login sai token không set cookie và audit denied
+     dashboard nhận session cookie nhưng vẫn không nhận query token
+     logout clear cookie
+   - Verify local:
+     node --check pass cho core/admin-routes.js, core/admin/route-auth.js, core/admin/session.js, core/admin/views.js, tests/admin-routes.test.js
+     npm test: 276 passed
+     npm audit --omit=dev: 0 vulnerabilities
+     git diff --check pass, chỉ có cảnh báo line ending CRLF/LF
+   - Chưa push/deploy Phase 3 code nếu chưa có xác nhận riêng.
+   - Chưa set SESSION_SECRET/ADMIN_PUBLIC_BASE_URL/ADMIN_SESSION_COOKIE_NAME production nếu chưa có xác nhận riêng.
+   - Không ghi production DB trong Phase 3 code-only.
+   - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -250,9 +283,13 @@ Tính năng admin hiện có:
 - Mask phone/address/snippets trong admin UI.
 - Read-only SQL guard cho dashboard reader.
 - Admin auth hardening:
-  - Dashboard chỉ nhận Authorization: Bearer <ADMIN_EXPORT_TOKEN>.
+  - Dashboard read routes nhận Authorization: Bearer <ADMIN_EXPORT_TOKEN> hoặc admin session cookie sau login.
   - Không nhận token qua query param.
   - Legacy export/debug route còn x-admin-token compatibility.
+- Admin browser login/session code-only:
+  - /admin/login và /admin/logout đã có trong code local
+  - cần SESSION_SECRET production trước khi dùng thật trên Railway
+  - Bearer token vẫn hoạt động cho automation
 - Route authorization/audit request handling đã tách vào core/admin/route-auth.js.
 - Dashboard/user detail/audit page handlers đã tách vào core/admin/read-routes.js.
 - Legacy export/state handlers đã tách vào core/admin/legacy-routes.js.
@@ -282,6 +319,7 @@ File quan trọng:
 - core/admin/reader.js
 - core/admin/read-routes.js
 - core/admin/route-auth.js
+- core/admin/session.js
 - core/admin/views.js
 - db/admin-auth-rbac-audit-proposal.sql
 - docs/admin-auth-rbac-audit-runbook.md
@@ -312,7 +350,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Ưu tiên tiếp theo là quan sát audit ổn định và bắt đầu Phase 3 admin login/session theo hướng code-only trước, chưa thêm business write workflow.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session đã có code-only foundation local; ưu tiên tiếp theo là review, commit/push/deploy sau xác nhận riêng, rồi set production session env sau xác nhận riêng.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -330,13 +368,27 @@ Việc nên làm đầu phiên tới:
    - admin_audit_log
 5. Chạy npm test và npm audit --omit=dev.
 
-Code-only hướng tốt nhất:
-- Thiết kế admin login/session:
-  - secure cookie sessions
-  - giữ Authorization: Bearer cho automation
-  - chưa thêm admin user production cho tới khi identity provisioning/session/token rotation được review riêng
-  - thêm env keys vào .env.example khi code thật sự dùng: SESSION_SECRET, ADMIN_PUBLIC_BASE_URL, ADMIN_SESSION_COOKIE_NAME
-- Hoặc tiếp tục hardening read-only:
+Phase 3 deploy/env rollout nếu được xác nhận:
+1. Review diff Phase 3.
+2. Chạy node --check, npm test, npm audit --omit=dev, git diff --check.
+3. Chỉ sau xác nhận riêng:
+   - commit/push code.
+4. Chờ Railway deploy SUCCESS và smoke /healthz.
+5. Chỉ sau xác nhận env riêng:
+   - set SESSION_SECRET=random 64+ chars
+   - set ADMIN_PUBLIC_BASE_URL=https://chatbot-fanpage-production.up.railway.app
+   - set ADMIN_SESSION_COOKIE_NAME=chatbot_admin_session nếu muốn rõ ràng
+6. Smoke:
+   - /healthz
+   - /admin/login trả HTML login
+   - login bằng ADMIN_EXPORT_TOKEN set cookie
+   - /admin/dashboard mở được bằng cookie
+   - /admin/audit mở được bằng cookie
+   - verify admin_audit_log count-only tăng với login/dashboard/audit
+7. Sau khi browser login ổn, rotate ADMIN_EXPORT_TOKEN vì token cũ đã từng bị lộ trong chat.
+
+Code-only hướng khác nếu chưa deploy:
+- Tiếp tục hardening read-only:
   - dashboard repository/API read-only có test
   - pagination read-only cho dashboard/audit
 

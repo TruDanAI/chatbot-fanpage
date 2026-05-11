@@ -73,7 +73,7 @@ function dashboardQueryString(filters = {}, overrides = {}) {
   return query ? `?${query}` : '';
 }
 
-function renderLayout(title, body) {
+function renderLayout(title, body, { showLogout = true } = {}) {
   return `<!doctype html>
 <html lang="vi">
 <head>
@@ -100,6 +100,10 @@ function renderLayout(title, body) {
     }
     body { margin: 0; background: #f7f8fb; }
     header { background: var(--primary-dark); color: white; padding: 18px 24px; }
+    .header-inner { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .logout-form { margin: 0; }
+    .logout-form button { border: 1px solid rgba(255,255,255,.55); border-radius: 6px; background: transparent; color: #ffffff; padding: 7px 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .logout-form button:hover { background: rgba(255,255,255,.1); }
     main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 40px; }
     h1, h2 { margin: 0 0 12px; }
     h1 { font-size: 24px; }
@@ -129,13 +133,34 @@ function renderLayout(title, body) {
     .status-danger { color: var(--danger); background: #fee2e2; }
     .status-neutral { color: var(--neutral); background: #e2e8f0; }
     .stack { display: grid; gap: 18px; }
+    .login-panel { max-width: 420px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+    .login-panel form { display: grid; gap: 12px; }
+    .login-panel label { display: grid; gap: 5px; font-size: 13px; font-weight: 700; color: #334155; }
+    .login-panel input { min-height: 38px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit; }
+    .login-panel button { min-height: 38px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-weight: 700; cursor: pointer; }
+    .error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; padding: 9px 10px; font-size: 14px; }
   </style>
 </head>
 <body>
-  <header><h1>${escapeHtml(title)}</h1></header>
+  <header><div class="header-inner"><h1>${escapeHtml(title)}</h1>${showLogout ? '<form class="logout-form" method="post" action="/admin/logout"><button type="submit">Logout</button></form>' : ''}</div></header>
   <main>${body}</main>
 </body>
 </html>`;
+}
+
+function renderLoginHtml({ error = '' } = {}) {
+  const body = `
+    <section class="login-panel">
+      ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
+      <form method="post" action="/admin/login">
+        <label>Admin Token
+          <input name="adminToken" type="password" autocomplete="current-password" maxlength="300" autofocus>
+        </label>
+        <button type="submit">Login</button>
+      </form>
+    </section>
+  `;
+  return renderLayout('Admin Login', body, { showLogout: false });
 }
 
 function renderCounts(counts = {}) {
@@ -335,5 +360,6 @@ module.exports = {
   maskPhone,
   renderAuditHtml,
   renderDashboardHtml,
+  renderLoginHtml,
   renderUserDetailHtml
 };
