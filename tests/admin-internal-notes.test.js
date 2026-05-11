@@ -8,9 +8,11 @@ const {
   permissionsForRoles
 } = require('../core/admin-auth');
 const {
+  MAX_INTERNAL_NOTE_LIST_LIMIT,
   INTERNAL_NOTE_ACTION,
   createPostgresInternalNoteService,
-  validateInternalNoteInput
+  validateInternalNoteInput,
+  validateInternalNoteListInput
 } = require('../core/admin/internal-notes');
 
 function createPrincipal(role = 'maintainer', id = 'admin-1') {
@@ -23,7 +25,7 @@ function createPrincipal(role = 'maintainer', id = 'admin-1') {
   });
 }
 
-function createFakeClientClass({ failAudit = false, queries = [] } = {}) {
+function createFakeClientClass({ failAudit = false, noteRows = [], queries = [] } = {}) {
   return class FakeClient {
     async connect() {
       queries.push({ sql: 'CONNECT', params: [] });
@@ -49,6 +51,9 @@ function createFakeClientClass({ failAudit = false, queries = [] } = {}) {
       if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
         if (failAudit) throw new Error('audit insert failed');
         return { rows: [] };
+      }
+      if (/^SELECT id, target_type, target_id, body, status, created_by, created_at\s+FROM internal_notes/i.test(normalized)) {
+        return { rows: noteRows };
       }
       return { rows: [] };
     }
@@ -414,5 +419,211 @@ describe('admin internal note PostgreSQL service', () => {
     expect(metadataText.includes('raw_message')).toBeFalse();
     expect(metadataText.includes('token')).toBeFalse();
     expect(metadataText.includes('secret')).toBeFalse();
+  });
+});
+
+describe('admin internal note read model', () => {
+  it('validates target filters for list reads', () => {
+    const valid = validateInternalNoteListInput({
+      tenantId: 'default',
+      pageId: 'page',
+      targetType: 'Conversation',
+      targetId: ' sender_1 ',
+      limit: 10,
+      offset: 5
+    });
+    const invalid = validateInternalNoteListInput({
+      tenantId: 'default',
+      pageId: 'page',
+      targetType: 'profile',
+      targetId: 'sender_1'
+    });
+
+    expect(valid.ok).toBeTrue();
+    expect(valid.normalized.targetType).toBe('conversation');
+    expect(valid.normalized.targetId).toBe('sender_1');
+    expect(invalid.ok).toBeFalse();
+    expect(invalid.reason).toBe('invalid_target_type');
+  });
+
+  it('lists only visible notes by default for the requested target', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createFakeClientClass({ queries })
+    });
+
+    const result = await service.listNotes({
+      targetType: 'customer',
+      targetId: 'sender_1'
+    });
+
+    const select = findQuery(queries, /^SELECT id, target_type, target_id, body, status, created_by, created_at/i);
+    expect(result.targetType).toBe('customer');
+    expect(result.targetId).toBe('sender_1');
+    expect(result.visibleOnly).toBeTrue();
+    expect(select.sql).toMatch(/\btenant_id = \$1\b/i);
+    expect(select.sql).toMatch(/\bpage_id = \$2\b/i);
+    expect(select.sql).toMatch(/\btarget_type = \$3\b/i);
+    expect(select.sql).toMatch(/\btarget_id = \$4\b/i);
+    expect(select.sql).toMatch(/\bstatus = \$5\b/i);
+    expect(select.params).toEqual(['default', 'page', 'customer', 'sender_1', 'visible', 25, 0]);
+  });
+
+  it('applies bounded list limits', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createFakeClientClass({ queries })
+    });
+
+    const result = await service.listNotes({
+      targetType: 'order',
+      targetId: '123',
+      limit: 10000
+    });
+
+    const select = findQuery(queries, /^SELECT id, target_type, target_id, body, status, created_by, created_at/i);
+    expect(result.limit).toBe(MAX_INTERNAL_NOTE_LIST_LIMIT);
+    expect(select.params[5]).toBe(MAX_INTERNAL_NOTE_LIST_LIMIT);
+  });
+
+  it('uses bounded offset pagination', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createFakeClientClass({ queries })
+    });
+
+    const result = await service.listNotes({
+      targetType: 'conversation',
+      targetId: 'sender_1',
+      limit: 2,
+      offset: 4
+    });
+
+    const select = findQuery(queries, /^SELECT id, target_type, target_id, body, status, created_by, created_at/i);
+    expect(result.limit).toBe(2);
+    expect(result.offset).toBe(4);
+    expect(select.sql).toMatch(/\bLIMIT \$6\b/i);
+    expect(select.sql).toMatch(/\bOFFSET \$7\b/i);
+    expect(select.params).toEqual(['default', 'page', 'conversation', 'sender_1', 'visible', 2, 4]);
+  });
+
+  it('orders notes newest first by created_at and id', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createFakeClientClass({ queries })
+    });
+
+    await service.listNotes({
+      targetType: 'order',
+      targetId: '123'
+    });
+
+    const select = findQuery(queries, /^SELECT id, target_type, target_id, body, status, created_by, created_at/i);
+    expect(select.sql).toMatch(/\bORDER BY created_at DESC, id DESC\b/i);
+  });
+
+  it('scopes list reads by tenant and page', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'tenant-b',
+      pageId: 'page-b',
+      Client: createFakeClientClass({ queries })
+    });
+
+    const result = await service.listNotes({
+      targetType: 'customer',
+      targetId: 'sender_1'
+    });
+
+    const select = findQuery(queries, /^SELECT id, target_type, target_id, body, status, created_by, created_at/i);
+    expect(result.tenantId).toBe('tenant-b');
+    expect(result.pageId).toBe('page-b');
+    expect(select.params.slice(0, 2)).toEqual(['tenant-b', 'page-b']);
+  });
+
+  it('keeps target values parameterized in list queries', async () => {
+    const queries = [];
+    const maliciousTargetId = "sender_1' OR 1=1 --";
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createFakeClientClass({ queries })
+    });
+
+    await service.listNotes({
+      targetType: 'customer',
+      targetId: maliciousTargetId
+    });
+
+    const select = findQuery(queries, /^SELECT id, target_type, target_id, body, status, created_by, created_at/i);
+    expect(select.sql.includes(maliciousTargetId)).toBeFalse();
+    expect(select.params[3]).toBe(maliciousTargetId);
+  });
+
+  it('returns safe note fields without raw metadata or joined rows', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createFakeClientClass({
+        queries,
+        noteRows: [{
+          id: 7,
+          tenant_id: 'default',
+          page_id: 'page',
+          target_type: 'customer',
+          target_id: 'sender_1',
+          body: 'safe staff context',
+          status: 'visible',
+          created_by: 'admin-1',
+          created_at: '2026-05-12T01:00:00.000Z',
+          hidden_by: 'admin-2',
+          hidden_at: '2026-05-12T02:00:00.000Z',
+          hide_reason: 'raw reason',
+          metadata: { raw_message: 'do not return' },
+          raw_customer: { phone: '0987654321' },
+          raw_order: { address: '12 Tran Phu' }
+        }]
+      })
+    });
+
+    const result = await service.listNotes({
+      targetType: 'customer',
+      targetId: 'sender_1'
+    });
+    const note = result.notes[0];
+
+    expect(Object.keys(note).sort()).toEqual([
+      'body',
+      'created_at',
+      'created_by',
+      'id',
+      'status',
+      'target_id',
+      'target_type'
+    ]);
+    expect(note.id).toBe('7');
+    expect(note.body).toBe('safe staff context');
+    expect(JSON.stringify(note).includes('raw_customer')).toBeFalse();
+    expect(JSON.stringify(note).includes('raw_order')).toBeFalse();
+    expect(JSON.stringify(note).includes('raw_message')).toBeFalse();
+    expect(JSON.stringify(note).includes('hidden_by')).toBeFalse();
+    expect(JSON.stringify(note).includes('tenant_id')).toBeFalse();
+    expect(JSON.stringify(note).includes('page_id')).toBeFalse();
   });
 });

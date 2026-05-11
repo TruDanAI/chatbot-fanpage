@@ -9,6 +9,8 @@ const INTERNAL_NOTE_ACTION = 'admin.internal_note.create';
 const INTERNAL_NOTE_RESOURCE_TYPE = 'internal_note';
 const INTERNAL_NOTE_TARGET_TYPES = Object.freeze(['order', 'conversation', 'customer']);
 const MAX_INTERNAL_NOTE_BODY_LENGTH = 2000;
+const DEFAULT_INTERNAL_NOTE_LIST_LIMIT = 25;
+const MAX_INTERNAL_NOTE_LIST_LIMIT = 100;
 
 function loadPgClient() {
   try {
@@ -44,6 +46,12 @@ function createInternalNoteError(code, message, statusCode = 400) {
   err.code = code;
   err.statusCode = statusCode;
   return err;
+}
+
+function toBoundedInteger(value, fallback, { min = 0, max = MAX_INTERNAL_NOTE_LIST_LIMIT } = {}) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(number)));
 }
 
 function validateInternalNoteInput({
@@ -87,6 +95,50 @@ function validateInternalNoteInput({
   return { ok: true, normalized };
 }
 
+function validateInternalNoteListInput({
+  tenantId = '',
+  pageId = '',
+  targetType = '',
+  targetId = '',
+  limit = DEFAULT_INTERNAL_NOTE_LIST_LIMIT,
+  offset = 0
+} = {}) {
+  const normalized = {
+    tenantId: normalizeText(tenantId, 120),
+    pageId: normalizeText(pageId, 120),
+    targetType: normalizeTargetType(targetType),
+    targetId: normalizeTargetId(targetId),
+    limit: toBoundedInteger(limit, DEFAULT_INTERNAL_NOTE_LIST_LIMIT, { min: 1, max: MAX_INTERNAL_NOTE_LIST_LIMIT }),
+    offset: toBoundedInteger(offset, 0, { min: 0, max: 100000 })
+  };
+
+  if (!normalized.tenantId) {
+    return { ok: false, reason: 'tenant_id_required', normalized };
+  }
+  if (!normalized.pageId) {
+    return { ok: false, reason: 'page_id_required', normalized };
+  }
+  if (!INTERNAL_NOTE_TARGET_TYPES.includes(normalized.targetType)) {
+    return { ok: false, reason: 'invalid_target_type', normalized };
+  }
+  if (!normalized.targetId) {
+    return { ok: false, reason: 'target_id_required', normalized };
+  }
+  return { ok: true, normalized };
+}
+
+function presentInternalNoteRow(row = {}) {
+  return {
+    id: row.id != null ? String(row.id) : '',
+    target_type: row.target_type || '',
+    target_id: row.target_id || '',
+    body: row.body || '',
+    status: row.status || '',
+    created_by: row.created_by || '',
+    created_at: row.created_at || ''
+  };
+}
+
 function buildInternalNoteAuditMetadata({
   targetType = '',
   targetId = '',
@@ -106,6 +158,36 @@ function buildInternalNoteAuditMetadata({
 }
 
 function createInternalNoteRepository() {
+  async function listNotes(client, {
+    tenantId = '',
+    pageId = '',
+    targetType = '',
+    targetId = '',
+    visibleOnly = true,
+    limit = DEFAULT_INTERNAL_NOTE_LIST_LIMIT,
+    offset = 0
+  } = {}) {
+    const statusSql = visibleOnly ? 'AND status = $5' : '';
+    const limitParam = visibleOnly ? 6 : 5;
+    const offsetParam = limitParam + 1;
+    const params = visibleOnly
+      ? [tenantId, pageId, targetType, targetId, 'visible', limit, offset]
+      : [tenantId, pageId, targetType, targetId, limit, offset];
+    const result = await client.query(`
+      SELECT id, target_type, target_id, body, status, created_by, created_at
+      FROM internal_notes
+      WHERE tenant_id = $1
+        AND page_id = $2
+        AND target_type = $3
+        AND target_id = $4
+        ${statusSql}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $${limitParam}
+      OFFSET $${offsetParam}
+    `, params);
+    return (result.rows || []).map(presentInternalNoteRow);
+  }
+
   async function insertNote(client, note) {
     const result = await client.query(`
       INSERT INTO internal_notes (
@@ -152,7 +234,8 @@ function createInternalNoteRepository() {
 
   return {
     insertCreateAudit,
-    insertNote
+    insertNote,
+    listNotes
   };
 }
 
@@ -270,18 +353,67 @@ function createPostgresInternalNoteService({
     }
   }
 
+  async function listNotes({
+    targetType = '',
+    targetId = '',
+    visibleOnly = true,
+    limit = DEFAULT_INTERNAL_NOTE_LIST_LIMIT,
+    offset = 0
+  } = {}) {
+    if (!databaseUrl) {
+      throw createInternalNoteError('database_url_required', 'DATABASE_URL is required for internal notes.', 503);
+    }
+
+    const validation = validateInternalNoteListInput({
+      tenantId,
+      pageId,
+      targetType,
+      targetId,
+      limit,
+      offset
+    });
+    if (!validation.ok) {
+      throw createInternalNoteError(validation.reason, 'Internal note list input is invalid.', 400);
+    }
+
+    const PgClient = Client || loadPgClient();
+    const client = new PgClient({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      return {
+        tenantId: validation.normalized.tenantId,
+        pageId: validation.normalized.pageId,
+        targetType: validation.normalized.targetType,
+        targetId: validation.normalized.targetId,
+        limit: validation.normalized.limit,
+        offset: validation.normalized.offset,
+        visibleOnly: visibleOnly !== false,
+        notes: await repository.listNotes(client, {
+          ...validation.normalized,
+          visibleOnly: visibleOnly !== false
+        })
+      };
+    } finally {
+      await client.end();
+    }
+  }
+
   return {
-    createNote
+    createNote,
+    listNotes
   };
 }
 
 module.exports = {
+  DEFAULT_INTERNAL_NOTE_LIST_LIMIT,
   INTERNAL_NOTE_ACTION,
   INTERNAL_NOTE_RESOURCE_TYPE,
   INTERNAL_NOTE_TARGET_TYPES,
   MAX_INTERNAL_NOTE_BODY_LENGTH,
+  MAX_INTERNAL_NOTE_LIST_LIMIT,
   buildInternalNoteAuditMetadata,
   createInternalNoteRepository,
   createPostgresInternalNoteService,
-  validateInternalNoteInput
+  validateInternalNoteInput,
+  validateInternalNoteListInput
 };
