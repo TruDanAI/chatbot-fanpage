@@ -43,11 +43,15 @@ Production:
   - DATABASE_URL=${{Postgres-TQuc.DATABASE_URL}}
   - ALLOW_PRODUCTION_DB_WRITES=true
   - ADMIN_AUDIT_LOG_ENABLED=true
-  - SESSION_SECRET chưa set ở production sau Phase 3 deploy gần nhất
+  - SESSION_SECRET set=true theo metadata safe check ngày 2026-05-11, không in value
+  - ADMIN_PUBLIC_BASE_URL set=true theo metadata safe check ngày 2026-05-11, không in value
+  - ADMIN_SESSION_COOKIE_NAME set=true theo metadata safe check ngày 2026-05-11, không in value
   - TENANT_ID=default
   - PAGE_ID=1026325343908119
 
 Trạng thái production mới nhất đã biết:
+- Latest Railway deployment:
+  f55f2c43-fb2b-4bb0-9a3a-3f62def7ad21 SUCCESS ở commit 46ca2d3 Update handoff docs after session deploy
 - Latest verified code deployment:
   8baa178 Add admin session login flow
 - Previous code deployment:
@@ -60,7 +64,7 @@ Trạng thái production mới nhất đã biết:
   70ac695 Update handoff docs after route handler deploy
 - Previous admin refactor code commit:
   20676a3 Refactor admin dashboard modules
-- Latest Railway deployment:
+- Previous Railway code deployment:
   d30fb579-77df-4dda-97ee-4ae291262856 SUCCESS ở commit 8baa178
 - Previous Railway deployment after enabling audit env:
   2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS ở commit 6d21707
@@ -78,11 +82,14 @@ Trạng thái production mới nhất đã biết:
   /admin/dashboard: 200, title=Admin Dashboard
   /admin/audit: 200, title=Admin Audit Log, schema_message=false
 - /admin/login gần nhất:
-  503 Admin Login HTML vì SESSION_SECRET production chưa set.
+  200 Admin Login HTML, has_form=true bằng unauthenticated GET sau khi session env đã set.
+  Chưa smoke POST login/cookie dashboard vì các route đó sẽ ghi audit vào production DB và cần xác nhận riêng.
 - Audit production đã bật và smoke gần nhất ghi 2 audit rows thành công:
   admin_audit_log=2, outcomes success=2.
 
 Git state mới nhất đã biết:
+- Latest docs commit đã push/deploy:
+  46ca2d3 Update handoff docs after session deploy
 - Latest code commit đã push/deploy:
   8baa178 Add admin session login flow
 - Previous docs commit đã push/deploy:
@@ -98,11 +105,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  46ca2d3 Update handoff docs after session deploy
   8baa178 Add admin session login flow
   c333388 Update handoff docs after audit rollout
   6d21707 Update handoff docs after legacy handler deploy
   da48d2a Extract admin legacy handlers
-  70ac695 Update handoff docs after route handler deploy
 
 Backup production mới nhất đã biết:
 - Path:
@@ -293,8 +300,58 @@ Backup production mới nhất đã biết:
      /admin/dashboard 200, title=Admin Dashboard bằng Bearer header
      /admin/audit 200, title=Admin Audit Log bằng Bearer header
      /admin/login 503 Admin Login HTML vì SESSION_SECRET production chưa set
-   - Chưa set SESSION_SECRET/ADMIN_PUBLIC_BASE_URL/ADMIN_SESSION_COOKIE_NAME production.
+   - Tại thời điểm Phase 3 code deploy, chưa set SESSION_SECRET/ADMIN_PUBLIC_BASE_URL/ADMIN_SESSION_COOKIE_NAME production.
    - Không ghi production DB trong Phase 3 code-only.
+   - Không ghi production /data.
+10. Phiên code-only admin privacy headers + read-only API/ops insights foundation, local chưa push/deploy:
+   - Preflight local/production:
+     worktree ban đầu clean, origin/main...HEAD = 0 0.
+     Latest production deployment:
+       f55f2c43-fb2b-4bb0-9a3a-3f62def7ad21 SUCCESS ở commit 46ca2d3.
+     /healthz production:
+       ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     Production env metadata safe check:
+       STORAGE_ADAPTER=postgres, ALLOW_PRODUCTION_DB_WRITES=true, ADMIN_AUDIT_LOG_ENABLED=true,
+       SESSION_SECRET_set=true, ADMIN_PUBLIC_BASE_URL_set=true, ADMIN_SESSION_COOKIE_NAME_set=true,
+       TENANT_ID=default, PAGE_ID=1026325343908119.
+   - Không chạy Bearer/cookie admin smoke vì ADMIN_AUDIT_LOG_ENABLED=true sẽ ghi audit rows production và cần xác nhận riêng.
+   - GET /admin/login không token, không DB write:
+     200, title=Admin Login, has_form=true.
+   - Count-only production bằng psql không chạy được vì local thiếu psql.
+   - Count-only production bằng Node/pg qua railway run không kết nối được từ local do DATABASE_URL resolve host nội bộ Railway (ENOTFOUND).
+     Không in DATABASE_URL, không in secrets.
+   - Thêm admin no-store/security headers middleware cho /admin:
+     Cache-Control no-store, Pragma no-cache, Expires 0, X-Content-Type-Options nosniff, Referrer-Policy no-referrer.
+   - Thêm read-only admin JSON API foundation phục vụ Phase 6 frontend sau này:
+     GET /admin/api/dashboard
+     GET /admin/api/dashboard/users/:senderId
+     GET /admin/api/audit
+   - API dùng cùng auth/RBAC/session/Bearer authorizer với HTML read routes.
+   - API vẫn không nhận query token hoặc x-admin-token cho dashboard read routes.
+   - API trả presenter JSON đã mask phone/address/snippets và không trả audit metadata raw.
+   - Thêm ops insights read-only cho dashboard HTML và API:
+     rolling 24h metrics, ready orders, active handoffs, events 24h,
+     last user message/event timestamps, order status breakdown,
+     top products 30d, needs-attention orders/handoffs.
+   - Ops insights chỉ dùng SELECT qua read-only SQL guard.
+   - Dashboard HTML có thêm Ops Snapshot, Needs Attention, Top Products, Order Status.
+   - Thêm file:
+     core/admin/api-presenter.js
+   - Không đổi schema.
+   - Không thêm env.
+   - Không thêm production write workflow.
+   - Document ADMIN_SESSION_TTL_MS trong .env.example.
+   - Tests mới cho admin no-store middleware, admin API masking/auth/audit access,
+     và operational insights SELECT read-only.
+   - Verify local:
+     node --check pass cho core/admin/api-presenter.js, core/admin/read-routes.js, core/admin/reader.js, core/admin/views.js, core/admin-routes.js, tests/admin-routes.test.js.
+     npm test: 282 passed.
+     npm audit --omit=dev: 0 vulnerabilities.
+     git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Chưa push.
+   - Chưa deploy.
+   - Không đổi production env.
+   - Không ghi production DB.
    - Không ghi production /data.
 
 Tính năng admin hiện có:
@@ -308,7 +365,7 @@ Tính năng admin hiện có:
   - Legacy export/debug route còn x-admin-token compatibility.
 - Admin browser login/session code-only:
   - /admin/login và /admin/logout đã deploy trong code production
-  - cần SESSION_SECRET production trước khi dùng thật trên Railway
+  - production session env hiện đã set theo metadata safe check, nhưng chưa smoke POST login/cookie dashboard
   - Bearer token vẫn hoạt động cho automation
 - Route authorization/audit request handling đã tách vào core/admin/route-auth.js.
 - Dashboard/user detail/audit page handlers đã tách vào core/admin/read-routes.js.
@@ -320,6 +377,17 @@ Tính năng admin hiện có:
   - owner: full admin gates hiện tại
 - /admin/audit read-only.
 - /admin/audit xử lý thiếu schema gracefully, không 500.
+- Read-only JSON API foundation local chưa deploy:
+  - /admin/api/dashboard
+  - /admin/api/dashboard/users/:senderId
+  - /admin/api/audit
+  - dùng presenter mask phone/address/snippets trước khi trả JSON
+- Ops insights local chưa deploy:
+  - rolling 24h metrics
+  - needs-attention orders/handoffs
+  - order status breakdown
+  - top products 30d
+  - render trong dashboard HTML và trả qua /admin/api/dashboard
 - Audit writer PostgreSQL opt-in:
   - mặc định tắt nếu ADMIN_AUDIT_LOG_ENABLED không phải true
   - không tạo DB connection khi disabled
@@ -370,7 +438,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session code đã deploy, nhưng production browser login chưa bật vì SESSION_SECRET chưa set. Ưu tiên tiếp theo là set session env sau xác nhận riêng, smoke login bằng browser cookie, rồi rotate ADMIN_EXPORT_TOKEN.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session code đã deploy và production session env hiện đã set theo metadata safe check. Ưu tiên tiếp theo là smoke login bằng browser cookie sau xác nhận riêng vì POST login/dashboard/audit sẽ ghi audit rows production, rồi rotate ADMIN_EXPORT_TOKEN.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -378,29 +446,32 @@ Việc nên làm đầu phiên tới:
    - STORAGE_ADAPTER=postgres
    - ALLOW_PRODUCTION_DB_WRITES=true
    - ADMIN_AUDIT_LOG_ENABLED=true
-3. Smoke bằng Bearer header:
+   - SESSION_SECRET_set=true
+   - ADMIN_PUBLIC_BASE_URL_set=true
+   - ADMIN_SESSION_COOKIE_NAME_set=true
+3. GET /admin/login không token:
+   - phải trả 200 Admin Login HTML
+4. Chỉ smoke bằng Bearer/cookie sau xác nhận riêng vì sẽ ghi audit production:
    - /admin/dashboard
    - /admin/audit
-4. Verify count-only:
+5. Verify count-only nếu có đường kết nối không in secrets:
    - admin_users
    - admin_roles
    - admin_user_roles
    - admin_audit_log
-5. Chạy npm test và npm audit --omit=dev.
+6. Chạy npm test và npm audit --omit=dev.
 
-Phase 3 env rollout nếu được xác nhận:
+Phase 3 browser cookie smoke nếu được xác nhận:
 1. Re-check git/deployment/healthz.
-2. Smoke Bearer:
+2. GET /admin/login không token.
+3. Smoke Bearer:
    - /admin/dashboard
    - /admin/audit
-3. Chỉ sau xác nhận env riêng:
-   - set SESSION_SECRET=random 64+ chars
-   - set ADMIN_PUBLIC_BASE_URL=https://chatbot-fanpage-production.up.railway.app
-   - set ADMIN_SESSION_COOKIE_NAME=chatbot_admin_session nếu muốn rõ ràng
-4. Chờ Railway env deploy/restart SUCCESS.
-5. Smoke:
-   - /healthz
-   - /admin/login trả HTML login
+4. Nếu session env metadata bất ngờ thiếu thì dừng và xin xác nhận env riêng trước khi set lại:
+   - SESSION_SECRET random 64+ chars
+   - ADMIN_PUBLIC_BASE_URL=https://chatbot-fanpage-production.up.railway.app
+   - ADMIN_SESSION_COOKIE_NAME=chatbot_admin_session nếu muốn rõ ràng
+5. Smoke có ghi audit sau xác nhận:
    - login bằng ADMIN_EXPORT_TOKEN set cookie
    - /admin/dashboard mở được bằng cookie
    - /admin/audit mở được bằng cookie
@@ -409,7 +480,8 @@ Phase 3 env rollout nếu được xác nhận:
 
 Code-only hướng khác nếu chưa deploy:
 - Tiếp tục hardening read-only:
-  - dashboard repository/API read-only có test
+  - push/deploy admin no-store/security headers + read-only API/ops insights local changes sau xác nhận
+  - dashboard repository/service split có test
   - pagination read-only cho dashboard/audit
 
 Không làm vội:

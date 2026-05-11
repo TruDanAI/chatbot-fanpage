@@ -27,6 +27,23 @@ function parsePositiveInteger(value, fallback) {
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }
 
+function setResponseHeader(res, name, value) {
+  if (typeof res?.set === 'function') return res.set(name, value);
+  if (typeof res?.setHeader === 'function') return res.setHeader(name, value);
+  if (res?.headers) res.headers[String(name).toLowerCase()] = value;
+  return undefined;
+}
+
+function setAdminNoStoreHeaders(_req, res, next) {
+  setResponseHeader(res, 'Cache-Control', 'no-store');
+  setResponseHeader(res, 'Pragma', 'no-cache');
+  setResponseHeader(res, 'Expires', '0');
+  setResponseHeader(res, 'X-Content-Type-Options', 'nosniff');
+  setResponseHeader(res, 'Referrer-Policy', 'no-referrer');
+  if (typeof next === 'function') return next();
+  return undefined;
+}
+
 function registerAdminRoutes(app, {
   storage,
   adminExportToken,
@@ -101,8 +118,11 @@ function registerAdminRoutes(app, {
   });
   const {
     sendAuditLog,
+    sendAuditLogApi,
     sendDashboard,
-    sendUserDetail
+    sendDashboardApi,
+    sendUserDetail,
+    sendUserDetailApi
   } = createAdminReadHandlers({
     reader,
     authorizeAdminRequest,
@@ -118,9 +138,16 @@ function registerAdminRoutes(app, {
     recordAdminAudit
   });
 
+  if (typeof app.use === 'function') {
+    app.use('/admin', setAdminNoStoreHeaders);
+  }
+
   app.get('/admin/login', sendLoginForm);
   app.post('/admin/login', submitLogin);
   app.post('/admin/logout', submitLogout);
+  app.get('/admin/api/dashboard', sendDashboardApi);
+  app.get('/admin/api/dashboard/users/:senderId', sendUserDetailApi);
+  app.get('/admin/api/audit', sendAuditLogApi);
   app.get('/admin/dashboard', sendDashboard);
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
@@ -152,5 +179,6 @@ module.exports = {
   maskAddress,
   maskPhone,
   parseAdminRoles,
-  registerAdminRoutes
+  registerAdminRoutes,
+  setAdminNoStoreHeaders
 };

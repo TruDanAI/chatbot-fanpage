@@ -121,6 +121,8 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .count { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
     .count span { color: var(--muted); font-size: 13px; }
     .count strong { display: block; font-size: 22px; }
+    .ops-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 14px; }
+    .subsection h3 { font-size: 15px; margin: 0 0 8px; }
     table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     th, td { padding: 9px 10px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; font-size: 14px; }
     th { background: var(--surface-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0; color: #334155; }
@@ -172,6 +174,76 @@ function renderCounts(counts = {}) {
 function renderTable(headers, rows, renderRow) {
   if (!rows.length) return '<div class="empty">Không có dữ liệu.</div>';
   return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table>`;
+}
+
+function renderOperations(operations = {}, filters = {}) {
+  const activity = operations.activity || {};
+  const needsAttention = operations.needsAttention || {};
+  const attentionRows = [
+    ...(needsAttention.orders || []).map(order => ({
+      reason: order.reason || 'needs_review',
+      updated_at: order.updated_at,
+      sender_id: order.sender_id,
+      status: order.status,
+      product_code: order.product_code,
+      detail: order.item_count != null ? `${order.item_count} items` : ''
+    })),
+    ...(needsAttention.handoffs || []).map(item => ({
+      reason: 'active_handoff',
+      updated_at: item.handoff_until || item.updated_at,
+      sender_id: item.sender_id,
+      status: item.session_state,
+      product_code: item.last_product_code,
+      detail: item.handoff_until ? `until ${formatDate(item.handoff_until)}` : ''
+    }))
+  ];
+  const snapshot = {
+    orders_24h: activity.orders_24h || 0,
+    confirmed_24h: activity.confirmed_24h || 0,
+    ready_orders: activity.ready_orders || 0,
+    abandoned_24h: activity.abandoned_24h || 0,
+    active_handoffs: activity.active_handoffs || 0,
+    events_24h: activity.events_24h || 0
+  };
+  return `
+    <h2>Ops Snapshot</h2>
+    <p class="meta">Rolling ${escapeHtml(operations.windowHours || 24)}h activity | product signal window ${escapeHtml(operations.productWindowDays || 30)}d | last user message ${escapeHtml(formatDate(activity.last_user_message_at))} | last event ${escapeHtml(formatDate(activity.last_event_at))}</p>
+    ${renderCounts(snapshot)}
+    <section class="ops-grid">
+      <div class="subsection">
+        <h3>Needs Attention</h3>
+        ${renderTable(['reason', 'updated', 'sender', 'state', 'product', 'detail'], attentionRows, row => `
+          <tr>
+            <td>${escapeHtml(formatLabel(row.reason))}</td>
+            <td>${escapeHtml(formatDate(row.updated_at))}</td>
+            <td><a href="/admin/dashboard/users/${encodeRoutePart(row.sender_id)}${dashboardQueryString(filters)}">${escapeHtml(row.sender_id)}</a></td>
+            <td>${renderStatus(row.status)}</td>
+            <td>${escapeHtml(row.product_code)}</td>
+            <td>${escapeHtml(row.detail)}</td>
+          </tr>
+        `)}
+      </div>
+      <div class="subsection">
+        <h3>Top Products</h3>
+        ${renderTable(['product', 'orders 30d', 'confirmed'], operations.topProducts || [], row => `
+          <tr>
+            <td>${escapeHtml(row.product_code)}</td>
+            <td>${escapeHtml(row.total_orders || 0)}</td>
+            <td>${escapeHtml(row.confirmed_orders || 0)}</td>
+          </tr>
+        `)}
+      </div>
+      <div class="subsection">
+        <h3>Order Status</h3>
+        ${renderTable(['status', 'total'], operations.orderStatusBreakdown || [], row => `
+          <tr>
+            <td>${renderStatus(row.status)}</td>
+            <td>${escapeHtml(row.total || 0)}</td>
+          </tr>
+        `)}
+      </div>
+    </section>
+  `;
 }
 
 function renderFilterForm(filters = {}) {
@@ -226,6 +298,7 @@ function renderDashboardHtml(model) {
     <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
     ${renderFilterForm(model.filters || {})}
     ${renderCounts(model.counts)}
+    ${renderOperations(model.operations || {}, model.filters || {})}
 
     <h2>Orders</h2>
     ${renderTable(['updated', 'sender', 'status', 'product', 'name', 'phone', 'address', 'items'], model.orders, order => `

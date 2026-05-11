@@ -95,6 +95,8 @@ Current shape:
 - Admin route authorization helper in `core/admin/route-auth.js`.
 - Admin session helper in `core/admin/session.js`.
 - Admin read-only page handlers in `core/admin/read-routes.js`.
+- Admin read-only JSON presenters in `core/admin/api-presenter.js` for the
+  future dedicated frontend.
 - Admin legacy export/state handlers in `core/admin/legacy-routes.js`.
 - Server-rendered admin HTML in `core/admin/views.js`.
 - Admin PostgreSQL read model in `core/admin/reader.js`.
@@ -162,6 +164,11 @@ Done:
   `core/admin/route-auth.js`.
 - Admin dashboard, user detail, and audit page handlers extracted to
   `core/admin/read-routes.js`.
+- Read-only JSON API foundation added for dashboard, user detail, and audit
+  routes using masked presenter output for future frontend work.
+- Dashboard operational insights added in the read model and API: rolling 24h
+  activity, needs-attention orders/handoffs, order status breakdown, and top
+  products over 30 days.
 - Admin legacy export and state handlers extracted to
   `core/admin/legacy-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
@@ -206,8 +213,10 @@ Rollback stance:
 
 ### Phase 3: admin login/session
 
-Status: code deployed. Browser login is not enabled in production until
-`SESSION_SECRET` is set by a separate production env change.
+Status: code deployed. Production session env was observed as set by a safe
+metadata check on May 11, 2026, but browser cookie login still needs an
+approved production smoke because login/dashboard/audit checks write audit
+records.
 
 Goal: replace manual Bearer-header usage for the dashboard with a usable browser
 login flow.
@@ -228,6 +237,7 @@ Required env keys to add when implemented:
 # SESSION_SECRET=change_me_to_64_plus_random_chars
 # ADMIN_PUBLIC_BASE_URL=https://your-admin-domain.example
 # ADMIN_SESSION_COOKIE_NAME=chatbot_admin_session
+# ADMIN_SESSION_TTL_MS=28800000
 ```
 
 Security requirements:
@@ -308,7 +318,8 @@ Recommended frontend stack when needed:
 Migration approach:
 
 1. Keep server-rendered admin pages available.
-2. Add API endpoints with tests.
+2. Add API endpoints with tests. Basic read-only dashboard, user detail, and
+   audit endpoints are already started; expand them only as workflow needs grow.
 3. Build frontend pages against those APIs.
 4. Switch links gradually.
 5. Remove old server-rendered views only after parity.
@@ -320,6 +331,8 @@ Priority improvements:
 - Add pagination instead of only fixed limits.
 - Add targeted indexes for slow dashboard queries.
 - Avoid loading full histories into memory for large tenants.
+- Keep dashboard insights read-only and bounded; promote them into dedicated
+  repository/service modules if query count or complexity grows.
 - Cache product config and static shop config.
 - Move reminder and outbox workers into separate worker process if traffic grows.
 - Add structured logging without secrets.

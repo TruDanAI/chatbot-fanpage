@@ -5,7 +5,8 @@ const {
   createPostgresAuditLogger,
   createPostgresDashboardReader,
   parseAdminRoles,
-  registerAdminRoutes
+  registerAdminRoutes,
+  setAdminNoStoreHeaders
 } = require('../core/admin-routes');
 const { PERMISSIONS } = require('../core/admin-auth');
 
@@ -122,6 +123,49 @@ function createDashboardReaderStub() {
           events: 1,
           processed_mids: 1
         },
+        operations: {
+          windowHours: 24,
+          productWindowDays: 30,
+          activity: {
+            orders_24h: 2,
+            confirmed_24h: 1,
+            ready_orders: 1,
+            abandoned_24h: 0,
+            active_handoffs: 1,
+            events_24h: 3,
+            last_user_message_at: '2026-05-10T00:00:02.000Z',
+            last_event_at: '2026-05-10T00:00:03.000Z'
+          },
+          orderStatusBreakdown: [
+            { status: 'confirmed', total: 1 },
+            { status: 'ready_to_confirm', total: 1 }
+          ],
+          topProducts: [
+            { product_code: 'MÃ8', total_orders: 2, confirmed_orders: 1 }
+          ],
+          needsAttention: {
+            orders: [{
+              reason: 'ready_to_confirm',
+              id: '2',
+              sender_id: 'sender_1',
+              status: 'ready_to_confirm',
+              product_code: 'MÃ8',
+              customer_name: 'Nguyen An',
+              phone: '0987654321',
+              address: '12 Tran Phu, Quan 1',
+              updated_at: '2026-05-10T00:00:01.000Z',
+              item_count: 1
+            }],
+            handoffs: [{
+              sender_id: 'sender_2',
+              session_state: 'HUMAN_HANDOFF',
+              last_product_code: 'MÃ10',
+              last_user_at: '2026-05-10T00:00:02.000Z',
+              handoff_until: '2026-05-10T00:30:02.000Z',
+              updated_at: '2026-05-10T00:00:03.000Z'
+            }]
+          }
+        },
         conversations: [{
           sender_id: 'sender_1',
           session_state: 'READY_TO_CONFIRM',
@@ -174,9 +218,42 @@ function createDashboardReaderStub() {
           last_user_at: '2026-05-10T00:00:00.000Z'
         },
         orders: [],
-        orderItems: [],
-        messages: [],
-        events: [],
+        orders: [{
+          id: '2',
+          sender_id: senderId,
+          status: 'ready_to_confirm',
+          product_code: 'MÃ8',
+          customer_name: 'Nguyen An',
+          phone: '0987654321',
+          address: '12 Tran Phu, Quan 1',
+          updated_at: '2026-05-10T00:00:01.000Z'
+        }],
+        orderItems: [{
+          order_id: '2',
+          item_index: 0,
+          code: 'MÃ8',
+          name: 'Product 8',
+          qty: 1,
+          variant: '',
+          display: '1 x Product 8',
+          created_at: '2026-05-10T00:00:01.000Z'
+        }],
+        messages: [{
+          id: '10',
+          role: 'user',
+          text: 'sdt 0987654321 dia chi 12 Tran Phu',
+          source: 'messenger',
+          created_at: '2026-05-10T00:00:02.000Z'
+        }],
+        events: [{
+          id: '11',
+          type: 'lead',
+          source: 'runtime',
+          session_state: 'READY_TO_CONFIRM',
+          product_code: 'MÃ8',
+          text: 'sdt 0987654321 dia chi 12 Tran Phu',
+          event_at: '2026-05-10T00:00:03.000Z'
+        }],
         limits: { detailOrders: 10, detailMessages: 30, detailEvents: 30 }
       };
     },
@@ -226,6 +303,22 @@ describe('admin dashboard routes', () => {
   it('parseAdminRoles chuẩn hóa role list từ env', () => {
     expect(parseAdminRoles(' Viewer, maintainer ,unknown-role ')).toEqual(['viewer', 'maintainer', 'unknown-role']);
     expect(parseAdminRoles('')).toEqual(['owner']);
+  });
+
+  it('admin no-store middleware set privacy headers', () => {
+    const res = createRes();
+    let nextCalled = false;
+
+    setAdminNoStoreHeaders(createReq(), res, () => {
+      nextCalled = true;
+    });
+
+    expect(nextCalled).toBeTrue();
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers.pragma).toBe('no-cache');
+    expect(res.headers.expires).toBe('0');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
   });
 
   it('admin route authorizer chặn IP trước auth token và ghi audit denied', async () => {
@@ -415,9 +508,67 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('html');
     expect(res.body).toContain('Admin Dashboard');
+    expect(res.body).toContain('Ops Snapshot');
+    expect(res.body).toContain('Needs Attention');
+    expect(res.body).toContain('Top Products');
     expect(res.body.includes('0987654321')).toBeFalse();
     expect(res.body.includes('12 Tran Phu')).toBeFalse();
     expect(res.body).toContain('[masked-address]');
+  });
+
+  it('dashboard API trả JSON đã mask dữ liệu nhạy cảm', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      auditLogger,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/dashboard'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: { senderId: 'sender_1', limit: '5' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.counts.orders).toBe(1);
+    expect(body.operations.activity.ready_orders).toBe(1);
+    expect(body.operations.topProducts[0].product_code).toBe('MÃ8');
+    expect(body.operations.needsAttention.orders[0].phone).toBe('********21');
+    expect(body.operations.needsAttention.orders[0].address).toBe('[masked-address]');
+    expect(body.orders[0].phone).toBe('********21');
+    expect(body.orders[0].address).toBe('[masked-address]');
+    expect(body.events[0].text).toContain('[masked-phone]');
+    expect(bodyText.includes('0987654321')).toBeFalse();
+    expect(bodyText.includes('12 Tran Phu')).toBeFalse();
+    expect(auditLogger.entries[0].resource_type).toBe('dashboard_api');
+  });
+
+  it('dashboard API vẫn không nhận x-admin-token hoặc query token', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/dashboard'](createReq({
+      headers: { 'x-admin-token': 'secret' },
+      query: { token: 'secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(401);
+    expect(reader.calls).toBe(0);
   });
 
   it('dashboard truyền filter query vào reader và render form filter', async () => {
@@ -474,6 +625,35 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('Admin User Detail');
     expect(res.body).toContain('sender_1');
+  });
+
+  it('dashboard detail API trả timeline đã mask dữ liệu nhạy cảm', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.senderId).toBe('sender_1');
+    expect(body.orders[0].phone).toBe('********21');
+    expect(body.orders[0].address).toBe('[masked-address]');
+    expect(body.messages[0].text).toContain('[masked-phone]');
+    expect(body.events[0].text).toContain('[masked-address]');
+    expect(bodyText.includes('0987654321')).toBeFalse();
+    expect(bodyText.includes('12 Tran Phu')).toBeFalse();
   });
 
   it('dashboard dùng RBAC và ghi audit success khi audit logger được bật', async () => {
@@ -611,6 +791,28 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('metadata')).toBeFalse();
   });
 
+  it('audit log API cần quyền audit read và không trả metadata', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/audit'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: { action: 'dashboard', outcome: 'success', limit: '10' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.rows[0].action).toBe(PERMISSIONS.DASHBOARD_READ);
+    expect(JSON.stringify(body).includes('metadata')).toBeFalse();
+  });
+
   it('audit log route từ chối viewer', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -710,6 +912,53 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(orderQuery.sql).toContain('o.sender_id ILIKE $3');
     expect(orderQuery.sql).toContain('o.status = $5');
     expect(orderQuery.sql).toContain('LIMIT $6');
+  });
+
+  it('reader trả operational insights bằng SELECT read-only', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        if (sql.includes('AS profiles')) {
+          return { rows: [{ profiles: 1, conversations: 2, messages: 3, orders: 4, order_items: 5, events: 6, processed_mids: 7 }] };
+        }
+        if (sql.includes('AS orders_24h')) {
+          return { rows: [{ orders_24h: 2, confirmed_24h: 1, ready_orders: 1, abandoned_24h: 0, active_handoffs: 1, events_24h: 3, last_user_message_at: '2026-05-10T00:00:02.000Z', last_event_at: '2026-05-10T00:00:03.000Z' }] };
+        }
+        if (sql.includes('GROUP BY status')) {
+          return { rows: [{ status: 'ready_to_confirm', total: 1 }] };
+        }
+        if (sql.includes('total_orders')) {
+          return { rows: [{ product_code: 'MÃ8', total_orders: 2, confirmed_orders: 1 }] };
+        }
+        if (sql.includes('reminder_failed')) {
+          return { rows: [{ reason: 'ready_to_confirm', id: '1', sender_id: 'sender_1', status: 'ready_to_confirm', product_code: 'MÃ8', phone: '0987654321', address: '12 Tran Phu', updated_at: '2026-05-10T00:00:01.000Z', item_count: 1 }] };
+        }
+        if (sql.includes('handoff_until > now()')) {
+          return { rows: [{ sender_id: 'sender_2', session_state: 'HUMAN_HANDOFF', last_product_code: 'MÃ10', handoff_until: '2026-05-10T00:30:00.000Z', updated_at: '2026-05-10T00:00:00.000Z' }] };
+        }
+        return { rows: [] };
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    const model = await reader.getOverview();
+
+    expect(model.operations.activity.ready_orders).toBe(1);
+    expect(model.operations.orderStatusBreakdown[0].status).toBe('ready_to_confirm');
+    expect(model.operations.topProducts[0].product_code).toBe('MÃ8');
+    expect(model.operations.needsAttention.orders[0].reason).toBe('ready_to_confirm');
+    expect(model.operations.needsAttention.handoffs[0].sender_id).toBe('sender_2');
+    for (const { sql } of queries) {
+      expect(sql.trim()).toMatch(/^SELECT/i);
+    }
   });
 
   it('reader audit log chỉ gửi SELECT parameterized', async () => {

@@ -21,6 +21,8 @@ function toInteger(value, fallback, { min = 1, max = 100 } = {}) {
 
 const DEFAULT_DASHBOARD_LIMITS = {
   overviewRows: 25,
+  attentionRows: 8,
+  topProductRows: 8,
   detailOrders: 10,
   detailItems: 50,
   detailMessages: 30,
@@ -115,6 +117,8 @@ function createPostgresDashboardReader({
 } = {}) {
   const config = {
     overviewRows: toInteger(limits.overviewRows, DEFAULT_DASHBOARD_LIMITS.overviewRows, { min: 1, max: 100 }),
+    attentionRows: toInteger(limits.attentionRows, DEFAULT_DASHBOARD_LIMITS.attentionRows, { min: 1, max: 25 }),
+    topProductRows: toInteger(limits.topProductRows, DEFAULT_DASHBOARD_LIMITS.topProductRows, { min: 1, max: 25 }),
     detailOrders: toInteger(limits.detailOrders, DEFAULT_DASHBOARD_LIMITS.detailOrders, { min: 1, max: 30 }),
     detailItems: toInteger(limits.detailItems, DEFAULT_DASHBOARD_LIMITS.detailItems, { min: 1, max: 100 }),
     detailMessages: toInteger(limits.detailMessages, DEFAULT_DASHBOARD_LIMITS.detailMessages, { min: 1, max: 100 }),
@@ -199,11 +203,96 @@ function createPostgresDashboardReader({
         ORDER BY event_at DESC, id DESC
         LIMIT $${eventsLimitParam}
       `, [...params, ...eventsScope.filterParams, filters.limit]);
+      const activity = await client.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND updated_at >= now() - interval '24 hours') AS orders_24h,
+          (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND status = 'confirmed' AND confirmed_at >= now() - interval '24 hours') AS confirmed_24h,
+          (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND status = 'ready_to_confirm') AS ready_orders,
+          (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND status = 'abandoned' AND updated_at >= now() - interval '24 hours') AS abandoned_24h,
+          (SELECT COUNT(*)::int FROM conversations WHERE tenant_id = $1 AND page_id = $2 AND handoff_until > now()) AS active_handoffs,
+          (SELECT COUNT(*)::int FROM events WHERE tenant_id = $1 AND page_id = $2 AND event_at >= now() - interval '24 hours') AS events_24h,
+          (SELECT MAX(created_at) FROM messages WHERE tenant_id = $1 AND page_id = $2 AND role = 'user') AS last_user_message_at,
+          (SELECT MAX(event_at) FROM events WHERE tenant_id = $1 AND page_id = $2) AS last_event_at
+      `, params);
+      const orderStatusBreakdown = await client.query(`
+        SELECT status, COUNT(*)::int AS total
+        FROM orders
+        WHERE tenant_id = $1 AND page_id = $2
+        GROUP BY status
+        ORDER BY status ASC
+      `, params);
+      const topProducts = await client.query(`
+        SELECT COALESCE(NULLIF(product_code, ''), 'unknown') AS product_code,
+               COUNT(*)::int AS total_orders,
+               COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_orders
+        FROM orders
+        WHERE tenant_id = $1 AND page_id = $2
+          AND updated_at >= now() - interval '30 days'
+        GROUP BY COALESCE(NULLIF(product_code, ''), 'unknown')
+        ORDER BY total_orders DESC, product_code ASC
+        LIMIT $3
+      `, [...params, config.topProductRows]);
+      const attentionOrders = await client.query(`
+        SELECT
+          CASE
+            WHEN o.abandoned_cart_reminder_failed_at IS NOT NULL THEN 'reminder_failed'
+            WHEN o.status = 'ready_to_confirm' THEN 'ready_to_confirm'
+            WHEN o.status = 'abandoned' OR o.abandoned_at IS NOT NULL THEN 'abandoned_cart'
+            ELSE 'needs_review'
+          END AS reason,
+          o.id, o.sender_id, o.status, o.product_code, o.customer_name,
+          o.phone, o.address, o.updated_at, o.draft_updated_at,
+          o.staff_notified_at, o.abandoned_cart_reminder_sent_at,
+          o.abandoned_cart_reminder_failed_at, o.abandoned_at,
+          o.confirmed_at, COUNT(oi.id)::int AS item_count
+        FROM orders o
+        LEFT JOIN order_items oi ON oi.order_id = o.id
+        WHERE o.tenant_id = $1 AND o.page_id = $2
+          AND (
+            o.status = 'ready_to_confirm'
+            OR o.status = 'abandoned'
+            OR o.abandoned_cart_reminder_failed_at IS NOT NULL
+          )
+        GROUP BY o.id, o.sender_id, o.status, o.product_code, o.customer_name,
+                 o.phone, o.address, o.updated_at, o.draft_updated_at,
+                 o.staff_notified_at, o.abandoned_cart_reminder_sent_at,
+                 o.abandoned_cart_reminder_failed_at, o.abandoned_at,
+                 o.confirmed_at
+        ORDER BY
+          CASE
+            WHEN o.abandoned_cart_reminder_failed_at IS NOT NULL THEN 1
+            WHEN o.status = 'ready_to_confirm' THEN 2
+            WHEN o.status = 'abandoned' OR o.abandoned_at IS NOT NULL THEN 3
+            ELSE 4
+          END ASC,
+          o.updated_at DESC,
+          o.id DESC
+        LIMIT $3
+      `, [...params, config.attentionRows]);
+      const attentionHandoffs = await client.query(`
+        SELECT sender_id, session_state, last_product_code, last_user_at,
+               handoff_until, updated_at
+        FROM conversations c
+        WHERE c.tenant_id = $1 AND c.page_id = $2 AND c.handoff_until > now()
+        ORDER BY c.handoff_until DESC, c.updated_at DESC, c.sender_id ASC
+        LIMIT $3
+      `, [...params, config.attentionRows]);
 
       return {
         tenantId,
         pageId,
         counts: counts.rows[0] || {},
+        operations: {
+          windowHours: 24,
+          productWindowDays: 30,
+          activity: activity.rows[0] || {},
+          orderStatusBreakdown: orderStatusBreakdown.rows,
+          topProducts: topProducts.rows,
+          needsAttention: {
+            orders: attentionOrders.rows,
+            handoffs: attentionHandoffs.rows
+          }
+        },
         conversations: conversations.rows,
         orders: orders.rows,
         events: events.rows,
