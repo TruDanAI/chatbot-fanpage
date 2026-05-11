@@ -8,6 +8,7 @@ const {
   registerAdminRoutes,
   setAdminNoStoreHeaders
 } = require('../core/admin-routes');
+const { createDashboardRepository } = require('../core/admin/dashboard-repository');
 const { PERMISSIONS } = require('../core/admin-auth');
 
 function createApp() {
@@ -841,6 +842,37 @@ describe('admin dashboard PostgreSQL reader', () => {
       refused = true;
     }
     expect(refused).toBeTrue();
+  });
+
+  it('dashboard repository giữ audit query parameterized và read-only', async () => {
+    const queries = [];
+    const repository = createDashboardRepository({
+      tenantId: 'default',
+      pageId: 'page',
+      limits: { auditRows: 50 }
+    });
+    const client = {
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        return { rows: [] };
+      }
+    };
+
+    const model = await repository.getAuditLog(client, {
+      actorId: 'admin_1',
+      action: 'dashboard%',
+      outcome: 'success',
+      limit: 7
+    });
+
+    expect(model.schemaReady).toBeTrue();
+    expect(queries.length).toBe(1);
+    expect(queries[0].sql.trim()).toMatch(/^SELECT/i);
+    expect(queries[0].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard\\%%', 'success', 7]);
+    expect(queries[0].sql).toContain('actor_id ILIKE $3');
+    expect(queries[0].sql).toContain('action ILIKE $4');
+    expect(queries[0].sql).toContain('outcome = $5');
+    expect(queries[0].sql).toContain('LIMIT $6');
   });
 
   it('reader chỉ gửi SELECT statements tới client', async () => {

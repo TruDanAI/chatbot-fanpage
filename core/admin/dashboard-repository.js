@@ -1,0 +1,309 @@
+function escapeSqlLike(value = '') {
+  return String(value || '').replace(/[\\%_]/g, char => `\\${char}`);
+}
+
+function likeParam(value = '') {
+  return `%${escapeSqlLike(value)}%`;
+}
+
+function addSqlCondition(conditions, params, sql, value, paramOffset = 2) {
+  params.push(value);
+  conditions.push(sql.replace('?', `$${paramOffset + params.length}`));
+}
+
+function buildOverviewQueryScope(filters, { tableAlias, productColumn, statusColumn, eventTypeColumn } = {}) {
+  const conditions = [`${tableAlias}.tenant_id = $1`, `${tableAlias}.page_id = $2`];
+  const params = [];
+  if (filters.senderId) {
+    addSqlCondition(conditions, params, `${tableAlias}.sender_id ILIKE ? ESCAPE '\\'`, likeParam(filters.senderId));
+  }
+  if (filters.productCode && productColumn) {
+    addSqlCondition(conditions, params, `${productColumn} ILIKE ? ESCAPE '\\'`, likeParam(filters.productCode));
+  }
+  if (filters.status && statusColumn) {
+    addSqlCondition(conditions, params, `${statusColumn} = ?`, filters.status);
+  }
+  if (filters.eventType && eventTypeColumn) {
+    addSqlCondition(conditions, params, `${eventTypeColumn} ILIKE ? ESCAPE '\\'`, likeParam(filters.eventType));
+  }
+  return {
+    whereSql: conditions.join(' AND '),
+    filterParams: params
+  };
+}
+
+function isMissingAuditSchemaError(err) {
+  return err && ['42P01', '42703'].includes(String(err.code || ''));
+}
+
+function createDashboardRepository({
+  tenantId = 'default',
+  pageId = '',
+  limits = {}
+} = {}) {
+  async function getOverview(client, filters = {}) {
+    const params = [tenantId, pageId];
+    const conversationsScope = buildOverviewQueryScope(filters, {
+      tableAlias: 'c',
+      productColumn: 'c.last_product_code'
+    });
+    const ordersScope = buildOverviewQueryScope(filters, {
+      tableAlias: 'o',
+      productColumn: 'o.product_code',
+      statusColumn: 'o.status'
+    });
+    const eventsScope = buildOverviewQueryScope(filters, {
+      tableAlias: 'e',
+      productColumn: 'e.product_code',
+      eventTypeColumn: 'e.type'
+    });
+    const conversationsLimitParam = 3 + conversationsScope.filterParams.length;
+    const ordersLimitParam = 3 + ordersScope.filterParams.length;
+    const eventsLimitParam = 3 + eventsScope.filterParams.length;
+    const counts = await client.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM profiles WHERE tenant_id = $1 AND page_id = $2) AS profiles,
+        (SELECT COUNT(*)::int FROM conversations WHERE tenant_id = $1 AND page_id = $2) AS conversations,
+        (SELECT COUNT(*)::int FROM messages WHERE tenant_id = $1 AND page_id = $2) AS messages,
+        (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2) AS orders,
+        (SELECT COUNT(*)::int FROM order_items WHERE tenant_id = $1 AND page_id = $2) AS order_items,
+        (SELECT COUNT(*)::int FROM events WHERE tenant_id = $1 AND page_id = $2) AS events,
+        (SELECT COUNT(*)::int FROM processed_mids WHERE tenant_id = $1 AND page_id = $2) AS processed_mids
+    `, params);
+    const conversations = await client.query(`
+      SELECT sender_id, session_state, last_product_code, last_user_at, updated_at
+      FROM conversations c
+      WHERE ${conversationsScope.whereSql}
+      ORDER BY updated_at DESC, sender_id ASC
+      LIMIT $${conversationsLimitParam}
+    `, [...params, ...conversationsScope.filterParams, filters.limit]);
+    const orders = await client.query(`
+      SELECT o.id, o.sender_id, o.status, o.product_code, o.customer_name,
+             o.phone, o.address, o.updated_at, COUNT(oi.id)::int AS item_count
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      WHERE ${ordersScope.whereSql}
+      GROUP BY o.id, o.sender_id, o.status, o.product_code, o.customer_name,
+               o.phone, o.address, o.updated_at
+      ORDER BY o.updated_at DESC, o.id DESC
+      LIMIT $${ordersLimitParam}
+    `, [...params, ...ordersScope.filterParams, filters.limit]);
+    const events = await client.query(`
+      SELECT id, sender_id, type, source, session_state, product_code, event_at, text
+      FROM events e
+      WHERE ${eventsScope.whereSql}
+      ORDER BY event_at DESC, id DESC
+      LIMIT $${eventsLimitParam}
+    `, [...params, ...eventsScope.filterParams, filters.limit]);
+    const activity = await client.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND updated_at >= now() - interval '24 hours') AS orders_24h,
+        (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND status = 'confirmed' AND confirmed_at >= now() - interval '24 hours') AS confirmed_24h,
+        (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND status = 'ready_to_confirm') AS ready_orders,
+        (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND status = 'abandoned' AND updated_at >= now() - interval '24 hours') AS abandoned_24h,
+        (SELECT COUNT(*)::int FROM conversations WHERE tenant_id = $1 AND page_id = $2 AND handoff_until > now()) AS active_handoffs,
+        (SELECT COUNT(*)::int FROM events WHERE tenant_id = $1 AND page_id = $2 AND event_at >= now() - interval '24 hours') AS events_24h,
+        (SELECT MAX(created_at) FROM messages WHERE tenant_id = $1 AND page_id = $2 AND role = 'user') AS last_user_message_at,
+        (SELECT MAX(event_at) FROM events WHERE tenant_id = $1 AND page_id = $2) AS last_event_at
+    `, params);
+    const orderStatusBreakdown = await client.query(`
+      SELECT status, COUNT(*)::int AS total
+      FROM orders
+      WHERE tenant_id = $1 AND page_id = $2
+      GROUP BY status
+      ORDER BY status ASC
+    `, params);
+    const topProducts = await client.query(`
+      SELECT COALESCE(NULLIF(product_code, ''), 'unknown') AS product_code,
+             COUNT(*)::int AS total_orders,
+             COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_orders
+      FROM orders
+      WHERE tenant_id = $1 AND page_id = $2
+        AND updated_at >= now() - interval '30 days'
+      GROUP BY COALESCE(NULLIF(product_code, ''), 'unknown')
+      ORDER BY total_orders DESC, product_code ASC
+      LIMIT $3
+    `, [...params, limits.topProductRows]);
+    const attentionOrders = await client.query(`
+      SELECT
+        CASE
+          WHEN o.abandoned_cart_reminder_failed_at IS NOT NULL THEN 'reminder_failed'
+          WHEN o.status = 'ready_to_confirm' THEN 'ready_to_confirm'
+          WHEN o.status = 'abandoned' OR o.abandoned_at IS NOT NULL THEN 'abandoned_cart'
+          ELSE 'needs_review'
+        END AS reason,
+        o.id, o.sender_id, o.status, o.product_code, o.customer_name,
+        o.phone, o.address, o.updated_at, o.draft_updated_at,
+        o.staff_notified_at, o.abandoned_cart_reminder_sent_at,
+        o.abandoned_cart_reminder_failed_at, o.abandoned_at,
+        o.confirmed_at, COUNT(oi.id)::int AS item_count
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.tenant_id = $1 AND o.page_id = $2
+        AND (
+          o.status = 'ready_to_confirm'
+          OR o.status = 'abandoned'
+          OR o.abandoned_cart_reminder_failed_at IS NOT NULL
+        )
+      GROUP BY o.id, o.sender_id, o.status, o.product_code, o.customer_name,
+               o.phone, o.address, o.updated_at, o.draft_updated_at,
+               o.staff_notified_at, o.abandoned_cart_reminder_sent_at,
+               o.abandoned_cart_reminder_failed_at, o.abandoned_at,
+               o.confirmed_at
+      ORDER BY
+        CASE
+          WHEN o.abandoned_cart_reminder_failed_at IS NOT NULL THEN 1
+          WHEN o.status = 'ready_to_confirm' THEN 2
+          WHEN o.status = 'abandoned' OR o.abandoned_at IS NOT NULL THEN 3
+          ELSE 4
+        END ASC,
+        o.updated_at DESC,
+        o.id DESC
+      LIMIT $3
+    `, [...params, limits.attentionRows]);
+    const attentionHandoffs = await client.query(`
+      SELECT sender_id, session_state, last_product_code, last_user_at,
+             handoff_until, updated_at
+      FROM conversations c
+      WHERE c.tenant_id = $1 AND c.page_id = $2 AND c.handoff_until > now()
+      ORDER BY c.handoff_until DESC, c.updated_at DESC, c.sender_id ASC
+      LIMIT $3
+    `, [...params, limits.attentionRows]);
+
+    return {
+      tenantId,
+      pageId,
+      counts: counts.rows[0] || {},
+      operations: {
+        windowHours: 24,
+        productWindowDays: 30,
+        activity: activity.rows[0] || {},
+        orderStatusBreakdown: orderStatusBreakdown.rows,
+        topProducts: topProducts.rows,
+        needsAttention: {
+          orders: attentionOrders.rows,
+          handoffs: attentionHandoffs.rows
+        }
+      },
+      conversations: conversations.rows,
+      orders: orders.rows,
+      events: events.rows,
+      filters,
+      limits: { ...limits, overviewRows: filters.limit }
+    };
+  }
+
+  async function getUserDetail(client, senderId) {
+    const normalizedSenderId = String(senderId || '').trim().slice(0, 160);
+    const params = [tenantId, pageId, normalizedSenderId];
+    const profile = await client.query(`
+      SELECT sender_id, first_name, last_name, name, created_at, updated_at
+      FROM profiles
+      WHERE tenant_id = $1 AND page_id = $2 AND sender_id = $3
+      LIMIT 1
+    `, params);
+    const conversation = await client.query(`
+      SELECT sender_id, session_state, last_product_code, last_user_at,
+             handoff_until, timed_out_at, updated_at
+      FROM conversations
+      WHERE tenant_id = $1 AND page_id = $2 AND sender_id = $3
+      LIMIT 1
+    `, params);
+    const orders = await client.query(`
+      SELECT id, sender_id, status, product_code, customer_name, phone, address,
+             draft_updated_at, staff_notified_at, abandoned_cart_reminder_sent_at,
+             abandoned_cart_reminder_failed_at, abandoned_at, confirmed_at, updated_at
+      FROM orders
+      WHERE tenant_id = $1 AND page_id = $2 AND sender_id = $3
+      ORDER BY updated_at DESC, id DESC
+      LIMIT $4
+    `, [...params, limits.detailOrders]);
+    const orderIds = orders.rows.map(order => order.id).filter(Boolean);
+    const items = orderIds.length
+      ? await client.query(`
+          SELECT order_id, item_index, code, name, qty, variant, display, created_at
+          FROM order_items
+          WHERE tenant_id = $1 AND page_id = $2 AND order_id = ANY($3::bigint[])
+          ORDER BY order_id DESC, item_index ASC, id ASC
+          LIMIT $4
+        `, [tenantId, pageId, orderIds, limits.detailItems])
+      : { rows: [] };
+    const messages = await client.query(`
+      SELECT id, role, text, source, created_at
+      FROM messages
+      WHERE tenant_id = $1 AND page_id = $2 AND sender_id = $3
+      ORDER BY created_at DESC, id DESC
+      LIMIT $4
+    `, [...params, limits.detailMessages]);
+    const events = await client.query(`
+      SELECT id, type, source, session_state, product_code, text, event_at
+      FROM events
+      WHERE tenant_id = $1 AND page_id = $2 AND sender_id = $3
+      ORDER BY event_at DESC, id DESC
+      LIMIT $4
+    `, [...params, limits.detailEvents]);
+
+    return {
+      tenantId,
+      pageId,
+      senderId: normalizedSenderId,
+      profile: profile.rows[0] || null,
+      conversation: conversation.rows[0] || null,
+      orders: orders.rows,
+      orderItems: items.rows,
+      messages: messages.rows,
+      events: events.rows,
+      limits
+    };
+  }
+
+  async function getAuditLog(client, filters = {}) {
+    const conditions = ['tenant_id = $1', 'page_id = $2'];
+    const filterParams = [];
+    if (filters.actorId) {
+      addSqlCondition(conditions, filterParams, "actor_id ILIKE ? ESCAPE '\\'", likeParam(filters.actorId));
+    }
+    if (filters.action) {
+      addSqlCondition(conditions, filterParams, "action ILIKE ? ESCAPE '\\'", likeParam(filters.action));
+    }
+    if (filters.outcome) {
+      addSqlCondition(conditions, filterParams, 'outcome = ?', filters.outcome);
+    }
+    const limitParam = 3 + filterParams.length;
+    let audit;
+    let schemaReady = true;
+    try {
+      audit = await client.query(`
+        SELECT occurred_at, actor_id, actor_roles, action, resource_type,
+               resource_id, outcome, request_id, user_agent
+        FROM admin_audit_log
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT $${limitParam}
+      `, [tenantId, pageId, ...filterParams, filters.limit]);
+    } catch (err) {
+      if (!isMissingAuditSchemaError(err)) throw err;
+      schemaReady = false;
+      audit = { rows: [] };
+    }
+
+    return {
+      tenantId,
+      pageId,
+      rows: audit.rows,
+      schemaReady,
+      filters,
+      limits: { ...limits, auditRows: filters.limit }
+    };
+  }
+
+  return {
+    getAuditLog,
+    getOverview,
+    getUserDetail
+  };
+}
+
+module.exports = {
+  createDashboardRepository
+};
