@@ -25,7 +25,7 @@ These rules apply to every future phase:
 
 ## Current baseline
 
-Last verified baseline from May 10, 2026:
+Last verified baseline from May 11, 2026:
 
 - Production Railway project: `graceful-harmony`
 - Production service: `chatbot-fanpage`
@@ -33,12 +33,17 @@ Last verified baseline from May 10, 2026:
 - Production storage: PostgreSQL
 - Production runtime health: `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`
+- Production admin audit schema: applied.
+- Production admin audit logging: `ADMIN_AUDIT_LOG_ENABLED=true`.
+- Latest production admin audit count after smoke: `admin_audit_log=2`,
+  all `success`.
 - Latest verified code deployment at that time:
   `da48d2a Extract admin legacy handlers`
-- Latest verified Railway code deployment at that time:
+- Latest verified Railway deployment after audit env enable:
+  `2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS` at commit
+  `6d21707 Update handoff docs after legacy handler deploy`
+- Previous verified Railway code deployment:
   `69552f93-f4ee-4ef6-b382-7e7891e409df SUCCESS`
-- Latest verified Railway docs-only deployment at that time:
-  `5e84718a-8ea4-4ad0-8767-20052dd38cd3 SUCCESS`
 - Phase commits already pushed:
   `e14692c Add admin RBAC audit scaffolding`,
   `a28c0e5 Add SaaS roadmap and handoff prompt`,
@@ -49,10 +54,11 @@ Last verified baseline from May 10, 2026:
   `5ec0902 Expand next session handoff prompt`,
   `fd5a9a0 Extract admin route handlers`,
   `70ac695 Update handoff docs after route handler deploy`,
-  `da48d2a Extract admin legacy handlers`
-- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260510-154120`
+  `da48d2a Extract admin legacy handlers`,
+  `6d21707 Update handoff docs after legacy handler deploy`
+- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331`
 - Latest known backup SHA256:
-  `0F8772912394868B41BC246B196F6C2183D1CC361302293703A2C3A0C7E497C4`
+  `CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D`
 - Latest known counts: profiles 1, conversations 4, messages 37, orders 6,
   order_items 7, events 223, processed_mids 85
 
@@ -129,7 +135,7 @@ tests green after each slice.
 
 ### Phase 1: stabilize admin read model
 
-Status: mostly done.
+Status: done for the current read-only admin baseline.
 
 Done:
 
@@ -154,15 +160,19 @@ Done:
   `core/admin/legacy-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
   after the refactor deploy.
+- Production audit schema was applied after a fresh PostgreSQL backup.
+- `ADMIN_AUDIT_LOG_ENABLED=true` is enabled in production.
+- Production smoke checks after enabling audit logging wrote audit records for
+  `/admin/dashboard` and `/admin/audit`.
 
 Remaining:
 
-- Apply audit schema after fresh backup and approval.
-- Enable `ADMIN_AUDIT_LOG_ENABLED=true` after schema verification.
 - Keep smoke checks for `/admin/dashboard` and `/admin/audit` after each
   future deploy.
 
 ### Phase 2: production audit rollout
+
+Status: done as of May 11, 2026.
 
 Goal: make admin reads auditable without adding business write workflows.
 
@@ -184,6 +194,9 @@ Rollback stance:
 - If code deploy has issues, redeploy previous known-good commit.
 - If audit schema exists but audit logging stays disabled, leave empty tables in
   place. Do not drop tables in production without a separate approved rollback.
+- If audit logging causes production issues, disable `ADMIN_AUDIT_LOG_ENABLED`
+  after separate production env approval. Leave the additive audit tables in
+  place unless a separately approved rollback plan exists.
 
 ### Phase 3: admin login/session
 
@@ -326,4 +339,6 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. Update that prompt if production state changes before the next phase.
+session. The next product phase should start with production audit observation
+and then Phase 3 admin login/session design, keeping implementation code-only
+until deployment or production env changes are separately approved.
