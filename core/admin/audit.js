@@ -6,6 +6,31 @@ function loadPgClient() {
   }
 }
 
+async function insertAuditLogEntry(client, entry = {}) {
+  await client.query(`
+    INSERT INTO admin_audit_log (
+      occurred_at, tenant_id, page_id, actor_id, actor_roles, action,
+      resource_type, resource_id, outcome, request_id, request_ip_hash,
+      user_agent, metadata
+    )
+    VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+  `, [
+    entry.occurred_at,
+    entry.tenant_id || '',
+    entry.page_id || '',
+    entry.actor_id || 'anonymous',
+    Array.isArray(entry.actor_roles) ? entry.actor_roles : [],
+    entry.action || '',
+    entry.resource_type || '',
+    entry.resource_id || '',
+    entry.outcome || 'error',
+    entry.request_id || '',
+    entry.request_ip_hash || '',
+    entry.user_agent || '',
+    JSON.stringify(entry.metadata || {})
+  ]);
+}
+
 function createPostgresAuditLogger({
   enabled = false,
   databaseUrl = process.env.DATABASE_URL,
@@ -30,28 +55,7 @@ function createPostgresAuditLogger({
     const client = new PgClient({ connectionString: databaseUrl });
     await client.connect();
     try {
-      await client.query(`
-        INSERT INTO admin_audit_log (
-          occurred_at, tenant_id, page_id, actor_id, actor_roles, action,
-          resource_type, resource_id, outcome, request_id, request_ip_hash,
-          user_agent, metadata
-        )
-        VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
-      `, [
-        entry.occurred_at,
-        entry.tenant_id || '',
-        entry.page_id || '',
-        entry.actor_id || 'anonymous',
-        Array.isArray(entry.actor_roles) ? entry.actor_roles : [],
-        entry.action || '',
-        entry.resource_type || '',
-        entry.resource_id || '',
-        entry.outcome || 'error',
-        entry.request_id || '',
-        entry.request_ip_hash || '',
-        entry.user_agent || '',
-        JSON.stringify(entry.metadata || {})
-      ]);
+      await insertAuditLogEntry(client, entry);
       return { recorded: true };
     } finally {
       await client.end();
@@ -65,5 +69,6 @@ function createPostgresAuditLogger({
 }
 
 module.exports = {
-  createPostgresAuditLogger
+  createPostgresAuditLogger,
+  insertAuditLogEntry
 };
