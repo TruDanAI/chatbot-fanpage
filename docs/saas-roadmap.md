@@ -40,11 +40,16 @@ Last verified baseline from May 11, 2026:
 - Latest production admin audit count after approved pagination smoke:
   `admin_audit_log=38`, outcomes `denied=8`, `success=30`.
 - Latest verified code deployment at that time:
-  `5e2748b Add admin read pagination`
+  `31bcf1f Add admin login rate limit`
 - Latest verified code Railway deployment:
+  `ca5e0770-34bd-40e7-a7a5-61998c06768e SUCCESS` at commit
+  `31bcf1f Add admin login rate limit`
+- Previous verified code deployment:
+  `5e2748b Add admin read pagination`
+- Previous verified code Railway deployment:
   `84899ffb-858a-4cec-85fc-bf7d73083359 SUCCESS` at commit
   `5e2748b Add admin read pagination`
-- Previous verified code deployment:
+- Earlier verified code deployment:
   `0c30a9a Extract admin dashboard repository`
 - Previous verified code Railway deployment:
   `85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS` at commit
@@ -80,7 +85,9 @@ Last verified baseline from May 11, 2026:
   `0c30a9a Extract admin dashboard repository`,
   `0ac16bf Update handoff docs after repository deploy`,
   `3c45166 Update handoff docs after token rotation`,
-  `5e2748b Add admin read pagination`
+  `5e2748b Add admin read pagination`,
+  `1c35127 Update handoff docs after pagination smoke`,
+  `31bcf1f Add admin login rate limit`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke`
 - Latest known backup SHA256:
   `F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720`
@@ -282,17 +289,18 @@ Security requirements:
 
 ### Phase 3.5: identity and login hardening
 
-Status: next recommended design/implementation phase before business write
-workflows.
+Status: in progress. Login rate limiting is implemented, tested, pushed, and
+deployed. Identity provisioning and audit actor semantics are still pending
+before business write workflows.
 
 Goal: make admin identity safer and more traceable before the system allows
 operational writes.
 
 Recommended steps:
 
-- Add a small login rate limiter for `/admin/login` with tests. Keep it local
-  memory at first unless multi-instance behavior becomes a real production
-  issue.
+- Add a small login rate limiter for `/admin/login` with tests. Done in
+  `31bcf1f Add admin login rate limit`; it is local memory per process unless
+  multi-instance behavior becomes a real production issue.
 - Design PostgreSQL-backed admin user provisioning without creating production
   users until there is a rollback plan and separate approval.
 - Decide how static `ADMIN_EXPORT_TOKEN` maps to an actor while browser
@@ -426,7 +434,7 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The next step is to observe audit stability with count-only checks and
-implement Phase 3.5 login/identity hardening before any business write
-workflow. Do not add business write workflows until there is a separate design,
-backup plan, tests, and production approval.
+session. The next step is to observe audit stability with count-only checks,
+finish Phase 3.5 identity provisioning and actor/audit semantics, and avoid
+business write workflows until there is a separate design, backup plan, tests,
+and production approval.

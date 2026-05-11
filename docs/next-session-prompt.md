@@ -52,8 +52,12 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified code deployment:
-  5e2748b Add admin read pagination
+  31bcf1f Add admin login rate limit
 - Latest verified code Railway deployment:
+  ca5e0770-34bd-40e7-a7a5-61998c06768e SUCCESS ở commit 31bcf1f
+- Previous verified code deployment:
+  5e2748b Add admin read pagination
+- Previous verified code Railway deployment:
   84899ffb-858a-4cec-85fc-bf7d73083359 SUCCESS ở commit 5e2748b
 - Previous verified code deployment:
   0c30a9a Extract admin dashboard repository
@@ -101,7 +105,7 @@ Trạng thái production mới nhất đã biết:
 - Post-repository deploy smoke không ghi DB:
   /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
   GET /admin/login 200, title=Admin Login, has_form=true
-- /admin/login gần nhất:
+- /admin/login gần nhất sau login rate limit deploy:
   200 Admin Login HTML, has_form=true.
 - Latest approved browser cookie smoke sau token rotation:
   /admin/dashboard bằng Bearer: 200, title=Admin Dashboard
@@ -116,6 +120,8 @@ Trạng thái production mới nhất đã biết:
 
 Git state mới nhất đã biết:
 - Latest code commit đã push/deploy:
+  31bcf1f Add admin login rate limit
+- Previous code commit đã push/deploy:
   5e2748b Add admin read pagination
 - Previous code commit đã push/deploy:
   0c30a9a Extract admin dashboard repository
@@ -142,11 +148,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  31bcf1f Add admin login rate limit
+  1c35127 Update handoff docs after pagination smoke
   5e2748b Add admin read pagination
   3c45166 Update handoff docs after token rotation
   0ac16bf Update handoff docs after repository deploy
-  0c30a9a Extract admin dashboard repository
-  8cccc0c Update handoff docs after ops insights deploy
 
 Backup production mới nhất đã biết:
 - Latest backup:
@@ -550,6 +556,47 @@ Backup production mới nhất đã biết:
      after admin_audit_log=38, outcomes denied=8, success=30, auditDelta=4.
    - Có ghi production DB: chỉ audit rows do admin smoke, tổng +4 success rows.
    - Không ghi production /data.
+14. Phiên Phase 3.5 login rate limit, đã push/deploy sau xác nhận:
+   - Baseline trước code push:
+     worktree có 5 file modified liên quan login rate limit/env docs/tests.
+     origin/main...HEAD = 0 0.
+     Latest production Railway deployment:
+       460ece03-c9ba-4a6e-9ac0-21e74b924285 SUCCESS ở commit 1c35127.
+     /healthz production:
+       ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login không token:
+       200, title=Admin Login, has_form=true.
+     Production env metadata safe check:
+       STORAGE_ADAPTER=postgres, ALLOW_PRODUCTION_DB_WRITES=true, ADMIN_AUDIT_LOG_ENABLED=true,
+       ADMIN_EXPORT_TOKEN_set=true, SESSION_SECRET_set=true, ADMIN_PUBLIC_BASE_URL_set=true,
+       ADMIN_SESSION_COOKIE_NAME_set=true, TENANT_ID=default, PAGE_ID=1026325343908119.
+   - Thêm in-memory fixed-window rate limit riêng cho POST /admin/login theo IP.
+   - Mặc định mới:
+     ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS=300000
+     ADMIN_LOGIN_RATE_LIMIT_MAX=10
+   - Khi bị chặn: trả 429, set Retry-After, render lại Admin Login HTML,
+     không set cookie, ghi audit denied reason=login_rate_limited nếu audit logger bật.
+   - Successful login reset bucket cho IP đó.
+   - Thêm env docs trong .env.example.
+   - Không đổi schema.
+   - Không đổi production env.
+   - Không thêm production write workflow.
+   - Verify local trước push:
+     node --check pass cho core/admin/session.js, core/admin-routes.js, index.js, tests/admin-routes.test.js.
+     npm test: 285 passed.
+     npm audit --omit=dev: 0 vulnerabilities.
+     git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Commit:
+     31bcf1f Add admin login rate limit
+   - Pushed origin/main sau xác nhận push/deploy.
+   - Railway deployment:
+     ca5e0770-34bd-40e7-a7a5-61998c06768e SUCCESS ở commit 31bcf1f.
+   - Safe smoke sau deploy không ghi DB:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, title=Admin Login, has_form=true.
+   - Không tạo backup mới vì không ghi production DB.
+   - Không ghi production DB.
+   - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -565,6 +612,7 @@ Tính năng admin hiện có:
   - Legacy export/debug route còn x-admin-token compatibility.
 - Admin browser login/session code-only:
   - /admin/login và /admin/logout đã deploy trong code production
+  - POST /admin/login có in-memory rate limit theo IP, mặc định 10 lần / 5 phút
   - production session env hiện đã set theo metadata safe check
   - POST login/cookie dashboard/audit smoke production đã pass sau xác nhận ngày 2026-05-11
   - ADMIN_EXPORT_TOKEN đã rotate production sau smoke, token value không in ra chat/log
@@ -642,7 +690,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Ưu tiên tiếp theo là quan sát audit ổn định bằng count-only và làm Phase 3.5 login/identity hardening trước khi thêm bất kỳ write workflow nào.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy. Ưu tiên tiếp theo là quan sát audit ổn định bằng count-only, thiết kế identity provisioning/admin users, và định nghĩa actor/audit semantics trước khi thêm bất kỳ write workflow nào.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -675,13 +723,13 @@ Code-only hướng khác:
   - pagination read-only cho user detail timelines nếu fixed limits bắt đầu thiếu
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
 - Phase 3.5 trước write workflow:
-  - thêm login rate limit cho /admin/login với tests
+  - login rate limit cho /admin/login đã deploy; chỉ tuning env production nếu có xác nhận riêng
   - thiết kế identity provisioning/admin users nhưng chưa thêm production user nếu chưa có rollback và xác nhận riêng
   - định nghĩa actor/audit semantics cho Bearer automation và browser session
 
 Không làm vội:
 - Không thêm business write workflow cho tới khi audit production được quan sát ổn định.
-- Không bỏ qua Phase 3.5 login/identity hardening trước write workflow.
+- Không bỏ qua phần identity provisioning/audit actor semantics còn lại của Phase 3.5 trước write workflow.
 - Không thêm admin user production nếu chưa review identity provisioning và rollback.
 - Không deploy/push/đổi env/ghi production DB nếu chưa có xác nhận riêng trong phiên mới.
 
