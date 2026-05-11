@@ -38,10 +38,10 @@ Last verified baseline from May 11, 2026:
 - Latest production admin audit count after smoke: `admin_audit_log=2`,
   all `success`.
 - Latest verified code deployment at that time:
-  `affaf4b Add admin ops insights API`
+  `0c30a9a Extract admin dashboard repository`
 - Latest verified code Railway deployment:
-  `416e4908-9c70-41f3-8988-b9fafb1f03ba SUCCESS` at commit
-  `affaf4b Add admin ops insights API`
+  `85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS` at commit
+  `0c30a9a Extract admin dashboard repository`
 - Latest verified Railway deployment after audit env enable:
   `2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS` at commit
   `6d21707 Update handoff docs after legacy handler deploy`
@@ -62,7 +62,9 @@ Last verified baseline from May 11, 2026:
   `c333388 Update handoff docs after audit rollout`,
   `8baa178 Add admin session login flow`,
   `46ca2d3 Update handoff docs after session deploy`,
-  `affaf4b Add admin ops insights API`
+  `affaf4b Add admin ops insights API`,
+  `8cccc0c Update handoff docs after ops insights deploy`,
+  `0c30a9a Extract admin dashboard repository`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331`
 - Latest known backup SHA256:
   `CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D`
@@ -101,7 +103,8 @@ Current shape:
   future dedicated frontend.
 - Admin legacy export/state handlers in `core/admin/legacy-routes.js`.
 - Server-rendered admin HTML in `core/admin/views.js`.
-- Admin PostgreSQL read model in `core/admin/reader.js`.
+- Admin dashboard SQL repository in `core/admin/dashboard-repository.js`.
+- Admin PostgreSQL reader/service wrapper in `core/admin/reader.js`.
 - Admin audit writer in `core/admin/audit.js`.
 - PostgreSQL storage adapter.
 - Rule-based chatbot with optional AI fallback.
@@ -171,6 +174,9 @@ Done:
 - Dashboard operational insights added in the read model and API: rolling 24h
   activity, needs-attention orders/handoffs, order status breakdown, and top
   products over 30 days.
+- Dashboard SQL extracted into `core/admin/dashboard-repository.js`, with
+  `core/admin/reader.js` keeping filter normalization, limit config,
+  PostgreSQL connection lifecycle, and the read-only SQL guard.
 - Admin legacy export and state handlers extracted to
   `core/admin/legacy-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
@@ -342,7 +348,6 @@ Priority improvements:
 
 Refactor targets:
 
-- Extract dashboard SQL into a repository module.
 - Add read-only pagination for dashboard tables when fixed limits become too
   restrictive.
 - Keep HTML view helpers pure and testable.
@@ -365,7 +370,7 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The next step is to review the Phase 3 code-only admin login/session
-foundation already deployed in code, then set the required production session
-env variables after separate approval. Production env changes still need
-separate approval in that session.
+session. The next step is to run the approved production browser-cookie smoke
+for Phase 3 login/session, then rotate `ADMIN_EXPORT_TOKEN` after a separate
+production environment approval. Dashboard/audit smoke checks write audit rows,
+so they still need explicit approval in that session.

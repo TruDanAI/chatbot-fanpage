@@ -51,15 +51,17 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified code deployment:
-  affaf4b Add admin ops insights API
+  0c30a9a Extract admin dashboard repository
 - Latest verified code Railway deployment:
-  416e4908-9c70-41f3-8988-b9fafb1f03ba SUCCESS ở commit affaf4b
+  85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS ở commit 0c30a9a
 - Previous Railway deployment:
-  f55f2c43-fb2b-4bb0-9a3a-3f62def7ad21 SUCCESS ở commit 46ca2d3 Update handoff docs after session deploy
+  bc732be5-b422-4669-9e5d-d97406f4a693 SUCCESS ở commit 8cccc0c Update handoff docs after ops insights deploy
 - Previous code deployment:
+  affaf4b Add admin ops insights API
+- Previous session/login code deployment:
   8baa178 Add admin session login flow
-- Latest verified docs/audit handoff commit:
-  c333388 Update handoff docs after audit rollout
+- Latest verified docs handoff commit before repository deploy:
+  8cccc0c Update handoff docs after ops insights deploy
 - Previous route handler code deployment:
   fd5a9a0 Extract admin route handlers
 - Previous docs-only deployed commit:
@@ -80,9 +82,12 @@ Trạng thái production mới nhất đã biết:
   81404dae-05e9-4aa6-94f1-1ef5c7538b7e SUCCESS
 - /healthz gần nhất:
   ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
-- Admin smoke gần nhất bằng Bearer header:
+- Previous admin smoke bằng Bearer header trước repository deploy:
   /admin/dashboard: 200, title=Admin Dashboard
   /admin/audit: 200, title=Admin Audit Log, schema_message=false
+- Post-repository deploy smoke không ghi DB:
+  /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
+  GET /admin/login 200, title=Admin Login, has_form=true
 - /admin/login gần nhất:
   200 Admin Login HTML, has_form=true bằng unauthenticated GET sau khi session env đã set.
   Chưa smoke POST login/cookie dashboard vì các route đó sẽ ghi audit vào production DB và cần xác nhận riêng.
@@ -91,10 +96,12 @@ Trạng thái production mới nhất đã biết:
 
 Git state mới nhất đã biết:
 - Latest code commit đã push/deploy:
-  affaf4b Add admin ops insights API
-- Latest docs commit đã push/deploy:
-  46ca2d3 Update handoff docs after session deploy
+  0c30a9a Extract admin dashboard repository
+- Latest docs commit đã push/deploy trước repository slice:
+  8cccc0c Update handoff docs after ops insights deploy
 - Previous code commit đã push/deploy:
+  affaf4b Add admin ops insights API
+- Previous session/login code commit đã push/deploy:
   8baa178 Add admin session login flow
 - Previous docs commit đã push/deploy:
   c333388 Update handoff docs after audit rollout
@@ -109,11 +116,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  0c30a9a Extract admin dashboard repository
+  8cccc0c Update handoff docs after ops insights deploy
   affaf4b Add admin ops insights API
   46ca2d3 Update handoff docs after session deploy
   8baa178 Add admin session login flow
-  c333388 Update handoff docs after audit rollout
-  6d21707 Update handoff docs after legacy handler deploy
 
 Backup production mới nhất đã biết:
 - Path:
@@ -364,12 +371,50 @@ Backup production mới nhất đã biết:
    - Không đổi production env.
    - Không ghi production DB.
    - Không ghi production /data.
+11. Phiên code-only dashboard repository split, đã push/deploy sau xác nhận:
+   - Baseline đầu phiên:
+     worktree clean, origin/main...HEAD = 0 0.
+     Latest production deployment:
+       bc732be5-b422-4669-9e5d-d97406f4a693 SUCCESS ở commit 8cccc0c.
+     /healthz production:
+       ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login không token:
+       200, title=Admin Login, has_form=true.
+     Production env metadata safe check:
+       STORAGE_ADAPTER=postgres, ALLOW_PRODUCTION_DB_WRITES=true, ADMIN_AUDIT_LOG_ENABLED=true,
+       SESSION_SECRET_set=true, ADMIN_PUBLIC_BASE_URL_set=true, ADMIN_SESSION_COOKIE_NAME_set=true,
+       TENANT_ID=default, PAGE_ID=1026325343908119.
+   - Tách dashboard SQL/query composition ra:
+     core/admin/dashboard-repository.js
+   - core/admin/reader.js giờ giữ filter normalization, limit config, PostgreSQL connection lifecycle, và read-only SQL guard.
+   - Thêm test trực tiếp cho repository audit query parameterized/read-only.
+   - Không đổi schema.
+   - Không đổi env.
+   - Không thêm production write workflow.
+   - Verify local:
+     node --check pass cho core/admin/dashboard-repository.js, core/admin/reader.js, tests/admin-routes.test.js.
+     npm test: 283 passed.
+     npm audit --omit=dev: 0 vulnerabilities.
+     git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Commit:
+     0c30a9a Extract admin dashboard repository
+   - Pushed origin/main sau xác nhận push/deploy.
+   - Railway deployment:
+     85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS ở commit 0c30a9a.
+   - Smoke sau deploy không ghi DB:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, title=Admin Login, has_form=true.
+   - Không smoke /admin/dashboard, /admin/api/dashboard, /admin/audit bằng Bearer/cookie vì sẽ ghi audit rows production và cần xác nhận riêng cho DB write audit smoke.
+   - Không đổi production env.
+   - Không ghi production DB.
+   - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
 - Bounded user detail view.
 - Mask phone/address/snippets trong admin UI.
 - Read-only SQL guard cho dashboard reader.
+- Dashboard SQL/query composition đã tách vào core/admin/dashboard-repository.js.
 - Admin auth hardening:
   - Dashboard read routes nhận Authorization: Bearer <ADMIN_EXPORT_TOKEN> hoặc admin session cookie sau login.
   - Không nhận token qua query param.
@@ -388,12 +433,12 @@ Tính năng admin hiện có:
   - owner: full admin gates hiện tại
 - /admin/audit read-only.
 - /admin/audit xử lý thiếu schema gracefully, không 500.
-- Read-only JSON API foundation local chưa deploy:
+- Read-only JSON API foundation đã deploy:
   - /admin/api/dashboard
   - /admin/api/dashboard/users/:senderId
   - /admin/api/audit
   - dùng presenter mask phone/address/snippets trước khi trả JSON
-- Ops insights local chưa deploy:
+- Ops insights đã deploy:
   - rolling 24h metrics
   - needs-attention orders/handoffs
   - order status breakdown
@@ -414,6 +459,7 @@ File quan trọng:
 - core/admin-auth.js
 - core/admin-routes.js
 - core/admin/audit.js
+- core/admin/dashboard-repository.js
 - core/admin/legacy-routes.js
 - core/admin/reader.js
 - core/admin/read-routes.js
@@ -489,10 +535,10 @@ Phase 3 browser cookie smoke nếu được xác nhận:
    - verify admin_audit_log count-only tăng với login/dashboard/audit
 6. Sau khi browser login ổn, rotate ADMIN_EXPORT_TOKEN vì token cũ đã từng bị lộ trong chat.
 
-Code-only hướng khác nếu chưa deploy:
+Code-only hướng khác nếu chưa làm production smoke/rotate:
 - Tiếp tục hardening read-only:
-  - dashboard repository/service split có test
   - pagination read-only cho dashboard/audit
+  - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
 
 Không làm vội:
 - Không thêm business write workflow cho tới khi audit production được quan sát ổn định.
