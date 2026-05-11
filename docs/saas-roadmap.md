@@ -35,13 +35,16 @@ Last verified baseline from May 11, 2026:
   `storage.ready=true`, `messenger.dryRun=false`
 - Production admin audit schema: applied.
 - Production admin audit logging: `ADMIN_AUDIT_LOG_ENABLED=true`.
-- Latest production admin audit count after smoke: `admin_audit_log=2`,
-  all `success`.
+- Latest production admin audit count after approved login/session smoke and
+  token rotation: `admin_audit_log=34`, outcomes `denied=8`, `success=26`.
 - Latest verified code deployment at that time:
   `0c30a9a Extract admin dashboard repository`
 - Latest verified code Railway deployment:
   `85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS` at commit
   `0c30a9a Extract admin dashboard repository`
+- Latest verified Railway deployment after `ADMIN_EXPORT_TOKEN` rotation:
+  `255aacfd-1f58-4697-ba1f-378a65ec1f7a SUCCESS` at commit
+  `0ac16bf Update handoff docs after repository deploy`
 - Latest verified Railway deployment after audit env enable:
   `2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS` at commit
   `6d21707 Update handoff docs after legacy handler deploy`
@@ -65,11 +68,12 @@ Last verified baseline from May 11, 2026:
   `affaf4b Add admin ops insights API`,
   `8cccc0c Update handoff docs after ops insights deploy`,
   `0c30a9a Extract admin dashboard repository`
-- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331`
+- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres`
 - Latest known backup SHA256:
-  `CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D`
-- Latest known counts: profiles 1, conversations 4, messages 37, orders 6,
-  order_items 7, events 223, processed_mids 85
+  `7AE33DB76481BE7A8FB33A0A1B7FDD4630DEEF8E1C6EEE0E072998680B087F6E`
+- Latest known counts: profiles 1, conversations 4, messages 53, orders 6,
+  order_items 7, events 249, processed_mids 94, admin_users 0,
+  admin_roles 4, admin_user_roles 0, admin_audit_log 24
 
 Treat this baseline as a snapshot only. Every future session must re-check git,
 Railway deployment, `/healthz`, and backup status before production work.
@@ -221,10 +225,10 @@ Rollback stance:
 
 ### Phase 3: admin login/session
 
-Status: code deployed. Production session env was observed as set by a safe
-metadata check on May 11, 2026, but browser cookie login still needs an
-approved production smoke because login/dashboard/audit checks write audit
-records.
+Status: production smoke complete as of May 11, 2026. Browser login, session
+cookie dashboard/audit access, Bearer automation access, and
+`ADMIN_EXPORT_TOKEN` rotation were verified after a fresh PostgreSQL backup and
+separate approval.
 
 Goal: replace manual Bearer-header usage for the dashboard with a usable browser
 login flow.
@@ -234,6 +238,8 @@ Recommended approach:
 - Add secure cookie sessions. Initial implementation signs stateless
   HttpOnly/SameSite=Lax cookies and rotates the session token on login.
 - Keep `Authorization: Bearer` support for automation.
+- `ADMIN_EXPORT_TOKEN` was rotated after browser login smoke; do not print the
+  token value in handoffs or logs.
 - Store admin users and roles in PostgreSQL later, after identity provisioning
   and token/session rotation are reviewed.
 - Add passwordless magic link or passkey later; avoid rolling custom password
@@ -370,7 +376,7 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The next step is to run the approved production browser-cookie smoke
-for Phase 3 login/session, then rotate `ADMIN_EXPORT_TOKEN` after a separate
-production environment approval. Dashboard/audit smoke checks write audit rows,
-so they still need explicit approval in that session.
+session. The next step is to observe audit stability with count-only checks,
+then continue read-only hardening or design identity provisioning/admin users.
+Do not add business write workflows until there is a separate design, backup
+plan, tests, and production approval.

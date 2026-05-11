@@ -43,6 +43,7 @@ Production:
   - DATABASE_URL=${{Postgres-TQuc.DATABASE_URL}}
   - ALLOW_PRODUCTION_DB_WRITES=true
   - ADMIN_AUDIT_LOG_ENABLED=true
+  - ADMIN_EXPORT_TOKEN rotated ngày 2026-05-11, set=true, không in value
   - SESSION_SECRET set=true theo metadata safe check ngày 2026-05-11, không in value
   - ADMIN_PUBLIC_BASE_URL set=true theo metadata safe check ngày 2026-05-11, không in value
   - ADMIN_SESSION_COOKIE_NAME set=true theo metadata safe check ngày 2026-05-11, không in value
@@ -54,6 +55,11 @@ Trạng thái production mới nhất đã biết:
   0c30a9a Extract admin dashboard repository
 - Latest verified code Railway deployment:
   85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS ở commit 0c30a9a
+- Latest verified Railway deployment after ADMIN_EXPORT_TOKEN rotation:
+  255aacfd-1f58-4697-ba1f-378a65ec1f7a SUCCESS ở commit 0ac16bf
+- Previous Railway deployment after first token rotation attempt:
+  48dc3133-5c60-4574-aa86-9431c8fab73e SUCCESS ở commit 0ac16bf.
+  Lưu ý: lần set đầu bằng PowerShell stdin bị BOM trong token, phát hiện trước khi smoke authenticated thành công, sau đó rotate lại bằng ASCII stdin.
 - Previous Railway deployment:
   bc732be5-b422-4669-9e5d-d97406f4a693 SUCCESS ở commit 8cccc0c Update handoff docs after ops insights deploy
 - Previous code deployment:
@@ -89,10 +95,15 @@ Trạng thái production mới nhất đã biết:
   /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
   GET /admin/login 200, title=Admin Login, has_form=true
 - /admin/login gần nhất:
-  200 Admin Login HTML, has_form=true bằng unauthenticated GET sau khi session env đã set.
-  Chưa smoke POST login/cookie dashboard vì các route đó sẽ ghi audit vào production DB và cần xác nhận riêng.
-- Audit production đã bật và smoke gần nhất ghi 2 audit rows thành công:
-  admin_audit_log=2, outcomes success=2.
+  200 Admin Login HTML, has_form=true.
+- Latest approved browser cookie smoke sau token rotation:
+  /admin/dashboard bằng Bearer: 200, title=Admin Dashboard
+  /admin/audit bằng Bearer: 200, title=Admin Audit Log, schema_message=false
+  POST /admin/login bằng token mới: 303 -> /admin/dashboard, cookie HttpOnly=true, Secure=true, SameSite=Lax=true
+  /admin/dashboard bằng cookie: 200, title=Admin Dashboard
+  /admin/audit bằng cookie: 200, title=Admin Audit Log, schema_message=false
+- Audit production đã bật. Count-only sau smoke/token rotation mới nhất:
+  admin_audit_log=34, outcomes denied=8, success=26.
 
 Git state mới nhất đã biết:
 - Latest code commit đã push/deploy:
@@ -124,12 +135,18 @@ Git state mới nhất đã biết:
 
 Backup production mới nhất đã biết:
 - Path:
-  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres
 - SHA256:
-  CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D
+  7AE33DB76481BE7A8FB33A0A1B7FDD4630DEEF8E1C6EEE0E072998680B087F6E
 - Counts:
-  profiles 1, conversations 4, messages 37, orders 6, order_items 7, events 223, processed_mids 85
-- Backup này đã dùng cho production audit schema apply ngày 2026-05-11. Nếu chuẩn bị production DB write mới trong phiên sau, tạo backup PostgreSQL production mới ngoài repo, read-only SELECT, verify SHA256/counts.
+  profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249, processed_mids 94,
+  admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 24
+- Backup PostgreSQL JSONL này tạo ngoài repo bằng read-only SELECT trước khi smoke login/cookie và rotate ADMIN_EXPORT_TOKEN ngày 2026-05-11.
+- Previous backup dùng cho production audit schema apply:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331
+  SHA256 CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D
+  Counts profiles 1, conversations 4, messages 37, orders 6, order_items 7, events 223, processed_mids 85
+- Nếu chuẩn bị production DB write mới trong phiên sau, tạo backup PostgreSQL production mới ngoài repo, read-only SELECT, verify SHA256/counts.
 
 Đã làm vừa qua:
 1. Baseline đầu phiên:
@@ -408,6 +425,54 @@ Backup production mới nhất đã biết:
    - Không đổi production env.
    - Không ghi production DB.
    - Không ghi production /data.
+12. Phiên production browser-cookie smoke + ADMIN_EXPORT_TOKEN rotation, đã làm sau xác nhận riêng:
+   - Preflight:
+     worktree clean, origin/main...HEAD = 0 0.
+     Latest production deployment trước smoke/rotation:
+       258877be-b636-49ca-8578-e807cb4df02d SUCCESS ở commit 0ac16bf.
+     /healthz production:
+       ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login không token:
+       200, title=Admin Login, has_form=true.
+   - Tạo backup PostgreSQL production mới ngoài repo bằng read-only SELECT:
+     Path: C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres
+     Archive: C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres\postgres-jsonl.tar.gz
+     SHA256: 7AE33DB76481BE7A8FB33A0A1B7FDD4630DEEF8E1C6EEE0E072998680B087F6E
+     Counts: profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249,
+       processed_mids 94, admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 24.
+   - Approved browser-cookie smoke trước token rotation:
+     admin_audit_log before=24, outcomes denied=8, success=16.
+     /admin/dashboard bằng Bearer: 200, title=Admin Dashboard.
+     /admin/audit bằng Bearer: 200, title=Admin Audit Log, schema_message=false.
+     POST /admin/login: 303 -> /admin/dashboard, cookie HttpOnly=true, Secure=true, SameSite=Lax=true.
+     /admin/dashboard bằng cookie: 200, title=Admin Dashboard.
+     /admin/audit bằng cookie: 200, title=Admin Audit Log, schema_message=false.
+     admin_audit_log after=29, outcomes denied=8, success=21, auditDelta=5.
+   - Rotate ADMIN_EXPORT_TOKEN production env sau xác nhận:
+     Không in token cũ hoặc token mới.
+     Lần set đầu qua PowerShell stdin tạo token có BOM, phát hiện bằng post-rotation smoke trước khi authenticated smoke thành công.
+     Rotate lại ngay bằng ASCII stdin qua temp file ngoài repo, temp file đã xóa.
+   - Railway deployment sau rotation cuối:
+     255aacfd-1f58-4697-ba1f-378a65ec1f7a SUCCESS ở commit 0ac16bf.
+     Previous failed-format env deployment:
+       48dc3133-5c60-4574-aa86-9431c8fab73e SUCCESS ở commit 0ac16bf, token đã được thay thế bởi rotation ASCII sau đó.
+   - Production env metadata safe check sau rotation:
+     STORAGE_ADAPTER=postgres, ALLOW_PRODUCTION_DB_WRITES=true, ADMIN_AUDIT_LOG_ENABLED=true,
+     ADMIN_EXPORT_TOKEN_set=true, SESSION_SECRET_set=true, ADMIN_PUBLIC_BASE_URL_set=true,
+     ADMIN_SESSION_COOKIE_NAME_set=true, TENANT_ID=default, PAGE_ID=1026325343908119.
+   - Post-rotation smoke bằng token mới:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, title=Admin Login.
+     admin_audit_log before=29, outcomes denied=8, success=21.
+     /admin/dashboard bằng Bearer: 200, title=Admin Dashboard.
+     /admin/audit bằng Bearer: 200, title=Admin Audit Log, schema_message=false.
+     POST /admin/login: 303 -> /admin/dashboard, cookie HttpOnly=true, Secure=true, SameSite=Lax=true.
+     /admin/dashboard bằng cookie: 200, title=Admin Dashboard.
+     /admin/audit bằng cookie: 200, title=Admin Audit Log, schema_message=false.
+     admin_audit_log after=34, outcomes denied=8, success=26, auditDelta=5.
+   - Có ghi production DB: chỉ audit rows do admin smoke, tổng +10 success rows trong phiên smoke/rotation.
+   - Có đổi production env: ADMIN_EXPORT_TOKEN đã rotate, token value không in ra chat/log.
+   - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -421,7 +486,9 @@ Tính năng admin hiện có:
   - Legacy export/debug route còn x-admin-token compatibility.
 - Admin browser login/session code-only:
   - /admin/login và /admin/logout đã deploy trong code production
-  - production session env hiện đã set theo metadata safe check, nhưng chưa smoke POST login/cookie dashboard
+  - production session env hiện đã set theo metadata safe check
+  - POST login/cookie dashboard/audit smoke production đã pass sau xác nhận ngày 2026-05-11
+  - ADMIN_EXPORT_TOKEN đã rotate production sau smoke, token value không in ra chat/log
   - Bearer token vẫn hoạt động cho automation
 - Route authorization/audit request handling đã tách vào core/admin/route-auth.js.
 - Dashboard/user detail/audit page handlers đã tách vào core/admin/read-routes.js.
@@ -495,7 +562,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session code đã deploy và production session env hiện đã set theo metadata safe check. Ưu tiên tiếp theo là smoke login bằng browser cookie sau xác nhận riêng vì POST login/dashboard/audit sẽ ghi audit rows production, rồi rotate ADMIN_EXPORT_TOKEN.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Ưu tiên tiếp theo là quan sát audit ổn định bằng count-only sau một thời gian sử dụng, rồi tiếp tục hardening read-only hoặc thiết kế identity provisioning/admin users trước khi thêm write workflow.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -508,7 +575,7 @@ Việc nên làm đầu phiên tới:
    - ADMIN_SESSION_COOKIE_NAME_set=true
 3. GET /admin/login không token:
    - phải trả 200 Admin Login HTML
-4. Chỉ smoke bằng Bearer/cookie sau xác nhận riêng vì sẽ ghi audit production:
+4. Chỉ smoke thêm bằng Bearer/cookie sau xác nhận riêng vì sẽ ghi audit production:
    - /admin/dashboard
    - /admin/audit
 5. Verify count-only nếu có đường kết nối không in secrets:
@@ -518,31 +585,20 @@ Việc nên làm đầu phiên tới:
    - admin_audit_log
 6. Chạy npm test và npm audit --omit=dev.
 
-Phase 3 browser cookie smoke nếu được xác nhận:
-1. Re-check git/deployment/healthz.
-2. GET /admin/login không token.
-3. Smoke Bearer:
-   - /admin/dashboard
-   - /admin/audit
-4. Nếu session env metadata bất ngờ thiếu thì dừng và xin xác nhận env riêng trước khi set lại:
-   - SESSION_SECRET random 64+ chars
-   - ADMIN_PUBLIC_BASE_URL=https://chatbot-fanpage-production.up.railway.app
-   - ADMIN_SESSION_COOKIE_NAME=chatbot_admin_session nếu muốn rõ ràng
-5. Smoke có ghi audit sau xác nhận:
-   - login bằng ADMIN_EXPORT_TOKEN set cookie
-   - /admin/dashboard mở được bằng cookie
-   - /admin/audit mở được bằng cookie
-   - verify admin_audit_log count-only tăng với login/dashboard/audit
-6. Sau khi browser login ổn, rotate ADMIN_EXPORT_TOKEN vì token cũ đã từng bị lộ trong chat.
+Phase 3 browser cookie smoke:
+- Đã hoàn tất ngày 2026-05-11 sau backup và xác nhận riêng.
+- Không cần lặp lại ngay trừ khi có code/env/deploy thay đổi liên quan auth/session.
+- Nếu lặp lại, nhớ tạo backup PostgreSQL mới trước vì smoke sẽ ghi audit production.
 
-Code-only hướng khác nếu chưa làm production smoke/rotate:
+Code-only hướng khác:
 - Tiếp tục hardening read-only:
   - pagination read-only cho dashboard/audit
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
+  - chuẩn bị identity provisioning/admin users nhưng chưa thêm production user nếu chưa có thiết kế riêng
 
 Không làm vội:
 - Không thêm business write workflow cho tới khi audit production được quan sát ổn định.
-- Không thêm admin user production nếu chưa review identity/session/token rotation.
+- Không thêm admin user production nếu chưa review identity provisioning và rollback.
 - Không deploy/push/đổi env/ghi production DB nếu chưa có xác nhận riêng trong phiên mới.
 
 Cuối mỗi lượt phải báo rõ:
