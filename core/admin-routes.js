@@ -14,6 +14,7 @@ const {
   parseAdminRoles
 } = require('./admin/route-auth');
 const {
+  createAdminLoginRateLimiter,
   createAdminSessionHandlers,
   createAdminSessionManager
 } = require('./admin/session');
@@ -62,6 +63,9 @@ function registerAdminRoutes(app, {
   adminSessionCookieName = process.env.ADMIN_SESSION_COOKIE_NAME || 'chatbot_admin_session',
   adminPublicBaseUrl = process.env.ADMIN_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || '',
   adminSessionTtlMs = parsePositiveInteger(process.env.ADMIN_SESSION_TTL_MS, 8 * 60 * 60 * 1000),
+  adminLoginRateLimiter,
+  adminLoginRateLimitWindowMs = parsePositiveInteger(process.env.ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS, 5 * 60 * 1000),
+  adminLoginRateLimitMax = parsePositiveInteger(process.env.ADMIN_LOGIN_RATE_LIMIT_MAX, 10),
   auditLogger,
   adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
   adminAuditFailClosed = false
@@ -81,6 +85,11 @@ function registerAdminRoutes(app, {
     publicBaseUrl: adminPublicBaseUrl,
     nodeEnv: process.env.NODE_ENV || '',
     ttlMs: adminSessionTtlMs
+  });
+  const loginRateLimiter = adminLoginRateLimiter || createAdminLoginRateLimiter({
+    windowMs: adminLoginRateLimitWindowMs,
+    max: adminLoginRateLimitMax,
+    getClientIp
   });
   const {
     authorizeAdminRequest,
@@ -114,6 +123,7 @@ function registerAdminRoutes(app, {
     adminPrincipalDisplayName,
     adminPrincipalRoles,
     adminPrincipalPermissions,
+    loginRateLimiter,
     recordAdminAudit
   });
   const {
@@ -168,6 +178,7 @@ function registerAdminRoutes(app, {
 module.exports = {
   assertReadOnlySql,
   createAdminLegacyHandlers,
+  createAdminLoginRateLimiter,
   createAdminReadHandlers,
   createPostgresAuditLogger,
   createPostgresDashboardReader,

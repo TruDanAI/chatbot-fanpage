@@ -1,6 +1,7 @@
 const { describe, it, expect } = require('./harness');
 const {
   assertReadOnlySql,
+  createAdminLoginRateLimiter,
   createAdminRouteAuthorizer,
   createPostgresAuditLogger,
   createPostgresDashboardReader,
@@ -431,6 +432,64 @@ describe('admin dashboard routes', () => {
     expect(auditLogger.entries[0].action).toBe('admin.login');
     expect(auditLogger.entries[0].outcome).toBe('denied');
     expect(JSON.stringify(auditLogger.entries[0]).includes('wrong-secret')).toBeFalse();
+  });
+
+  it('admin login rate limit chặn nhiều lần sai token theo IP', async () => {
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '203.0.113.10',
+      dashboardReader: createDashboardReaderStub(),
+      auditLogger,
+      adminSessionSecret: TEST_SESSION_SECRET,
+      adminLoginRateLimitWindowMs: 60 * 1000,
+      adminLoginRateLimitMax: 2
+    });
+
+    const firstRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'wrong-secret-1' }
+    }), firstRes);
+    const secondRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'wrong-secret-2' }
+    }), secondRes);
+    const limitedRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'wrong-secret-3' }
+    }), limitedRes);
+
+    expect(firstRes.statusCode).toBe(401);
+    expect(secondRes.statusCode).toBe(401);
+    expect(limitedRes.statusCode).toBe(429);
+    expect(limitedRes.headers['retry-after']).toBeTruthy();
+    expect(Boolean(limitedRes.headers['set-cookie'])).toBeFalse();
+    expect(limitedRes.body).toContain('Admin Login');
+    expect(auditLogger.entries.length).toBe(3);
+    expect(auditLogger.entries[0].metadata.reason).toBe('invalid_bearer_token');
+    expect(auditLogger.entries[1].metadata.reason).toBe('invalid_bearer_token');
+    expect(auditLogger.entries[2].metadata.reason).toBe('login_rate_limited');
+    expect(JSON.stringify(auditLogger.entries).includes('wrong-secret')).toBeFalse();
+  });
+
+  it('admin login rate limiter mở lại sau khi hết window', () => {
+    let currentTime = 1000;
+    const limiter = createAdminLoginRateLimiter({
+      windowMs: 1000,
+      max: 2,
+      getClientIp: () => '203.0.113.11',
+      now: () => currentTime
+    });
+    const req = createReq();
+
+    expect(limiter.check(req).allowed).toBeTrue();
+    expect(limiter.check(req).allowed).toBeTrue();
+    expect(limiter.check(req).allowed).toBeFalse();
+
+    currentTime += 1000;
+    expect(limiter.check(req).allowed).toBeTrue();
   });
 
   it('dashboard nhận session cookie sau login nhưng vẫn không nhận query token', async () => {

@@ -178,6 +178,8 @@ const WEBHOOK_RATE_LIMIT_WINDOW_MS = envPositiveNumber('WEBHOOK_RATE_LIMIT_WINDO
 const WEBHOOK_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('WEBHOOK_RATE_LIMIT_MAX', 300)));
 const ADMIN_RATE_LIMIT_WINDOW_MS = envPositiveNumber('ADMIN_RATE_LIMIT_WINDOW_MS', 5 * 60 * 1000);
 const ADMIN_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('ADMIN_RATE_LIMIT_MAX', 60)));
+const ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS = envPositiveNumber('ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS', 5 * 60 * 1000);
+const ADMIN_LOGIN_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('ADMIN_LOGIN_RATE_LIMIT_MAX', 10)));
 const ADMIN_IP_ALLOWLIST = envList('ADMIN_IP_ALLOWLIST').map(normalizeIp);
 const TELEGRAM_ALERT_COOLDOWN_MS = Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS || 10 * 60 * 1000);
 const FALLBACK_ALERT_THRESHOLD = Number(process.env.FALLBACK_ALERT_THRESHOLD || 2);
@@ -441,6 +443,8 @@ registerAdminRoutes(app, {
   storage,
   adminExportToken: ADMIN_EXPORT_TOKEN,
   adminIpAllowlist: ADMIN_IP_ALLOWLIST,
+  adminLoginRateLimitWindowMs: ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS,
+  adminLoginRateLimitMax: ADMIN_LOGIN_RATE_LIMIT_MAX,
   getClientIp
 });
 

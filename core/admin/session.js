@@ -7,6 +7,8 @@ const { renderLoginHtml } = require('./views');
 
 const DEFAULT_COOKIE_NAME = 'chatbot_admin_session';
 const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_LOGIN_RATE_LIMIT_MAX = 10;
 const LOGIN_ACTION = 'admin.login';
 const LOGOUT_ACTION = 'admin.logout';
 
@@ -36,6 +38,17 @@ function normalizeSessionSecret(value = '') {
 function normalizePositiveInteger(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
+function normalizeIp(value = '') {
+  return String(value || '').trim().replace(/^::ffff:/, '');
+}
+
+function getFallbackClientIp(req) {
+  const forwarded = String(req?.get?.('x-forwarded-for') || '')
+    .split(',')[0]
+    .trim();
+  return normalizeIp(forwarded || req?.ip || req?.socket?.remoteAddress || 'unknown');
 }
 
 function signValue(secret, value) {
@@ -210,6 +223,69 @@ function createAdminSessionManager({
   };
 }
 
+function createAdminLoginRateLimiter({
+  windowMs = DEFAULT_LOGIN_RATE_LIMIT_WINDOW_MS,
+  max = DEFAULT_LOGIN_RATE_LIMIT_MAX,
+  getClientIp,
+  now = () => Date.now(),
+  maxBuckets = 5000
+} = {}) {
+  const buckets = new Map();
+  const limitWindowMs = normalizePositiveInteger(windowMs, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_MS);
+  const maxAttempts = normalizePositiveInteger(max, DEFAULT_LOGIN_RATE_LIMIT_MAX);
+  const bucketLimit = normalizePositiveInteger(maxBuckets, 5000);
+
+  function getKey(req) {
+    const rawIp = typeof getClientIp === 'function'
+      ? getClientIp(req)
+      : getFallbackClientIp(req);
+    return normalizeIp(rawIp) || 'unknown';
+  }
+
+  function pruneExpired(currentTime) {
+    if (buckets.size <= bucketLimit) return;
+    for (const [key, bucket] of buckets.entries()) {
+      if (currentTime - bucket.startedAt >= limitWindowMs) buckets.delete(key);
+    }
+  }
+
+  function check(req) {
+    const currentTime = now();
+    pruneExpired(currentTime);
+    const key = getKey(req);
+    const current = buckets.get(key);
+    if (!current || currentTime - current.startedAt >= limitWindowMs) {
+      buckets.set(key, { startedAt: currentTime, count: 1 });
+      return {
+        allowed: true,
+        key,
+        limit: maxAttempts,
+        remaining: Math.max(0, maxAttempts - 1),
+        retryAfterSeconds: 0
+      };
+    }
+
+    current.count += 1;
+    const retryAfterSeconds = Math.max(1, Math.ceil((limitWindowMs - (currentTime - current.startedAt)) / 1000));
+    return {
+      allowed: current.count <= maxAttempts,
+      key,
+      limit: maxAttempts,
+      remaining: Math.max(0, maxAttempts - current.count),
+      retryAfterSeconds
+    };
+  }
+
+  function reset(req) {
+    buckets.delete(getKey(req));
+  }
+
+  return {
+    check,
+    reset
+  };
+}
+
 function getLoginToken(req) {
   const body = req?.body || {};
   return String(body.adminToken || body.token || '').trim();
@@ -250,6 +326,7 @@ function createAdminSessionHandlers({
   adminPrincipalDisplayName = '',
   adminPrincipalRoles = ['owner'],
   adminPrincipalPermissions = [],
+  loginRateLimiter,
   recordAdminAudit
 } = {}) {
   function authOptions() {
@@ -278,6 +355,25 @@ function createAdminSessionHandlers({
   }
 
   async function submitLogin(req, res) {
+    const rate = loginRateLimiter?.check?.(req);
+    if (rate && !rate.allowed) {
+      await recordAdminAudit?.(req, {
+        principal: null,
+        action: LOGIN_ACTION,
+        resourceType: 'admin_session',
+        outcome: 'denied',
+        metadata: {
+          reason: 'login_rate_limited',
+          retryAfterSeconds: rate.retryAfterSeconds
+        }
+      });
+      setHeader(res, 'Retry-After', String(rate.retryAfterSeconds));
+      return res
+        .status(429)
+        .type('html')
+        .send(renderLoginHtml({ error: 'Đăng nhập tạm bị giới hạn. Thử lại sau.' }));
+    }
+
     if (!sessionManager?.isConfigured?.()) {
       await recordAdminAudit?.(req, {
         principal: null,
@@ -308,6 +404,7 @@ function createAdminSessionHandlers({
         .send(renderLoginHtml({ error: 'Token không hợp lệ.' }));
     }
 
+    loginRateLimiter?.reset?.(req);
     const sessionToken = sessionManager.createSessionToken(auth.principal);
     setHeader(res, 'Set-Cookie', sessionManager.buildSetCookie(sessionToken));
     await recordAdminAudit?.(req, {
@@ -347,8 +444,11 @@ function createAdminSessionHandlers({
 
 module.exports = {
   DEFAULT_COOKIE_NAME,
+  DEFAULT_LOGIN_RATE_LIMIT_MAX,
+  DEFAULT_LOGIN_RATE_LIMIT_WINDOW_MS,
   LOGIN_ACTION,
   LOGOUT_ACTION,
+  createAdminLoginRateLimiter,
   createAdminSessionHandlers,
   createAdminSessionManager,
   parseCookieHeader,
