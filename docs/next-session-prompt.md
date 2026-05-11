@@ -15,9 +15,9 @@ Mục tiêu sản phẩm:
 - Biến chatbot Messenger hiện tại thành một hệ thống admin/SaaS nội bộ ổn định.
 - Ưu tiên an toàn dữ liệu production hơn tốc độ làm tính năng.
 - Admin dashboard hiện vẫn không có exposed business write workflow. Phase 4
-  internal notes đã có design/SQL proposal/local service/tests, nhưng chưa có
-  POST route, chưa có UI form, chưa apply production schema, và chưa smoke tạo
-  note production.
+  internal notes đã có design/SQL proposal/local service/tests và live local
+  PostgreSQL SQL verification đã pass, nhưng chưa có POST route, chưa có UI
+  form, chưa apply production schema, và chưa smoke tạo note production.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -71,8 +71,18 @@ Trạng thái production mới nhất đã biết:
 - Latest pushed commit:
   d138144 Add internal notes SQL proposal checks
 - Latest local test/audit baseline:
-  npm test 301 passed, 0 failed
+  npm test 308 passed, 0 failed
   npm audit --omit=dev 0 vulnerabilities
+- Latest Phase 4 internal notes live local SQL verification:
+  npm run verify:internal-notes-sql passed using local Docker Postgres
+  container chatbot-fanpage-internal-notes-pg, bound to
+  127.0.0.1:55432 -> 5432.
+  CHATBOT_TEST_DATABASE_URL was set only inside the verifier PowerShell
+  process, and DATABASE_URL was removed from that process.
+  The verifier created an isolated schema, applied
+  db/internal-notes-proposal.sql twice, verified table, columns, indexes, and
+  CHECK constraints, dropped the isolated schema, and left 0 remaining
+  internal_notes_verify_% schemas.
 - Không có authenticated admin smoke sau deployment này.
 - Không production schema apply.
 - Không production env change.
@@ -731,6 +741,31 @@ Backup production mới nhất đã biết:
    - Safe public smoke sau deploy không ghi DB:
      /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
      GET /admin/login 200, Admin Login form present.
+18. Phiên Phase 4 internal_notes live local PostgreSQL SQL verification:
+   - Docker Desktop running; local container used:
+     chatbot-fanpage-internal-notes-pg.
+   - Container bound only to local host:
+     127.0.0.1:55432 -> 5432.
+   - Used a clearly local test database.
+   - CHATBOT_TEST_DATABASE_URL was set only inside the verifier PowerShell
+     process.
+   - DATABASE_URL was removed from that verifier process.
+   - npm run verify:internal-notes-sql passed.
+   - Verification details:
+     isolated schema created: yes;
+     SQL proposal applied twice: yes;
+     table verified: yes;
+     columns verified: yes;
+     indexes verified: yes;
+     constraints verified: yes;
+     isolated schema dropped: yes.
+   - Extra local check:
+     0 remaining internal_notes_verify_% schemas.
+   - npm test: 308 passed, 0 failed.
+   - npm audit --omit=dev: 0 vulnerabilities.
+   - Git clean, origin/main...HEAD = 0 0.
+   - No push, deploy, env change, production DB write, production data touch, or
+     authenticated production smoke occurred during verification.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -796,6 +831,10 @@ Tính năng admin hiện có:
   - local service: core/admin/internal-notes.js
   - tests: tests/admin-internal-notes.test.js
   - static SQL proposal checks tồn tại
+  - live local PostgreSQL SQL verification đã pass bằng
+    npm run verify:internal-notes-sql với CHATBOT_TEST_DATABASE_URL trong
+    isolated schema; proposal apply 2 lần, table/columns/indexes/constraints
+    verified, schema dropped, 0 internal_notes_verify_% schemas còn lại
   - chưa có POST route
   - chưa có UI form
   - chưa production schema apply
@@ -851,15 +890,17 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes đã có design doc, SQL proposal, local service, validation/RBAC/transaction/audit fail-closed tests, và static SQL proposal checks. Vẫn chưa có POST route, chưa có UI form, chưa production schema apply, và chưa authenticated production note-create smoke.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes đã có design doc, SQL proposal, local service, validation/RBAC/transaction/audit fail-closed tests, static SQL proposal checks, và live local PostgreSQL SQL verification đã pass. Vẫn chưa có POST route, chưa có UI form, chưa production schema apply, và chưa authenticated production note-create smoke.
 
 Next recommended task:
-- Tạo safe non-production SQL verification script cho db/internal-notes-proposal.sql.
-- Script phải từ chối DATABASE_URL và chỉ chấp nhận biến explicit non-production như CHATBOT_TEST_DATABASE_URL hoặc CHATBOT_STAGING_DATABASE_URL.
-- Script apply internal-notes-proposal.sql vào isolated schema.
-- Verify table, indexes, constraints, và idempotency bằng count/schema checks an toàn.
-- Drop isolated schema afterward.
-- Không dùng production DATABASE_URL cho verification.
+- Chuẩn bị rollout/runbook decision cho internal_notes schema apply nếu muốn tiến
+  tới production, gồm fresh backup, review SQL additive/idempotent, verify
+  count-only, rollback stance, và xác nhận riêng cho mọi production DB write.
+- Tiếp tục chỉ dùng explicit non-production URL như CHATBOT_TEST_DATABASE_URL
+  hoặc CHATBOT_STAGING_DATABASE_URL cho schema verification; không dùng
+  DATABASE_URL vì có thể là production.
+- Chưa thêm route/UI write trước khi có rollout plan, audit semantics, tests,
+  và approval rõ cho production impact.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -881,7 +922,7 @@ Việc nên làm đầu phiên tới:
    - admin_roles
    - admin_user_roles
    - admin_audit_log
-7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline mới nhất đã biết: npm test 301 passed, npm audit --omit=dev 0 vulnerabilities.
+7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline mới nhất đã biết: npm test 308 passed, npm audit --omit=dev 0 vulnerabilities.
 
 Phase 3 browser cookie smoke:
 - Đã hoàn tất ngày 2026-05-11 sau backup và xác nhận riêng.
@@ -894,7 +935,8 @@ Code-only hướng khác:
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
 - Phase 4 chuẩn bị write workflow:
   - internal notes design/service/test baseline đã có
-  - bước tiếp theo nên là SQL verification script non-production, isolated schema, idempotency/constraints/index checks, cleanup schema
+  - live local SQL verification bằng non-production PostgreSQL isolated schema
+    đã pass, gồm idempotency/constraints/index checks và cleanup schema
   - chưa implement route/UI write nếu chưa có verified schema path, tests, rollback, audit semantics và backup plan
   - chưa thêm production admin user nếu chưa có implementation path và xác nhận DB write riêng
 

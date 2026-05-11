@@ -60,8 +60,17 @@ Last verified baseline from May 12, 2026:
   `/healthz 200`, `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`;
   `GET /admin/login 200`, Admin Login form present.
+- Latest local Phase 4 internal notes SQL verification:
+  `npm run verify:internal-notes-sql` passed against a local-only Docker
+  PostgreSQL container `chatbot-fanpage-internal-notes-pg`, bound to
+  `127.0.0.1:55432 -> 5432`. The verifier used
+  `CHATBOT_TEST_DATABASE_URL` only inside the PowerShell verifier process,
+  removed `DATABASE_URL` from that process, created an isolated schema, applied
+  `db/internal-notes-proposal.sql` twice, verified table, columns, indexes, and
+  CHECK constraints, dropped the isolated schema, and left 0 remaining
+  `internal_notes_verify_%` schemas.
 - Latest test/audit baseline:
-  `npm test` 301 passed, 0 failed; `npm audit --omit=dev` 0 vulnerabilities.
+  `npm test` 308 passed, 0 failed; `npm audit --omit=dev` 0 vulnerabilities.
 - No authenticated admin smoke was run after the latest deployment.
 - No production `internal_notes` schema apply has been run.
 - No production environment change was made.
@@ -136,9 +145,10 @@ Last verified baseline from May 12, 2026:
   local service exists in `core/admin/internal-notes.js`;
   validation, RBAC, transaction, audit fail-closed, safe metadata, unresolved
   actor, and static SQL proposal checks exist in
-  `tests/admin-internal-notes.test.js`; there is no POST route; there is no UI
-  form; production schema has not been applied; no authenticated production
-  note-create smoke has been run.
+  `tests/admin-internal-notes.test.js`; live local PostgreSQL SQL verification
+  passed in an isolated schema using `CHATBOT_TEST_DATABASE_URL`; there is no
+  POST route; there is no UI form; production schema has not been applied; no
+  authenticated production note-create smoke has been run.
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke`
 - Latest known backup SHA256:
   `06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85`
@@ -392,6 +402,13 @@ Current internal-notes status:
 - Tests exist for validation, RBAC, transaction ordering, audit fail-closed
   behavior, safe audit metadata, unresolved actor handling, and static SQL
   proposal checks.
+- Live local PostgreSQL SQL verification passed using the existing verifier:
+  local Docker container `chatbot-fanpage-internal-notes-pg`, bound to
+  `127.0.0.1:55432 -> 5432`; `CHATBOT_TEST_DATABASE_URL` was set only inside
+  the verifier PowerShell process; `DATABASE_URL` was removed from that
+  process; the proposal was applied twice inside an isolated schema; table,
+  columns, indexes, and CHECK constraints were verified; the isolated schema
+  was dropped; 0 `internal_notes_verify_%` schemas remained.
 - No POST route exists.
 - No UI form exists.
 - No production `internal_notes` schema apply has been run.
@@ -406,14 +423,12 @@ Candidate first write actions:
 
 Recommended next task before any route/UI work:
 
-- Create a safe non-production SQL verification script for
-  `db/internal-notes-proposal.sql`.
-- The script must refuse `DATABASE_URL` and accept only explicit
-  non-production variables such as `CHATBOT_TEST_DATABASE_URL` or
-  `CHATBOT_STAGING_DATABASE_URL`.
-- Apply the SQL proposal inside an isolated schema.
-- Verify table, indexes, constraints, and idempotency.
-- Drop the isolated schema afterward.
+- Prepare a production rollout/runbook decision for `internal_notes` schema
+  apply, including fresh backup, additive/idempotent SQL review, count-only
+  verification, and separate owner approval for any production DB write.
+- Keep using explicit non-production variables such as
+  `CHATBOT_TEST_DATABASE_URL` or `CHATBOT_STAGING_DATABASE_URL` for verification;
+  do not use `DATABASE_URL` for schema verification.
 
 Rules:
 
@@ -527,8 +542,8 @@ A phase is done only when:
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
 session. Phase 4 internal notes now has a design doc, SQL proposal, local
-service, and focused tests, but no route/UI and no production schema apply.
-The next step is a non-production SQL verification script that refuses
-`DATABASE_URL`, applies `db/internal-notes-proposal.sql` in an isolated schema,
-verifies table/indexes/constraints/idempotency, and drops the isolated schema
-afterward.
+service, focused tests, and a passing live local PostgreSQL SQL verification
+against an isolated schema. There is still no route/UI and no production schema
+apply. The next step is a conservative rollout/runbook decision for any
+production `internal_notes` schema apply, with fresh backup and separate owner
+approval before any production DB write.
