@@ -44,6 +44,9 @@ Last verified baseline from May 11, 2026:
   The rate-limit smoke produced the expected `auditDelta=14` from the fresh
   pre-smoke backup count.
 - Latest verified Railway deployment:
+  `c2f57a04-9040-4dc4-8d1e-bdc0cb066429 SUCCESS` at commit
+  `5989b2e Complete Phase 3.5 identity audit design`
+- Previous verified Railway deployment:
   `0d92944b-4aa7-4a84-bdfe-836d01ac2e93 SUCCESS` at commit
   `2841e69 Update handoff docs after login rate limit deploy`
 - Latest verified code deployment at that time:
@@ -95,7 +98,8 @@ Last verified baseline from May 11, 2026:
   `5e2748b Add admin read pagination`,
   `1c35127 Update handoff docs after pagination smoke`,
   `31bcf1f Add admin login rate limit`,
-  `2841e69 Update handoff docs after login rate limit deploy`
+  `2841e69 Update handoff docs after login rate limit deploy`,
+  `5989b2e Complete Phase 3.5 identity audit design`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke`
 - Latest known backup SHA256:
   `06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85`

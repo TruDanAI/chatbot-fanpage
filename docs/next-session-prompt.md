@@ -54,8 +54,13 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified Railway deployment:
+  c2f57a04-9040-4dc4-8d1e-bdc0cb066429 SUCCESS ở commit 5989b2e
+  Complete Phase 3.5 identity audit design
+- Previous verified Railway deployment:
   0d92944b-4aa7-4a84-bdfe-836d01ac2e93 SUCCESS ở commit 2841e69
   Update handoff docs after login rate limit deploy
+- Latest verified code/docs deployment:
+  5989b2e Complete Phase 3.5 identity audit design
 - Latest verified code deployment:
   31bcf1f Add admin login rate limit
 - Latest verified code Railway deployment:
@@ -127,6 +132,8 @@ Trạng thái production mới nhất đã biết:
   auditDelta=14 từ backup trước smoke.
 
 Git state mới nhất đã biết:
+- Latest code/docs commit đã push/deploy:
+  5989b2e Complete Phase 3.5 identity audit design
 - Latest docs commit đã push/deploy:
   2841e69 Update handoff docs after login rate limit deploy
 - Latest code commit đã push/deploy:
@@ -158,11 +165,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  5989b2e Complete Phase 3.5 identity audit design
   2841e69 Update handoff docs after login rate limit deploy
   31bcf1f Add admin login rate limit
   1c35127 Update handoff docs after pagination smoke
   5e2748b Add admin read pagination
-  3c45166 Update handoff docs after token rotation
 
 Backup production mới nhất đã biết:
 - Latest backup:
@@ -636,7 +643,7 @@ Backup production mới nhất đã biết:
    - Có ghi production DB: chỉ audit rows do admin smoke, tổng +14 rows.
    - Không đổi production env.
    - Không ghi production /data.
-16. Phiên Phase 3.5 identity/audit design, đang hoàn tất trong repo:
+16. Phiên Phase 3.5 identity/audit design, đã push/deploy sau xác nhận:
    - Thêm docs/admin-identity-provisioning.md:
      PostgreSQL-backed admin_users/admin_user_roles design, provisioning sequence,
      rollback stance, và quy tắc chưa tạo production user vội.
@@ -648,7 +655,22 @@ Backup production mới nhất đã biết:
      docs/next-session-prompt.md.
    - Không thêm business write workflow.
    - Không tạo production admin user.
-   - Chưa push/deploy phần docs/code này nếu không có xác nhận riêng trong phiên hiện tại.
+   - Verify local trước push:
+     node --check core/admin-auth.js pass.
+     npm test: 285 passed.
+     npm audit --omit=dev: 0 vulnerabilities.
+     git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Commit:
+     5989b2e Complete Phase 3.5 identity audit design.
+   - Pushed origin/main sau xác nhận push/deploy.
+   - Railway deployment:
+     c2f57a04-9040-4dc4-8d1e-bdc0cb066429 SUCCESS ở commit 5989b2e.
+   - Safe smoke sau deploy không ghi DB:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, title=Admin Login, has_form=true.
+   - Không đổi production env.
+   - Không ghi production DB.
+   - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
