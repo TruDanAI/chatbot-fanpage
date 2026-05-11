@@ -39,6 +39,13 @@ Last verified baseline from May 11, 2026:
   token rotation: `admin_audit_log=34`, outcomes `denied=8`, `success=26`.
 - Latest production admin audit count after approved pagination smoke:
   `admin_audit_log=38`, outcomes `denied=8`, `success=30`.
+- Latest production admin audit count after approved login rate-limit smoke:
+  `admin_audit_log=52`, outcomes `denied=19`, `success=33`, `error=0`.
+  The rate-limit smoke produced the expected `auditDelta=14` from the fresh
+  pre-smoke backup count.
+- Latest verified Railway deployment:
+  `0d92944b-4aa7-4a84-bdfe-836d01ac2e93 SUCCESS` at commit
+  `2841e69 Update handoff docs after login rate limit deploy`
 - Latest verified code deployment at that time:
   `31bcf1f Add admin login rate limit`
 - Latest verified code Railway deployment:
@@ -87,13 +94,17 @@ Last verified baseline from May 11, 2026:
   `3c45166 Update handoff docs after token rotation`,
   `5e2748b Add admin read pagination`,
   `1c35127 Update handoff docs after pagination smoke`,
-  `31bcf1f Add admin login rate limit`
-- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke`
+  `31bcf1f Add admin login rate limit`,
+  `2841e69 Update handoff docs after login rate limit deploy`
+- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke`
 - Latest known backup SHA256:
-  `F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720`
-- Latest known counts: profiles 1, conversations 4, messages 53, orders 6,
+  `06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85`
+- Latest backup counts: profiles 1, conversations 4, messages 53, orders 6,
   order_items 7, events 249, processed_mids 94, admin_users 0,
-  admin_roles 4, admin_user_roles 0, admin_audit_log 34
+  admin_roles 4, admin_user_roles 0, admin_audit_log 38
+- Latest count-only audit stability check after rate-limit smoke:
+  admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 52,
+  outcomes denied 19, success 33, error 0.
 
 Treat this baseline as a snapshot only. Every future session must re-check git,
 Railway deployment, `/healthz`, and backup status before production work.
@@ -289,9 +300,10 @@ Security requirements:
 
 ### Phase 3.5: identity and login hardening
 
-Status: in progress. Login rate limiting is implemented, tested, pushed, and
-deployed. Identity provisioning and audit actor semantics are still pending
-before business write workflows.
+Status: done for the pre-write design gate as of May 11, 2026. Login rate
+limiting is implemented, tested, pushed, deployed, and production-smoked after
+a fresh backup. PostgreSQL identity provisioning and audit actor semantics are
+documented, but no production admin user has been created.
 
 Goal: make admin identity safer and more traceable before the system allows
 operational writes.
@@ -302,13 +314,20 @@ Recommended steps:
   `31bcf1f Add admin login rate limit`; it is local memory per process unless
   multi-instance behavior becomes a real production issue.
 - Design PostgreSQL-backed admin user provisioning without creating production
-  users until there is a rollback plan and separate approval.
+  users until there is a rollback plan and separate approval. Done in
+  `docs/admin-identity-provisioning.md`.
 - Decide how static `ADMIN_EXPORT_TOKEN` maps to an actor while browser
-  sessions continue to use the current token-based login.
+  sessions continue to use the current token-based login. Done in
+  `docs/admin-identity-provisioning.md`: Bearer automation should become the
+  non-human `automation:admin_export_token` actor when explicitly configured,
+  while browser sessions move to real `admin_users.id` actors after identity is
+  implemented.
 - Keep Bearer automation support, but document actor identity and audit
-  semantics clearly.
+  semantics clearly. New audit entries include safe `metadata.auth_method`.
 - Re-check production audit counts and outcome breakdown using count-only
-  queries before enabling any write action.
+  queries before enabling any write action. Latest count-only check after
+  rate-limit smoke showed `admin_audit_log=52`, outcomes `denied=19`,
+  `success=33`, and `error=0`.
 
 Exit criteria before Phase 4:
 
@@ -434,7 +453,7 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The next step is to observe audit stability with count-only checks,
-finish Phase 3.5 identity provisioning and actor/audit semantics, and avoid
-business write workflows until there is a separate design, backup plan, tests,
-and production approval.
+session. Phase 3.5 is now a completed pre-write design gate. The next step is
+to design the first Phase 4 write workflow on paper first, then implement only
+after there is a separate backup plan, tests, rollback stance, and explicit
+production approval for any write.

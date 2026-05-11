@@ -251,6 +251,16 @@ function buildAuditLogEntry({
 } = {}) {
   const normalizedOutcome = AUDIT_OUTCOMES.has(outcome) ? outcome : 'error';
   const actor = principal || {};
+  const metadataObject = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata
+    : { value: metadata };
+  const authMethod = normalizeText(actor.authMethod, 40);
+  const auditMetadata = {
+    ...metadataObject,
+    ...(authMethod && !Object.prototype.hasOwnProperty.call(metadataObject, 'auth_method')
+      ? { auth_method: authMethod }
+      : {})
+  };
   return {
     occurred_at: new Date().toISOString(),
     actor_id: normalizeText(actor.id, 120) || 'anonymous',
@@ -264,7 +274,7 @@ function buildAuditLogEntry({
     request_id: normalizeText(requestId, 120),
     request_ip_hash: hashAuditValue(ip),
     user_agent: redactString(userAgent, 240),
-    metadata: redactAuditMetadata(metadata)
+    metadata: redactAuditMetadata(auditMetadata)
   };
 }
 

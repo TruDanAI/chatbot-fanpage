@@ -14,7 +14,9 @@ Branch chính: main
 Mục tiêu sản phẩm:
 - Biến chatbot Messenger hiện tại thành một hệ thống admin/SaaS nội bộ ổn định.
 - Ưu tiên an toàn dữ liệu production hơn tốc độ làm tính năng.
-- Admin dashboard hiện vẫn read-only. Không thêm write workflow cho tới khi audit production ổn định.
+- Admin dashboard hiện vẫn read-only. Phase 3.5 đã hoàn tất phần pre-write
+  design gate; không thêm write workflow nếu chưa có design, backup plan, tests,
+  rollback stance và xác nhận production riêng.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -51,6 +53,9 @@ Production:
   - PAGE_ID=1026325343908119
 
 Trạng thái production mới nhất đã biết:
+- Latest verified Railway deployment:
+  0d92944b-4aa7-4a84-bdfe-836d01ac2e93 SUCCESS ở commit 2841e69
+  Update handoff docs after login rate limit deploy
 - Latest verified code deployment:
   31bcf1f Add admin login rate limit
 - Latest verified code Railway deployment:
@@ -117,8 +122,13 @@ Trạng thái production mới nhất đã biết:
   before admin_audit_log=34, outcomes denied=8, success=26.
 - Audit production count-only sau pagination authenticated smoke:
   after admin_audit_log=38, outcomes denied=8, success=30, auditDelta=4.
+- Audit production count-only sau approved login rate-limit smoke:
+  after admin_audit_log=52, outcomes denied=19, success=33, error=0,
+  auditDelta=14 từ backup trước smoke.
 
 Git state mới nhất đã biết:
+- Latest docs commit đã push/deploy:
+  2841e69 Update handoff docs after login rate limit deploy
 - Latest code commit đã push/deploy:
   31bcf1f Add admin login rate limit
 - Previous code commit đã push/deploy:
@@ -148,21 +158,26 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  2841e69 Update handoff docs after login rate limit deploy
   31bcf1f Add admin login rate limit
   1c35127 Update handoff docs after pagination smoke
   5e2748b Add admin read pagination
   3c45166 Update handoff docs after token rotation
-  0ac16bf Update handoff docs after repository deploy
 
 Backup production mới nhất đã biết:
 - Latest backup:
-  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke
 - Latest backup archive:
-  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke\postgres-jsonl.tar.gz
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke\postgres-jsonl.tar.gz
 - Latest backup SHA256:
-  F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720
+  06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85
 - Latest backup counts:
   profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249, processed_mids 94,
+  admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 38
+- Previous backup:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke
+  SHA256 F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720
+  Counts profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249, processed_mids 94,
   admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 34
 - Path:
   C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres
@@ -597,6 +612,43 @@ Backup production mới nhất đã biết:
    - Không tạo backup mới vì không ghi production DB.
    - Không ghi production DB.
    - Không ghi production /data.
+15. Phiên approved production login rate-limit smoke + audit stability:
+   - Latest verified Railway deployment trước smoke:
+     0d92944b-4aa7-4a84-bdfe-836d01ac2e93 SUCCESS ở commit 2841e69
+     Update handoff docs after login rate limit deploy.
+   - /healthz production:
+     200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+   - GET /admin/login không token:
+     200, title=Admin Login, has_form=true.
+   - Tạo backup PostgreSQL production mới ngoài repo bằng read-only SELECT trước authenticated/rate-limit smoke:
+     Path: C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke
+     Archive: C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke\postgres-jsonl.tar.gz
+     SHA256: 06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85
+     Counts: profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249,
+       processed_mids 94, admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 38.
+   - Smoke rate-limit/login sau backup:
+     before admin_audit_log=38, outcomes denied=8, success=30.
+     Invalid POST /admin/login attempts trả 401 khi còn trong limit, không set cookie.
+     Khi vượt limit: 429, Retry-After set, Admin Login HTML, không set cookie, audit denied reason=login_rate_limited.
+     Bearer automation và browser/session path vẫn pass trong smoke.
+     after admin_audit_log=52, outcomes denied=19, success=33, error=0, auditDelta=14.
+     Delta đúng kỳ vọng: +11 denied từ invalid/rate-limited login và +3 success từ authenticated checks.
+   - Có ghi production DB: chỉ audit rows do admin smoke, tổng +14 rows.
+   - Không đổi production env.
+   - Không ghi production /data.
+16. Phiên Phase 3.5 identity/audit design, đang hoàn tất trong repo:
+   - Thêm docs/admin-identity-provisioning.md:
+     PostgreSQL-backed admin_users/admin_user_roles design, provisioning sequence,
+     rollback stance, và quy tắc chưa tạo production user vội.
+   - Định nghĩa actor/audit semantics:
+     Bearer automation là non-human actor `automation:admin_export_token` khi được cấu hình rõ;
+     browser session hiện vẫn là bridge từ `ADMIN_PRINCIPAL_ID`, target sau này là `admin_users.id`.
+   - core/admin-auth.js enrich audit metadata bằng safe `auth_method` cho audit entry mới.
+   - Cập nhật DESIGN.md, docs/admin-auth-rbac-audit-runbook.md, docs/saas-roadmap.md,
+     docs/next-session-prompt.md.
+   - Không thêm business write workflow.
+   - Không tạo production admin user.
+   - Chưa push/deploy phần docs/code này nếu không có xác nhận riêng trong phiên hiện tại.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -645,10 +697,17 @@ Tính năng admin hiện có:
   - production hiện đã bật ADMIN_AUDIT_LOG_ENABLED=true
 - Audit metadata redaction:
   - token, DB URL, phone, address, email, service account-like fields
+- Audit actor/auth semantics:
+  - audit entry mới có safe metadata.auth_method khi principal đã auth
+  - static_bearer = Bearer automation
+  - admin_session = browser session cookie
+  - static_admin_token = legacy export/state compatibility
 - Audit schema proposal additive/idempotent:
   db/admin-auth-rbac-audit-proposal.sql
 - Production audit schema đã apply.
 - Admin read routes production đang ghi audit log.
+- Phase 3.5 identity provisioning design:
+  docs/admin-identity-provisioning.md
 
 File quan trọng:
 - core/admin-auth.js
@@ -663,6 +722,7 @@ File quan trọng:
 - core/admin/views.js
 - db/admin-auth-rbac-audit-proposal.sql
 - docs/admin-auth-rbac-audit-runbook.md
+- docs/admin-identity-provisioning.md
 - docs/saas-roadmap.md
 - docs/next-session-prompt.md
 - DESIGN.md
@@ -684,13 +744,14 @@ Việc bắt buộc làm đầu phiên mới:
 4. Đọc lại:
    - docs/saas-roadmap.md
    - docs/admin-auth-rbac-audit-runbook.md
+   - docs/admin-identity-provisioning.md
    - DESIGN.md
 5. Chạy local:
    - npm test
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy. Ưu tiên tiếp theo là quan sát audit ổn định bằng count-only, thiết kế identity provisioning/admin users, và định nghĩa actor/audit semantics trước khi thêm bất kỳ write workflow nào.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Ưu tiên tiếp theo là Phase 4 write workflow design trên giấy trước, chưa implement production write khi chưa có backup plan, rollback, tests và xác nhận riêng.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -722,14 +783,14 @@ Code-only hướng khác:
 - Tiếp tục hardening read-only:
   - pagination read-only cho user detail timelines nếu fixed limits bắt đầu thiếu
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
-- Phase 3.5 trước write workflow:
-  - login rate limit cho /admin/login đã deploy; chỉ tuning env production nếu có xác nhận riêng
-  - thiết kế identity provisioning/admin users nhưng chưa thêm production user nếu chưa có rollback và xác nhận riêng
-  - định nghĩa actor/audit semantics cho Bearer automation và browser session
+- Phase 4 chuẩn bị write workflow:
+  - bắt đầu bằng design doc cho action nhỏ nhất, ví dụ internal note hoặc mark order handled
+  - chưa implement route/UI write nếu chưa có tests, rollback, audit semantics và backup plan
+  - chưa thêm production admin user nếu chưa có implementation path và xác nhận DB write riêng
 
 Không làm vội:
-- Không thêm business write workflow cho tới khi audit production được quan sát ổn định.
-- Không bỏ qua phần identity provisioning/audit actor semantics còn lại của Phase 3.5 trước write workflow.
+- Không thêm business write workflow chỉ vì Phase 3.5 đã xong; Phase 4 vẫn cần design/backup/rollback/test riêng.
+- Không coi browser session hiện tại là per-human identity; nó vẫn là static-token bridge cho tới khi admin_users login thật được implement.
 - Không thêm admin user production nếu chưa review identity provisioning và rollback.
 - Không deploy/push/đổi env/ghi production DB nếu chưa có xác nhận riêng trong phiên mới.
 

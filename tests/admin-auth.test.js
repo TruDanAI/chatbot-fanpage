@@ -121,6 +121,7 @@ describe('admin audit helpers', () => {
     const serialized = JSON.stringify(entry);
 
     expect(entry.actor_id).toBe('admin-1');
+    expect(entry.metadata.auth_method).toBe('bearer');
     expect(entry.request_ip_hash.length).toBe(64);
     expect(serialized.includes('203.0.113.10')).toBeFalse();
     expect(serialized.includes('secret-token')).toBeFalse();

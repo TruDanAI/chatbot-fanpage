@@ -29,6 +29,9 @@ confirmation UI, tests, and owner approval.
 Audit records store actor, action, resource, outcome, tenant/page, request id,
 hashed IP, user agent, and redacted JSON metadata. They must not store raw
 tokens, database URLs, full phone numbers, addresses, or customer export rows.
+For new entries, `metadata.auth_method` distinguishes static Bearer automation
+from browser session access. See `docs/admin-identity-provisioning.md` for the
+Phase 3.5 actor semantics and user provisioning design.
 
 ## Runtime routes and frontend
 
@@ -42,9 +45,11 @@ Routes:
 - `/admin/dashboard/users/:senderId`: bounded user detail read.
 - `/admin/audit`: audit log read.
 
-Dashboard and audit screens require `Authorization: Bearer <ADMIN_EXPORT_TOKEN>`.
-Legacy export/debug routes keep existing header compatibility until a dedicated
-login/session flow is designed.
+Dashboard and audit screens accept either
+`Authorization: Bearer <ADMIN_EXPORT_TOKEN>` for automation or a signed browser
+session cookie created by `/admin/login`. The current browser login is still a
+static-token bridge; it is not yet PostgreSQL-backed per-user identity.
+Legacy export/debug routes keep existing header compatibility.
 
 Runtime env knobs:
 

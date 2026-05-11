@@ -137,8 +137,11 @@ Detail views:
 
 Auth:
 
-- Dashboard routes must only accept `Authorization: Bearer <token>`.
+- Dashboard read routes accept either `Authorization: Bearer <token>` for
+  automation or a signed admin session cookie from `/admin/login`.
 - Do not accept dashboard tokens through query params.
+- Browser login is still bootstrapped from `ADMIN_EXPORT_TOKEN` until real
+  PostgreSQL-backed admin identity is wired.
 - Existing export/debug routes may keep their current compatibility until they
   are redesigned separately.
 
@@ -174,7 +177,8 @@ Admin Audit Log:
 
 Before adding write workflows, add:
 
-- Per-user admin authentication.
+- Per-user admin authentication backed by PostgreSQL `admin_users` and
+  `admin_user_roles`.
 - Role-based permissions.
 - Audit log for every admin action.
 - Explicit confirmation flows.
@@ -190,7 +194,8 @@ production writes.
 
 Auth model:
 
-- Dashboard/admin routes should use `Authorization: Bearer <token>` only.
+- Dashboard/admin read routes should accept `Authorization: Bearer <token>` for
+  automation and signed admin session cookies for browser use.
 - Tokens must never be accepted through query parameters.
 - Runtime principals should contain only safe metadata: admin id, display name,
   roles, permissions, tenant id, page id, and auth method.
@@ -200,6 +205,10 @@ Auth model:
 - The current compatibility principal is configured by `ADMIN_PRINCIPAL_ID`,
   `ADMIN_PRINCIPAL_DISPLAY_NAME`, and comma-separated `ADMIN_ROLES`. If
   `ADMIN_ROLES` is unset, it defaults to `owner` to preserve existing access.
+- Phase 3.5 identity provisioning and actor semantics are documented in
+  `docs/admin-identity-provisioning.md`. No production admin user should be
+  created until that design has a reviewed implementation path and separate
+  production DB write approval.
 
 RBAC model:
 
@@ -216,6 +225,9 @@ Audit model:
 - Every admin action should produce an audit event before a response is sent.
 - Audit events record actor, roles, action, resource, outcome, tenant/page,
   request id, hashed IP, user agent, and redacted metadata.
+- New audit events include safe `metadata.auth_method` when an authenticated
+  principal exists, so Bearer automation and browser session events can be
+  distinguished even before per-user identity is complete.
 - Audit metadata must redact tokens, database URLs, service account values,
   phone numbers, addresses, and raw customer export rows.
 - Audit write failures should fail closed for future write actions. For
