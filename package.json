@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "verify:internal-notes-sql": "node scripts/verify-internal-notes-sql.js",
     "test": "node tests/index.js"
   },
   "keywords": [],
