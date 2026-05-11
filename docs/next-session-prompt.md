@@ -43,21 +43,26 @@ Production:
   - DATABASE_URL=${{Postgres-TQuc.DATABASE_URL}}
   - ALLOW_PRODUCTION_DB_WRITES=true
   - ADMIN_AUDIT_LOG_ENABLED=true
+  - SESSION_SECRET chưa set ở production sau Phase 3 deploy gần nhất
   - TENANT_ID=default
   - PAGE_ID=1026325343908119
 
 Trạng thái production mới nhất đã biết:
 - Latest verified code deployment:
+  8baa178 Add admin session login flow
+- Previous code deployment:
   da48d2a Extract admin legacy handlers
-- Latest verified docs commit:
-  6d21707 Update handoff docs after legacy handler deploy
+- Latest verified docs/audit handoff commit:
+  c333388 Update handoff docs after audit rollout
 - Previous route handler code deployment:
   fd5a9a0 Extract admin route handlers
 - Previous docs-only deployed commit:
   70ac695 Update handoff docs after route handler deploy
 - Previous admin refactor code commit:
   20676a3 Refactor admin dashboard modules
-- Latest Railway deployment after enabling audit env:
+- Latest Railway deployment:
+  d30fb579-77df-4dda-97ee-4ae291262856 SUCCESS ở commit 8baa178
+- Previous Railway deployment after enabling audit env:
   2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS ở commit 6d21707
 - Previous code Railway deployment:
   69552f93-f4ee-4ef6-b382-7e7891e409df SUCCESS
@@ -72,10 +77,16 @@ Trạng thái production mới nhất đã biết:
 - Admin smoke gần nhất bằng Bearer header:
   /admin/dashboard: 200, title=Admin Dashboard
   /admin/audit: 200, title=Admin Audit Log, schema_message=false
+- /admin/login gần nhất:
+  503 Admin Login HTML vì SESSION_SECRET production chưa set.
 - Audit production đã bật và smoke gần nhất ghi 2 audit rows thành công:
   admin_audit_log=2, outcomes success=2.
 
 Git state mới nhất đã biết:
+- Latest code commit đã push/deploy:
+  8baa178 Add admin session login flow
+- Previous docs commit đã push/deploy:
+  c333388 Update handoff docs after audit rollout
 - Latest docs commit đã push/deploy trước phiên audit:
   6d21707 Update handoff docs after legacy handler deploy
 - Code refactor commit đã push/deploy:
@@ -87,11 +98,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  8baa178 Add admin session login flow
+  c333388 Update handoff docs after audit rollout
   6d21707 Update handoff docs after legacy handler deploy
   da48d2a Extract admin legacy handlers
   70ac695 Update handoff docs after route handler deploy
-  fd5a9a0 Extract admin route handlers
-  5ec0902 Expand next session handoff prompt
 
 Backup production mới nhất đã biết:
 - Path:
@@ -243,7 +254,7 @@ Backup production mới nhất đã biết:
      admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 2, outcomes success=2.
    - Không push code trong phiên audit rollout.
    - Không ghi production /data.
-9. Phiên Phase 3 code-only admin login/session:
+9. Phiên Phase 3 admin login/session, đã push/deploy code sau xác nhận:
    - Thêm browser login flow:
      GET /admin/login
      POST /admin/login
@@ -272,8 +283,17 @@ Backup production mới nhất đã biết:
      npm test: 276 passed
      npm audit --omit=dev: 0 vulnerabilities
      git diff --check pass, chỉ có cảnh báo line ending CRLF/LF
-   - Chưa push/deploy Phase 3 code nếu chưa có xác nhận riêng.
-   - Chưa set SESSION_SECRET/ADMIN_PUBLIC_BASE_URL/ADMIN_SESSION_COOKIE_NAME production nếu chưa có xác nhận riêng.
+   - Commit:
+     8baa178 Add admin session login flow
+   - Pushed origin/main.
+   - Railway deployment:
+     d30fb579-77df-4dda-97ee-4ae291262856 SUCCESS ở commit 8baa178.
+   - Smoke sau deploy:
+     /healthz ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
+     /admin/dashboard 200, title=Admin Dashboard bằng Bearer header
+     /admin/audit 200, title=Admin Audit Log bằng Bearer header
+     /admin/login 503 Admin Login HTML vì SESSION_SECRET production chưa set
+   - Chưa set SESSION_SECRET/ADMIN_PUBLIC_BASE_URL/ADMIN_SESSION_COOKIE_NAME production.
    - Không ghi production DB trong Phase 3 code-only.
    - Không ghi production /data.
 
@@ -287,7 +307,7 @@ Tính năng admin hiện có:
   - Không nhận token qua query param.
   - Legacy export/debug route còn x-admin-token compatibility.
 - Admin browser login/session code-only:
-  - /admin/login và /admin/logout đã có trong code local
+  - /admin/login và /admin/logout đã deploy trong code production
   - cần SESSION_SECRET production trước khi dùng thật trên Railway
   - Bearer token vẫn hoạt động cho automation
 - Route authorization/audit request handling đã tách vào core/admin/route-auth.js.
@@ -350,7 +370,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session đã có code-only foundation local; ưu tiên tiếp theo là review, commit/push/deploy sau xác nhận riêng, rồi set production session env sau xác nhận riêng.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session code đã deploy, nhưng production browser login chưa bật vì SESSION_SECRET chưa set. Ưu tiên tiếp theo là set session env sau xác nhận riêng, smoke login bằng browser cookie, rồi rotate ADMIN_EXPORT_TOKEN.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -368,24 +388,24 @@ Việc nên làm đầu phiên tới:
    - admin_audit_log
 5. Chạy npm test và npm audit --omit=dev.
 
-Phase 3 deploy/env rollout nếu được xác nhận:
-1. Review diff Phase 3.
-2. Chạy node --check, npm test, npm audit --omit=dev, git diff --check.
-3. Chỉ sau xác nhận riêng:
-   - commit/push code.
-4. Chờ Railway deploy SUCCESS và smoke /healthz.
-5. Chỉ sau xác nhận env riêng:
+Phase 3 env rollout nếu được xác nhận:
+1. Re-check git/deployment/healthz.
+2. Smoke Bearer:
+   - /admin/dashboard
+   - /admin/audit
+3. Chỉ sau xác nhận env riêng:
    - set SESSION_SECRET=random 64+ chars
    - set ADMIN_PUBLIC_BASE_URL=https://chatbot-fanpage-production.up.railway.app
    - set ADMIN_SESSION_COOKIE_NAME=chatbot_admin_session nếu muốn rõ ràng
-6. Smoke:
+4. Chờ Railway env deploy/restart SUCCESS.
+5. Smoke:
    - /healthz
    - /admin/login trả HTML login
    - login bằng ADMIN_EXPORT_TOKEN set cookie
    - /admin/dashboard mở được bằng cookie
    - /admin/audit mở được bằng cookie
    - verify admin_audit_log count-only tăng với login/dashboard/audit
-7. Sau khi browser login ổn, rotate ADMIN_EXPORT_TOKEN vì token cũ đã từng bị lộ trong chat.
+6. Sau khi browser login ổn, rotate ADMIN_EXPORT_TOKEN vì token cũ đã từng bị lộ trong chat.
 
 Code-only hướng khác nếu chưa deploy:
 - Tiếp tục hardening read-only:

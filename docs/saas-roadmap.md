@@ -38,7 +38,10 @@ Last verified baseline from May 11, 2026:
 - Latest production admin audit count after smoke: `admin_audit_log=2`,
   all `success`.
 - Latest verified code deployment at that time:
-  `da48d2a Extract admin legacy handlers`
+  `8baa178 Add admin session login flow`
+- Latest verified Railway deployment:
+  `d30fb579-77df-4dda-97ee-4ae291262856 SUCCESS` at commit
+  `8baa178 Add admin session login flow`
 - Latest verified Railway deployment after audit env enable:
   `2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS` at commit
   `6d21707 Update handoff docs after legacy handler deploy`
@@ -55,7 +58,9 @@ Last verified baseline from May 11, 2026:
   `fd5a9a0 Extract admin route handlers`,
   `70ac695 Update handoff docs after route handler deploy`,
   `da48d2a Extract admin legacy handlers`,
-  `6d21707 Update handoff docs after legacy handler deploy`
+  `6d21707 Update handoff docs after legacy handler deploy`,
+  `c333388 Update handoff docs after audit rollout`,
+  `8baa178 Add admin session login flow`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331`
 - Latest known backup SHA256:
   `CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D`
@@ -201,8 +206,8 @@ Rollback stance:
 
 ### Phase 3: admin login/session
 
-Status: code-only browser login/session foundation implemented locally; not
-deployed until production env and deploy are separately approved.
+Status: code deployed. Browser login is not enabled in production until
+`SESSION_SECRET` is set by a separate production env change.
 
 Goal: replace manual Bearer-header usage for the dashboard with a usable browser
 login flow.
@@ -346,6 +351,6 @@ A phase is done only when:
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
 session. The next step is to review the Phase 3 code-only admin login/session
-foundation, then decide whether to deploy it and set the required production
-session env variables. Production env changes and deploy still need separate
-approval in that session.
+foundation already deployed in code, then set the required production session
+env variables after separate approval. Production env changes still need
+separate approval in that session.
