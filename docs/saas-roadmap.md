@@ -37,9 +37,16 @@ Last verified baseline from May 11, 2026:
 - Production admin audit logging: `ADMIN_AUDIT_LOG_ENABLED=true`.
 - Latest production admin audit count after approved login/session smoke and
   token rotation: `admin_audit_log=34`, outcomes `denied=8`, `success=26`.
+- Latest production admin audit count after approved pagination smoke:
+  `admin_audit_log=38`, outcomes `denied=8`, `success=30`.
 - Latest verified code deployment at that time:
-  `0c30a9a Extract admin dashboard repository`
+  `5e2748b Add admin read pagination`
 - Latest verified code Railway deployment:
+  `84899ffb-858a-4cec-85fc-bf7d73083359 SUCCESS` at commit
+  `5e2748b Add admin read pagination`
+- Previous verified code deployment:
+  `0c30a9a Extract admin dashboard repository`
+- Previous verified code Railway deployment:
   `85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS` at commit
   `0c30a9a Extract admin dashboard repository`
 - Latest verified Railway deployment after token-rotation handoff docs:
@@ -72,13 +79,14 @@ Last verified baseline from May 11, 2026:
   `8cccc0c Update handoff docs after ops insights deploy`,
   `0c30a9a Extract admin dashboard repository`,
   `0ac16bf Update handoff docs after repository deploy`,
-  `3c45166 Update handoff docs after token rotation`
-- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres`
+  `3c45166 Update handoff docs after token rotation`,
+  `5e2748b Add admin read pagination`
+- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke`
 - Latest known backup SHA256:
-  `7AE33DB76481BE7A8FB33A0A1B7FDD4630DEEF8E1C6EEE0E072998680B087F6E`
+  `F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720`
 - Latest known counts: profiles 1, conversations 4, messages 53, orders 6,
   order_items 7, events 249, processed_mids 94, admin_users 0,
-  admin_roles 4, admin_user_roles 0, admin_audit_log 24
+  admin_roles 4, admin_user_roles 0, admin_audit_log 34
 
 Treat this baseline as a snapshot only. Every future session must re-check git,
 Railway deployment, `/healthz`, and backup status before production work.
@@ -188,8 +196,9 @@ Done:
   PostgreSQL connection lifecycle, and the read-only SQL guard.
 - Read-only bounded pagination added for dashboard overview tables and audit
   log in the HTML screens and JSON API. Dashboard sections use independent page
-  params for orders, conversations, and events. This is code-only until the
-  owner approves push/deploy.
+  params for orders, conversations, and events. This was deployed in
+  `5e2748b Add admin read pagination` and authenticated pagination smoke passed
+  after a fresh backup.
 - Admin legacy export and state handlers extracted to
   `core/admin/legacy-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
@@ -395,9 +404,8 @@ Priority improvements:
 
 Refactor targets:
 
-- Promote the local dashboard/audit pagination slice only after owner approval,
-  then smoke without authenticated admin reads unless DB-write audit smoke is
-  separately approved.
+- Extend pagination to user detail timelines if fixed detail limits become too
+  restrictive.
 - Keep HTML view helpers pure and testable.
 - Keep storage writes behind service functions.
 
@@ -418,9 +426,7 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The immediate local step is to finish the read-only pagination slice
-and only push/deploy it after explicit approval. After that, observe audit
-stability with count-only checks and implement Phase 3.5 login/identity
-hardening before any business write workflow. Do not add business write
-workflows until there is a separate design, backup plan, tests, and production
-approval.
+session. The next step is to observe audit stability with count-only checks and
+implement Phase 3.5 login/identity hardening before any business write
+workflow. Do not add business write workflows until there is a separate design,
+backup plan, tests, and production approval.

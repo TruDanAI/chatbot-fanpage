@@ -52,6 +52,10 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified code deployment:
+  5e2748b Add admin read pagination
+- Latest verified code Railway deployment:
+  84899ffb-858a-4cec-85fc-bf7d73083359 SUCCESS ở commit 5e2748b
+- Previous verified code deployment:
   0c30a9a Extract admin dashboard repository
 - Latest verified code Railway deployment:
   85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS ở commit 0c30a9a
@@ -105,11 +109,15 @@ Trạng thái production mới nhất đã biết:
   POST /admin/login bằng token mới: 303 -> /admin/dashboard, cookie HttpOnly=true, Secure=true, SameSite=Lax=true
   /admin/dashboard bằng cookie: 200, title=Admin Dashboard
   /admin/audit bằng cookie: 200, title=Admin Audit Log, schema_message=false
-- Audit production đã bật. Count-only sau smoke/token rotation mới nhất:
-  admin_audit_log=34, outcomes denied=8, success=26.
+- Audit production đã bật. Count-only sau smoke/token rotation:
+  before admin_audit_log=34, outcomes denied=8, success=26.
+- Audit production count-only sau pagination authenticated smoke:
+  after admin_audit_log=38, outcomes denied=8, success=30, auditDelta=4.
 
 Git state mới nhất đã biết:
 - Latest code commit đã push/deploy:
+  5e2748b Add admin read pagination
+- Previous code commit đã push/deploy:
   0c30a9a Extract admin dashboard repository
 - Latest docs commit đã push/deploy:
   3c45166 Update handoff docs after token rotation
@@ -134,13 +142,22 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  5e2748b Add admin read pagination
   3c45166 Update handoff docs after token rotation
   0ac16bf Update handoff docs after repository deploy
   0c30a9a Extract admin dashboard repository
   8cccc0c Update handoff docs after ops insights deploy
-  affaf4b Add admin ops insights API
 
 Backup production mới nhất đã biết:
+- Latest backup:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke
+- Latest backup archive:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke\postgres-jsonl.tar.gz
+- Latest backup SHA256:
+  F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720
+- Latest backup counts:
+  profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249, processed_mids 94,
+  admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 34
 - Path:
   C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres
 - SHA256:
@@ -480,8 +497,8 @@ Backup production mới nhất đã biết:
    - Có ghi production DB: chỉ audit rows do admin smoke, tổng +10 success rows trong phiên smoke/rotation.
    - Có đổi production env: ADMIN_EXPORT_TOKEN đã rotate, token value không in ra chat/log.
    - Không ghi production /data.
-13. Phiên code-only read-only pagination, đang là local worktree nếu chưa commit/push:
-   - Baseline quan sát lại trong phiên sau:
+13. Phiên read-only pagination, đã push/deploy/smoke sau xác nhận riêng:
+   - Baseline trước push/deploy:
      worktree có 7 file modified liên quan pagination/docs/tests.
      origin/main...HEAD = 0 0.
      Latest local HEAD: 3c45166 Update handoff docs after token rotation.
@@ -500,20 +517,44 @@ Backup production mới nhất đã biết:
    - Không đổi schema.
    - Không đổi env.
    - Không thêm production write workflow.
-   - Không push/deploy trong slice này nếu chưa có xác nhận riêng.
-   - Verify local:
+   - Verify local trước push:
      node --check pass cho core/admin/dashboard-repository.js, core/admin/reader.js,
      core/admin/views.js, core/admin/api-presenter.js, tests/admin-routes.test.js.
      npm test: 283 passed.
      npm audit --omit=dev: 0 vulnerabilities.
      git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
-   - Không ghi production DB.
+   - Commit:
+     5e2748b Add admin read pagination
+   - Pushed origin/main sau xác nhận push/deploy.
+   - Railway deployment:
+     84899ffb-858a-4cec-85fc-bf7d73083359 SUCCESS ở commit 5e2748b.
+   - Safe smoke sau deploy không ghi DB:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, title=Admin Login, has_form=true.
+   - Tạo backup PostgreSQL production mới ngoài repo bằng read-only SELECT trước authenticated smoke:
+     Path: C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke
+     Archive: C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-171508-postgres-pagination-smoke\postgres-jsonl.tar.gz
+     SHA256: F0A371964CBBA397DA6F382DE1CA77B2CE5484153F2EE9818C826AE8D80BC720
+     Counts: profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249,
+       processed_mids 94, admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 34.
+   - Authenticated pagination smoke sau backup:
+     before admin_audit_log=34, outcomes denied=8, success=26.
+     /admin/dashboard?limit=2&ordersPage=1&conversationsPage=1&eventsPage=1 bằng Bearer:
+       200, title=Admin Dashboard, has_pagination=true.
+     /admin/api/dashboard?limit=2&ordersPage=2&conversationsPage=1&eventsPage=1 bằng Bearer:
+       orders pagination page=2, limit=2, hasPrevious=true, hasNext=true.
+     /admin/audit?limit=5&page=1 bằng Bearer:
+       200, title=Admin Audit Log, has_pagination=true, schema_message=false.
+     /admin/api/audit?limit=5&page=1 bằng Bearer:
+       schemaReady=true, page=1, limit=5, hasNext=true.
+     after admin_audit_log=38, outcomes denied=8, success=30, auditDelta=4.
+   - Có ghi production DB: chỉ audit rows do admin smoke, tổng +4 success rows.
    - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
-- Dashboard overview tables có bounded read-only pagination code-only nếu slice
-  pagination đã được commit/deploy.
+- Dashboard overview tables có bounded read-only pagination đã deploy:
+  orders, conversations, recent events dùng page params độc lập.
 - Bounded user detail view.
 - Mask phone/address/snippets trong admin UI.
 - Read-only SQL guard cho dashboard reader.
@@ -538,8 +579,7 @@ Tính năng admin hiện có:
   - owner: full admin gates hiện tại
 - /admin/audit read-only.
 - /admin/audit xử lý thiếu schema gracefully, không 500.
-- /admin/audit có bounded read-only pagination code-only nếu slice pagination đã
-  được commit/deploy.
+- /admin/audit có bounded read-only pagination đã deploy.
 - Read-only JSON API foundation đã deploy:
   - /admin/api/dashboard
   - /admin/api/dashboard/users/:senderId
@@ -602,7 +642,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Ưu tiên trước mắt là hoàn tất slice read-only pagination đang ở local worktree, rồi chỉ push/deploy sau xác nhận riêng. Sau đó quan sát audit ổn định bằng count-only và làm Phase 3.5 login/identity hardening trước khi thêm bất kỳ write workflow nào.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Ưu tiên tiếp theo là quan sát audit ổn định bằng count-only và làm Phase 3.5 login/identity hardening trước khi thêm bất kỳ write workflow nào.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
