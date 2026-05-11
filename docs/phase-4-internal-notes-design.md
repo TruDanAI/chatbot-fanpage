@@ -160,6 +160,203 @@ note and inserting the audit record must happen in the same database
 transaction. If the audit insert fails, note creation must roll back and the
 operator must receive an error instead of a partially committed note.
 
+## Read-Only API/List Route Design
+
+This section is design-only. It is not approval to implement a route, add an
+HTML list, add a POST endpoint, deploy code, apply production schema, run
+authenticated production smoke, or write production data.
+
+### Route Shape
+
+Recommended first route:
+
+- `GET /admin/api/internal-notes`
+
+Required query params:
+
+- `target_type`: one of `order`, `conversation`, or `customer`.
+- `target_id`: non-empty target id. For `order`, this is the string form of
+  `orders.id`. For `conversation` and `customer`, this is the `sender_id`.
+
+Optional pagination params:
+
+- `limit`: bounded integer, default `25`, maximum `100`.
+- `offset`: bounded integer, default `0`.
+
+Use API-only first. Add HTML rendering later only after the API response,
+permission behavior, audit behavior, and missing-schema behavior are reviewed
+and tested. The first HTML integration should be a read-only list on the
+relevant target detail screen, not a note creation form.
+
+Proposed successful JSON shape:
+
+```json
+{
+  "schemaReady": true,
+  "target_type": "customer",
+  "target_id": "sender_1",
+  "limit": 25,
+  "offset": 0,
+  "notes": []
+}
+```
+
+### Permission
+
+Do not require `admin.internal_note.write` to read notes. Write permission must
+remain limited to note creation or future write actions.
+
+Default read rule: an authenticated admin who can view the target detail may
+read visible notes for that target.
+
+Suggested v1 mapping with the current RBAC model:
+
+- `customer`: require `admin.user_detail.read`.
+- `conversation`: require `admin.user_detail.read`.
+- `order`: require the existing read permission for the screen that exposes
+  order context. With the current routes, that is `admin.dashboard.read`.
+  If a dedicated order detail route or `admin.order.read` permission is added
+  later, move order-note reads to that narrower target-detail permission.
+
+If implementation later introduces a separate `admin.internal_note.read`
+permission, it should be a read permission granted to roles that can already
+view the target detail. It should not become a proxy for write access.
+
+### Missing Schema Behavior
+
+Production does not currently have the `internal_notes` table. The route must
+copy the safe `/admin/audit` missing-schema stance before any production code
+deploy:
+
+- Treat PostgreSQL missing table/column errors such as `42P01` and `42703` as
+  schema-not-ready.
+- Return HTTP `200` with `schemaReady=false`, `notes=[]`, and safe pagination
+  metadata.
+- Do not return HTTP `500` for the expected missing-schema case.
+- Do not render or return the raw database error message.
+- Do not log raw SQL, connection strings, tokens, customer rows, order rows, or
+  message rows in the user-facing response.
+
+Proposed schema-not-ready JSON shape:
+
+```json
+{
+  "schemaReady": false,
+  "target_type": "customer",
+  "target_id": "sender_1",
+  "limit": 25,
+  "offset": 0,
+  "notes": []
+}
+```
+
+Expected missing schema should be audited as a completed safe read, not as an
+application error. With the current audit outcome conventions, use
+`outcome=success` plus `metadata.schemaReady=false`. If a later audit
+convention adds a first-class schema-not-ready outcome, use that safe outcome
+instead.
+
+### Data Exposure
+
+Return only these note fields in v1:
+
+- `id`
+- `target_type`
+- `target_id`
+- `body`
+- `status`
+- `created_by`
+- `created_at`
+
+Do not return hidden notes by default. The first route should list only
+`status='visible'` notes. Do not expose hide metadata in v1:
+
+- no `hidden_by`
+- no `hidden_at`
+- no `hide_reason`
+
+Do not join raw customer, order, conversation, or message rows into this
+response. Do not expose phone numbers, addresses, tokens, secrets, database
+URLs, cookie values, raw customer data, raw order data, raw message data, or
+unmasked snippets through the note list API.
+
+### Pagination and Ordering
+
+Use bounded offset pagination first because it matches the existing local
+read/list model and is simple to test:
+
+- default `limit=25`
+- maximum `limit=100`
+- default `offset=0`
+- clamp negative or invalid offsets to `0`
+- order newest first by `created_at DESC, id DESC`
+
+A future HTML list can translate `page` into offset if that better matches the
+existing admin UI pagination style. The API should pick one canonical response
+field set and avoid accepting both `offset` and `page` ambiguously unless the
+precedence is documented and tested.
+
+### Audit
+
+Read/list should audit because admin read routes currently audit successful
+dashboard, user detail, and audit-log reads, and internal notes can contain
+operator-authored business context.
+
+Suggested audit action:
+
+- `admin.internal_note.read`
+
+Suggested audit resource:
+
+- `resource_type=internal_note`
+- `resource_id` may be empty, or a safe compound target identifier such as
+  `customer:sender_1` if the implementation standardizes that format.
+
+Allowed audit metadata:
+
+- `target_type`
+- `target_id`
+- `limit`
+- `offset` or `page`, matching the route input
+- `schemaReady`
+
+Forbidden audit metadata:
+
+- note body
+- returned note rows
+- raw customer rows
+- raw order rows
+- raw message rows
+- phone numbers
+- addresses
+- tokens
+- secrets
+- database URLs
+- cookie values
+
+Expected permission denials should use the normal admin denied audit path.
+Expected missing schema should not include the raw DB error and should not be
+treated as a failed business write.
+
+### Rollout
+
+Implementation order must stay conservative:
+
+1. Get design approval for this read-only route.
+2. Add focused local tests for validation, permission mapping, bounded
+   pagination, safe presenter fields, missing-schema behavior, and audit
+   metadata.
+3. Implement only `GET /admin/api/internal-notes`.
+4. Do not add a POST route in this slice.
+5. Do not add an HTML form in this slice.
+6. Do not add an HTML list until the API behavior is reviewed.
+7. Do not apply production schema during route design.
+
+The route can be deployed before production `internal_notes` schema exists only
+if the missing-schema behavior above is implemented and tested. The expected
+production result before schema rollout is a safe `schemaReady=false` response,
+not a 500.
+
 ## UI Confirmation Requirement
 
 The v1 UI must require explicit confirmation before creating a note:
