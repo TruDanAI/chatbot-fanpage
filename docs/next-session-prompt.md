@@ -50,12 +50,14 @@ Production:
   - PAGE_ID=1026325343908119
 
 Trạng thái production mới nhất đã biết:
-- Latest Railway deployment:
-  f55f2c43-fb2b-4bb0-9a3a-3f62def7ad21 SUCCESS ở commit 46ca2d3 Update handoff docs after session deploy
 - Latest verified code deployment:
-  8baa178 Add admin session login flow
+  affaf4b Add admin ops insights API
+- Latest verified code Railway deployment:
+  416e4908-9c70-41f3-8988-b9fafb1f03ba SUCCESS ở commit affaf4b
+- Previous Railway deployment:
+  f55f2c43-fb2b-4bb0-9a3a-3f62def7ad21 SUCCESS ở commit 46ca2d3 Update handoff docs after session deploy
 - Previous code deployment:
-  da48d2a Extract admin legacy handlers
+  8baa178 Add admin session login flow
 - Latest verified docs/audit handoff commit:
   c333388 Update handoff docs after audit rollout
 - Previous route handler code deployment:
@@ -88,9 +90,11 @@ Trạng thái production mới nhất đã biết:
   admin_audit_log=2, outcomes success=2.
 
 Git state mới nhất đã biết:
+- Latest code commit đã push/deploy:
+  affaf4b Add admin ops insights API
 - Latest docs commit đã push/deploy:
   46ca2d3 Update handoff docs after session deploy
-- Latest code commit đã push/deploy:
+- Previous code commit đã push/deploy:
   8baa178 Add admin session login flow
 - Previous docs commit đã push/deploy:
   c333388 Update handoff docs after audit rollout
@@ -105,11 +109,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  affaf4b Add admin ops insights API
   46ca2d3 Update handoff docs after session deploy
   8baa178 Add admin session login flow
   c333388 Update handoff docs after audit rollout
   6d21707 Update handoff docs after legacy handler deploy
-  da48d2a Extract admin legacy handlers
 
 Backup production mới nhất đã biết:
 - Path:
@@ -303,7 +307,7 @@ Backup production mới nhất đã biết:
    - Tại thời điểm Phase 3 code deploy, chưa set SESSION_SECRET/ADMIN_PUBLIC_BASE_URL/ADMIN_SESSION_COOKIE_NAME production.
    - Không ghi production DB trong Phase 3 code-only.
    - Không ghi production /data.
-10. Phiên code-only admin privacy headers + read-only API/ops insights foundation, local chưa push/deploy:
+10. Phiên code-only admin privacy headers + read-only API/ops insights foundation, đã push/deploy sau xác nhận:
    - Preflight local/production:
      worktree ban đầu clean, origin/main...HEAD = 0 0.
      Latest production deployment:
@@ -348,8 +352,15 @@ Backup production mới nhất đã biết:
      npm test: 282 passed.
      npm audit --omit=dev: 0 vulnerabilities.
      git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
-   - Chưa push.
-   - Chưa deploy.
+   - Commit:
+     affaf4b Add admin ops insights API
+   - Pushed origin/main sau xác nhận push/deploy.
+   - Railway deployment:
+     416e4908-9c70-41f3-8988-b9fafb1f03ba SUCCESS ở commit affaf4b.
+   - Smoke sau deploy không ghi DB:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, title=Admin Login, has_form=true.
+   - Không smoke /admin/dashboard, /admin/api/dashboard, /admin/audit bằng Bearer/cookie vì sẽ ghi audit rows production và cần xác nhận riêng cho DB write audit smoke.
    - Không đổi production env.
    - Không ghi production DB.
    - Không ghi production /data.
@@ -480,7 +491,6 @@ Phase 3 browser cookie smoke nếu được xác nhận:
 
 Code-only hướng khác nếu chưa deploy:
 - Tiếp tục hardening read-only:
-  - push/deploy admin no-store/security headers + read-only API/ops insights local changes sau xác nhận
   - dashboard repository/service split có test
   - pagination read-only cho dashboard/audit
 

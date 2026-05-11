@@ -38,10 +38,10 @@ Last verified baseline from May 11, 2026:
 - Latest production admin audit count after smoke: `admin_audit_log=2`,
   all `success`.
 - Latest verified code deployment at that time:
-  `8baa178 Add admin session login flow`
-- Latest verified Railway deployment:
-  `d30fb579-77df-4dda-97ee-4ae291262856 SUCCESS` at commit
-  `8baa178 Add admin session login flow`
+  `affaf4b Add admin ops insights API`
+- Latest verified code Railway deployment:
+  `416e4908-9c70-41f3-8988-b9fafb1f03ba SUCCESS` at commit
+  `affaf4b Add admin ops insights API`
 - Latest verified Railway deployment after audit env enable:
   `2ebbb94b-4f77-489b-a309-db3b0ed04784 SUCCESS` at commit
   `6d21707 Update handoff docs after legacy handler deploy`
@@ -60,7 +60,9 @@ Last verified baseline from May 11, 2026:
   `da48d2a Extract admin legacy handlers`,
   `6d21707 Update handoff docs after legacy handler deploy`,
   `c333388 Update handoff docs after audit rollout`,
-  `8baa178 Add admin session login flow`
+  `8baa178 Add admin session login flow`,
+  `46ca2d3 Update handoff docs after session deploy`,
+  `affaf4b Add admin ops insights API`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-101331`
 - Latest known backup SHA256:
   `CEC1076AE2CC131DB136FE81A9EBBE31D9D46D535CEF9779FB59E0F7A2CBF54D`
