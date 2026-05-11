@@ -14,9 +14,17 @@ These rules apply to every future phase:
 - Do not change production environment variables without separate approval.
 - Do not write production PostgreSQL without a fresh backup and explicit
   production DB write approval.
+- Do not use `DATABASE_URL` for schema verification scripts because it may
+  point at production; verification must require explicit non-production
+  variables such as `CHATBOT_TEST_DATABASE_URL` or
+  `CHATBOT_STAGING_DATABASE_URL`.
 - Do not delete, truncate, reset, or rewrite production data.
 - Do not switch production back to file storage.
 - Do not touch production `/data` except read-only inspection.
+- Do not run authenticated admin smoke without approval because it writes
+  audit rows.
+- Do not create a production internal note without explicit approval because
+  it writes business data.
 - Do not print customer data, tokens, `DATABASE_URL`, Facebook tokens, Google
   service account values, or Telegram tokens.
 - Add every required setup variable to `.env.example` with clear comments.
@@ -25,7 +33,7 @@ These rules apply to every future phase:
 
 ## Current baseline
 
-Last verified baseline from May 11, 2026:
+Last verified baseline from May 12, 2026:
 
 - Production Railway project: `graceful-harmony`
 - Production service: `chatbot-fanpage`
@@ -44,14 +52,35 @@ Last verified baseline from May 11, 2026:
   The rate-limit smoke produced the expected `auditDelta=14` from the fresh
   pre-smoke backup count.
 - Latest verified Railway deployment:
+  `39f5f647-9815-4b70-8891-9a612b8b8444 SUCCESS` at commit
+  `d138144 Add internal notes SQL proposal checks`
+- Latest pushed commit:
+  `d138144 Add internal notes SQL proposal checks`
+- Latest safe public smoke checks:
+  `/healthz 200`, `ok=true`, `storage.adapter=postgres`,
+  `storage.ready=true`, `messenger.dryRun=false`;
+  `GET /admin/login 200`, Admin Login form present.
+- Latest test/audit baseline:
+  `npm test` 301 passed, 0 failed; `npm audit --omit=dev` 0 vulnerabilities.
+- No authenticated admin smoke was run after the latest deployment.
+- No production `internal_notes` schema apply has been run.
+- No production environment change was made.
+- No intentional production DB write was made.
+- Production `/data` was not touched.
+- Previous verified Railway deployment:
   `c2f57a04-9040-4dc4-8d1e-bdc0cb066429 SUCCESS` at commit
   `5989b2e Complete Phase 3.5 identity audit design`
-- Previous verified Railway deployment:
+- Earlier verified Railway deployment:
   `0d92944b-4aa7-4a84-bdfe-836d01ac2e93 SUCCESS` at commit
   `2841e69 Update handoff docs after login rate limit deploy`
-- Latest verified code deployment at that time:
-  `31bcf1f Add admin login rate limit`
+- Latest verified code deployment:
+  `d138144 Add internal notes SQL proposal checks`
 - Latest verified code Railway deployment:
+  `39f5f647-9815-4b70-8891-9a612b8b8444 SUCCESS` at commit
+  `d138144 Add internal notes SQL proposal checks`
+- Previous verified code deployment:
+  `31bcf1f Add admin login rate limit`
+- Previous verified code Railway deployment:
   `ca5e0770-34bd-40e7-a7a5-61998c06768e SUCCESS` at commit
   `31bcf1f Add admin login rate limit`
 - Previous verified code deployment:
@@ -99,7 +128,17 @@ Last verified baseline from May 11, 2026:
   `1c35127 Update handoff docs after pagination smoke`,
   `31bcf1f Add admin login rate limit`,
   `2841e69 Update handoff docs after login rate limit deploy`,
-  `5989b2e Complete Phase 3.5 identity audit design`
+  `5989b2e Complete Phase 3.5 identity audit design`,
+  `d138144 Add internal notes SQL proposal checks`
+- Phase 4 internal notes current status:
+  design doc exists in `docs/phase-4-internal-notes-design.md`;
+  SQL proposal exists in `db/internal-notes-proposal.sql`;
+  local service exists in `core/admin/internal-notes.js`;
+  validation, RBAC, transaction, audit fail-closed, safe metadata, unresolved
+  actor, and static SQL proposal checks exist in
+  `tests/admin-internal-notes.test.js`; there is no POST route; there is no UI
+  form; production schema has not been applied; no authenticated production
+  note-create smoke has been run.
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke`
 - Latest known backup SHA256:
   `06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85`
@@ -345,12 +384,36 @@ Exit criteria before Phase 4:
 
 Goal: introduce small, explicit write actions.
 
+Current internal-notes status:
+
+- Design doc exists: `docs/phase-4-internal-notes-design.md`.
+- SQL proposal exists: `db/internal-notes-proposal.sql`.
+- Local PostgreSQL service exists: `core/admin/internal-notes.js`.
+- Tests exist for validation, RBAC, transaction ordering, audit fail-closed
+  behavior, safe audit metadata, unresolved actor handling, and static SQL
+  proposal checks.
+- No POST route exists.
+- No UI form exists.
+- No production `internal_notes` schema apply has been run.
+- No authenticated production note-create smoke has been run.
+
 Candidate first write actions:
 
-- Mark order as handled.
 - Add internal note.
+- Mark order as handled.
 - Trigger one safe staff notification retry.
 - Update limited shop setting in staging first.
+
+Recommended next task before any route/UI work:
+
+- Create a safe non-production SQL verification script for
+  `db/internal-notes-proposal.sql`.
+- The script must refuse `DATABASE_URL` and accept only explicit
+  non-production variables such as `CHATBOT_TEST_DATABASE_URL` or
+  `CHATBOT_STAGING_DATABASE_URL`.
+- Apply the SQL proposal inside an isolated schema.
+- Verify table, indexes, constraints, and idempotency.
+- Drop the isolated schema afterward.
 
 Rules:
 
@@ -359,6 +422,12 @@ Rules:
 - Every write action needs tests.
 - Every write action needs a rollback plan.
 - Production write approval must be action-specific.
+- Do not apply the `internal_notes` schema to production without a fresh backup
+  and separate approval.
+- Do not run authenticated production admin smoke without approval because it
+  writes audit rows.
+- Do not create a production internal note without explicit approval because it
+  writes business data.
 
 Avoid initially:
 
@@ -457,7 +526,9 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. Phase 3.5 is now a completed pre-write design gate. The next step is
-to design the first Phase 4 write workflow on paper first, then implement only
-after there is a separate backup plan, tests, rollback stance, and explicit
-production approval for any write.
+session. Phase 4 internal notes now has a design doc, SQL proposal, local
+service, and focused tests, but no route/UI and no production schema apply.
+The next step is a non-production SQL verification script that refuses
+`DATABASE_URL`, applies `db/internal-notes-proposal.sql` in an isolated schema,
+verifies table/indexes/constraints/idempotency, and drops the isolated schema
+afterward.
