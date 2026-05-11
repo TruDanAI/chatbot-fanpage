@@ -13,6 +13,14 @@ function toInteger(value, fallback, { min = 1, max = 100 } = {}) {
   return Math.max(min, Math.min(max, Math.floor(number)));
 }
 
+function toPagination({ limit, page }) {
+  const safePage = toInteger(page, 1, { min: 1, max: 1000 });
+  return {
+    page: safePage,
+    offset: (safePage - 1) * limit
+  };
+}
+
 const DEFAULT_DASHBOARD_LIMITS = {
   overviewRows: 25,
   attentionRows: 8,
@@ -25,13 +33,24 @@ const DEFAULT_DASHBOARD_LIMITS = {
 };
 
 function normalizeDashboardFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS) {
+  const limit = toInteger(query.limit, limits.overviewRows, { min: 1, max: 100 });
+  const fallbackPage = query.page;
+  const orders = toPagination({ limit, page: query.ordersPage || fallbackPage });
+  const conversations = toPagination({ limit, page: query.conversationsPage || fallbackPage });
+  const events = toPagination({ limit, page: query.eventsPage || fallbackPage });
   const status = normalizeFilterText(query.status, 40).toLowerCase();
   const filters = {
     senderId: normalizeFilterText(query.senderId, 100),
     status: ORDER_STATUS_FILTERS.has(status) ? status : '',
     productCode: normalizeFilterText(query.productCode, 40),
     eventType: normalizeFilterText(query.eventType, 40),
-    limit: toInteger(query.limit, limits.overviewRows, { min: 1, max: 100 })
+    limit,
+    ordersPage: orders.page,
+    ordersOffset: orders.offset,
+    conversationsPage: conversations.page,
+    conversationsOffset: conversations.offset,
+    eventsPage: events.page,
+    eventsOffset: events.offset
   };
   filters.activeCount = ['senderId', 'status', 'productCode', 'eventType']
     .filter(key => Boolean(filters[key]))
@@ -40,12 +59,16 @@ function normalizeDashboardFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS
 }
 
 function normalizeAuditFilters(query = {}, limits = DEFAULT_DASHBOARD_LIMITS) {
+  const limit = toInteger(query.limit, limits.auditRows, { min: 1, max: 100 });
+  const pagination = toPagination({ limit, page: query.page });
   const outcome = normalizeFilterText(query.outcome, 40).toLowerCase();
   const filters = {
     actorId: normalizeFilterText(query.actorId, 100),
     action: normalizeFilterText(query.action, 120),
     outcome: AUDIT_OUTCOME_FILTERS.has(outcome) ? outcome : '',
-    limit: toInteger(query.limit, limits.auditRows, { min: 1, max: 100 })
+    limit,
+    page: pagination.page,
+    offset: pagination.offset
   };
   filters.activeCount = ['actorId', 'action', 'outcome']
     .filter(key => Boolean(filters[key]))

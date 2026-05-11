@@ -36,6 +36,23 @@ function isMissingAuditSchemaError(err) {
   return err && ['42P01', '42703'].includes(String(err.code || ''));
 }
 
+function createPageMeta({ page = 1, limit = 25, offset = 0, total = 0 } = {}) {
+  const safeTotal = Number(total || 0);
+  const safeLimit = Number(limit || 1);
+  const safePage = Number(page || 1);
+  const safeOffset = Number(offset || 0);
+  return {
+    page: safePage,
+    limit: safeLimit,
+    offset: safeOffset,
+    total: safeTotal,
+    hasPrevious: safePage > 1,
+    hasNext: safeOffset + safeLimit < safeTotal,
+    previousPage: safePage > 1 ? safePage - 1 : null,
+    nextPage: safeOffset + safeLimit < safeTotal ? safePage + 1 : null
+  };
+}
+
 function createDashboardRepository({
   tenantId = 'default',
   pageId = '',
@@ -43,6 +60,24 @@ function createDashboardRepository({
 } = {}) {
   async function getOverview(client, filters = {}) {
     const params = [tenantId, pageId];
+    const pageLimit = Number(filters.limit || limits.overviewRows || 25);
+    const pages = {
+      conversations: {
+        page: Number(filters.conversationsPage || filters.page || 1),
+        limit: pageLimit,
+        offset: Number(filters.conversationsOffset ?? filters.offset ?? 0)
+      },
+      orders: {
+        page: Number(filters.ordersPage || filters.page || 1),
+        limit: pageLimit,
+        offset: Number(filters.ordersOffset ?? filters.offset ?? 0)
+      },
+      events: {
+        page: Number(filters.eventsPage || filters.page || 1),
+        limit: pageLimit,
+        offset: Number(filters.eventsOffset ?? filters.offset ?? 0)
+      }
+    };
     const conversationsScope = buildOverviewQueryScope(filters, {
       tableAlias: 'c',
       productColumn: 'c.last_product_code'
@@ -58,8 +93,11 @@ function createDashboardRepository({
       eventTypeColumn: 'e.type'
     });
     const conversationsLimitParam = 3 + conversationsScope.filterParams.length;
+    const conversationsOffsetParam = conversationsLimitParam + 1;
     const ordersLimitParam = 3 + ordersScope.filterParams.length;
+    const ordersOffsetParam = ordersLimitParam + 1;
     const eventsLimitParam = 3 + eventsScope.filterParams.length;
+    const eventsOffsetParam = eventsLimitParam + 1;
     const counts = await client.query(`
       SELECT
         (SELECT COUNT(*)::int FROM profiles WHERE tenant_id = $1 AND page_id = $2) AS profiles,
@@ -70,13 +108,29 @@ function createDashboardRepository({
         (SELECT COUNT(*)::int FROM events WHERE tenant_id = $1 AND page_id = $2) AS events,
         (SELECT COUNT(*)::int FROM processed_mids WHERE tenant_id = $1 AND page_id = $2) AS processed_mids
     `, params);
+    const conversationRows = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM conversations c
+      WHERE ${conversationsScope.whereSql}
+    `, [...params, ...conversationsScope.filterParams]);
+    const orderRows = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM orders o
+      WHERE ${ordersScope.whereSql}
+    `, [...params, ...ordersScope.filterParams]);
+    const eventRows = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM events e
+      WHERE ${eventsScope.whereSql}
+    `, [...params, ...eventsScope.filterParams]);
     const conversations = await client.query(`
       SELECT sender_id, session_state, last_product_code, last_user_at, updated_at
       FROM conversations c
       WHERE ${conversationsScope.whereSql}
       ORDER BY updated_at DESC, sender_id ASC
       LIMIT $${conversationsLimitParam}
-    `, [...params, ...conversationsScope.filterParams, filters.limit]);
+      OFFSET $${conversationsOffsetParam}
+    `, [...params, ...conversationsScope.filterParams, pages.conversations.limit, pages.conversations.offset]);
     const orders = await client.query(`
       SELECT o.id, o.sender_id, o.status, o.product_code, o.customer_name,
              o.phone, o.address, o.updated_at, COUNT(oi.id)::int AS item_count
@@ -87,14 +141,16 @@ function createDashboardRepository({
                o.phone, o.address, o.updated_at
       ORDER BY o.updated_at DESC, o.id DESC
       LIMIT $${ordersLimitParam}
-    `, [...params, ...ordersScope.filterParams, filters.limit]);
+      OFFSET $${ordersOffsetParam}
+    `, [...params, ...ordersScope.filterParams, pages.orders.limit, pages.orders.offset]);
     const events = await client.query(`
       SELECT id, sender_id, type, source, session_state, product_code, event_at, text
       FROM events e
       WHERE ${eventsScope.whereSql}
       ORDER BY event_at DESC, id DESC
       LIMIT $${eventsLimitParam}
-    `, [...params, ...eventsScope.filterParams, filters.limit]);
+      OFFSET $${eventsOffsetParam}
+    `, [...params, ...eventsScope.filterParams, pages.events.limit, pages.events.offset]);
     const activity = await client.query(`
       SELECT
         (SELECT COUNT(*)::int FROM orders WHERE tenant_id = $1 AND page_id = $2 AND updated_at >= now() - interval '24 hours') AS orders_24h,
@@ -189,7 +245,27 @@ function createDashboardRepository({
       orders: orders.rows,
       events: events.rows,
       filters,
-      limits: { ...limits, overviewRows: filters.limit }
+      pagination: {
+        conversations: createPageMeta({
+          page: pages.conversations.page,
+          limit: pages.conversations.limit,
+          offset: pages.conversations.offset,
+          total: conversationRows.rows[0]?.total
+        }),
+        orders: createPageMeta({
+          page: pages.orders.page,
+          limit: pages.orders.limit,
+          offset: pages.orders.offset,
+          total: orderRows.rows[0]?.total
+        }),
+        events: createPageMeta({
+          page: pages.events.page,
+          limit: pages.events.limit,
+          offset: pages.events.offset,
+          total: eventRows.rows[0]?.total
+        })
+      },
+      limits: { ...limits, overviewRows: pageLimit }
     };
   }
 
@@ -258,6 +334,11 @@ function createDashboardRepository({
   }
 
   async function getAuditLog(client, filters = {}) {
+    const page = {
+      page: Number(filters.page || 1),
+      limit: Number(filters.limit || limits.auditRows || 50),
+      offset: Number(filters.offset || 0)
+    };
     const conditions = ['tenant_id = $1', 'page_id = $2'];
     const filterParams = [];
     if (filters.actorId) {
@@ -270,9 +351,16 @@ function createDashboardRepository({
       addSqlCondition(conditions, filterParams, 'outcome = ?', filters.outcome);
     }
     const limitParam = 3 + filterParams.length;
+    const offsetParam = limitParam + 1;
     let audit;
+    let totalRows = { rows: [{ total: 0 }] };
     let schemaReady = true;
     try {
+      totalRows = await client.query(`
+        SELECT COUNT(*)::int AS total
+        FROM admin_audit_log
+        WHERE ${conditions.join(' AND ')}
+      `, [tenantId, pageId, ...filterParams]);
       audit = await client.query(`
         SELECT occurred_at, actor_id, actor_roles, action, resource_type,
                resource_id, outcome, request_id, user_agent
@@ -280,11 +368,13 @@ function createDashboardRepository({
         WHERE ${conditions.join(' AND ')}
         ORDER BY occurred_at DESC, id DESC
         LIMIT $${limitParam}
-      `, [tenantId, pageId, ...filterParams, filters.limit]);
+        OFFSET $${offsetParam}
+      `, [tenantId, pageId, ...filterParams, page.limit, page.offset]);
     } catch (err) {
       if (!isMissingAuditSchemaError(err)) throw err;
       schemaReady = false;
       audit = { rows: [] };
+      totalRows = { rows: [{ total: 0 }] };
     }
 
     return {
@@ -293,7 +383,15 @@ function createDashboardRepository({
       rows: audit.rows,
       schemaReady,
       filters,
-      limits: { ...limits, auditRows: filters.limit }
+      pagination: {
+        audit: createPageMeta({
+          page: page.page,
+          limit: page.limit,
+          offset: page.offset,
+          total: totalRows.rows[0]?.total
+        })
+      },
+      limits: { ...limits, auditRows: page.limit }
     };
   }
 

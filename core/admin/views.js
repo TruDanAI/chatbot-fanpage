@@ -65,7 +65,18 @@ function renderStatus(value = '') {
 function dashboardQueryString(filters = {}, overrides = {}) {
   const params = new URLSearchParams();
   const next = { ...filters, ...overrides };
-  for (const key of ['senderId', 'status', 'productCode', 'eventType', 'limit']) {
+  for (const key of ['senderId', 'status', 'productCode', 'eventType', 'limit', 'ordersPage', 'conversationsPage', 'eventsPage']) {
+    const value = String(next[key] || '').trim();
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+function auditQueryString(filters = {}, overrides = {}) {
+  const params = new URLSearchParams();
+  const next = { ...filters, ...overrides };
+  for (const key of ['actorId', 'action', 'outcome', 'limit', 'page']) {
     const value = String(next[key] || '').trim();
     if (value) params.set(key, value);
   }
@@ -117,6 +128,9 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .filters button, .filters a { min-height: 34px; border-radius: 6px; padding: 7px 10px; font-size: 14px; font-weight: 700; text-align: center; box-sizing: border-box; }
     .filters button { border: 1px solid var(--primary); color: #ffffff; background: var(--primary); cursor: pointer; }
     .filters a { border: 1px solid var(--border); color: #334155; background: #ffffff; text-decoration: none; }
+    .pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; color: var(--muted); font-size: 13px; }
+    .pagination a, .pagination span { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: #ffffff; }
+    .pagination span { color: var(--muted); background: #f8fafc; }
     .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
     .count { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
     .count span { color: var(--muted); font-size: 13px; }
@@ -174,6 +188,20 @@ function renderCounts(counts = {}) {
 function renderTable(headers, rows, renderRow) {
   if (!rows.length) return '<div class="empty">Không có dữ liệu.</div>';
   return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table>`;
+}
+
+function renderPagination(page = {}, filters = {}, queryString = dashboardQueryString, pageParam = 'page') {
+  const total = Number(page.total || 0);
+  const limit = Math.max(1, Number(page.limit || filters.limit || 1));
+  const currentPage = Math.max(1, Number(page.page || filters.page || 1));
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const previous = page.hasPrevious
+    ? `<a href="${queryString(filters, { [pageParam]: page.previousPage })}">Previous</a>`
+    : '<span>Previous</span>';
+  const next = page.hasNext
+    ? `<a href="${queryString(filters, { [pageParam]: page.nextPage })}">Next</a>`
+    : '<span>Next</span>';
+  return `<nav class="pagination" aria-label="Pagination">${previous}<span>Page ${escapeHtml(currentPage)} of ${escapeHtml(totalPages)}</span><span>${escapeHtml(total)} rows</span>${next}</nav>`;
 }
 
 function renderOperations(operations = {}, filters = {}) {
@@ -288,12 +316,16 @@ function renderAuditFilterForm(filters = {}) {
     <label>Limit
       <input name="limit" type="number" min="1" max="100" value="${escapeHtml(filters.limit || 50)}">
     </label>
+    <label>Page
+      <input name="page" type="number" min="1" max="1000" value="${escapeHtml(filters.page || 1)}">
+    </label>
     <button type="submit">Filter</button>
     <a href="/admin/audit">Clear</a>
   </form>`;
 }
 
 function renderDashboardHtml(model) {
+  const pagination = model.pagination || {};
   const body = `
     <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
     ${renderFilterForm(model.filters || {})}
@@ -301,6 +333,7 @@ function renderDashboardHtml(model) {
     ${renderOperations(model.operations || {}, model.filters || {})}
 
     <h2>Orders</h2>
+    ${renderPagination(pagination.orders, model.filters || {}, dashboardQueryString, 'ordersPage')}
     ${renderTable(['updated', 'sender', 'status', 'product', 'name', 'phone', 'address', 'items'], model.orders, order => `
       <tr>
         <td>${escapeHtml(formatDate(order.updated_at))}</td>
@@ -315,6 +348,7 @@ function renderDashboardHtml(model) {
     `)}
 
     <h2>Conversations</h2>
+    ${renderPagination(pagination.conversations, model.filters || {}, dashboardQueryString, 'conversationsPage')}
     ${renderTable(['updated', 'sender', 'state', 'last product', 'last user at'], model.conversations, item => `
       <tr>
         <td>${escapeHtml(formatDate(item.updated_at))}</td>
@@ -326,6 +360,7 @@ function renderDashboardHtml(model) {
     `)}
 
     <h2>Recent Events</h2>
+    ${renderPagination(pagination.events, model.filters || {}, dashboardQueryString, 'eventsPage')}
     ${renderTable(['time', 'sender', 'type', 'source', 'product', 'text'], model.events, event => `
       <tr>
         <td>${escapeHtml(formatDate(event.event_at))}</td>
@@ -341,11 +376,13 @@ function renderDashboardHtml(model) {
 }
 
 function renderAuditHtml(model) {
+  const pagination = model.pagination || {};
   const body = `
     <p><a href="/admin/dashboard">Back to dashboard</a></p>
-    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | audit limit ${escapeHtml(model.limits.auditRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | audit limit ${escapeHtml(model.limits.auditRows)} | audit page ${escapeHtml(model.filters?.page || 1)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
     ${model.schemaReady === false ? '<div class="empty">Audit schema chưa được apply. Hãy chạy migration theo runbook trước khi bật audit log.</div>' : ''}
     ${renderAuditFilterForm(model.filters || {})}
+    ${renderPagination(pagination.audit, model.filters || {}, auditQueryString)}
     ${renderTable(['time', 'actor', 'roles', 'action', 'resource', 'outcome', 'request', 'user agent'], model.rows, row => `
       <tr>
         <td>${escapeHtml(formatDate(row.occurred_at))}</td>

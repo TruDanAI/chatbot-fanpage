@@ -55,6 +55,9 @@ Trạng thái production mới nhất đã biết:
   0c30a9a Extract admin dashboard repository
 - Latest verified code Railway deployment:
   85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS ở commit 0c30a9a
+- Latest verified Railway deployment:
+  f8faaaf0-69c2-4988-abc5-cfd13b72bd48 SUCCESS ở commit 3c45166
+  Update handoff docs after token rotation
 - Latest verified Railway deployment after ADMIN_EXPORT_TOKEN rotation:
   255aacfd-1f58-4697-ba1f-378a65ec1f7a SUCCESS ở commit 0ac16bf
 - Previous Railway deployment after first token rotation attempt:
@@ -108,6 +111,10 @@ Trạng thái production mới nhất đã biết:
 Git state mới nhất đã biết:
 - Latest code commit đã push/deploy:
   0c30a9a Extract admin dashboard repository
+- Latest docs commit đã push/deploy:
+  3c45166 Update handoff docs after token rotation
+- Latest docs commit đã push/deploy sau repository deploy:
+  0ac16bf Update handoff docs after repository deploy
 - Latest docs commit đã push/deploy trước repository slice:
   8cccc0c Update handoff docs after ops insights deploy
 - Previous code commit đã push/deploy:
@@ -127,11 +134,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  3c45166 Update handoff docs after token rotation
+  0ac16bf Update handoff docs after repository deploy
   0c30a9a Extract admin dashboard repository
   8cccc0c Update handoff docs after ops insights deploy
   affaf4b Add admin ops insights API
-  46ca2d3 Update handoff docs after session deploy
-  8baa178 Add admin session login flow
 
 Backup production mới nhất đã biết:
 - Path:
@@ -473,9 +480,40 @@ Backup production mới nhất đã biết:
    - Có ghi production DB: chỉ audit rows do admin smoke, tổng +10 success rows trong phiên smoke/rotation.
    - Có đổi production env: ADMIN_EXPORT_TOKEN đã rotate, token value không in ra chat/log.
    - Không ghi production /data.
+13. Phiên code-only read-only pagination, đang là local worktree nếu chưa commit/push:
+   - Baseline quan sát lại trong phiên sau:
+     worktree có 7 file modified liên quan pagination/docs/tests.
+     origin/main...HEAD = 0 0.
+     Latest local HEAD: 3c45166 Update handoff docs after token rotation.
+     Latest production Railway deployment:
+       f8faaaf0-69c2-4988-abc5-cfd13b72bd48 SUCCESS ở commit 3c45166.
+     /healthz production:
+       ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+   - Thêm bounded pagination cho dashboard overview tables:
+     orders, conversations, recent events.
+   - Dashboard dùng page params độc lập:
+     `ordersPage`, `conversationsPage`, `eventsPage`.
+   - Thêm bounded `page`/`limit` pagination cho `/admin/audit`.
+   - Repository thêm filtered count-only SELECT và `LIMIT/OFFSET` parameterized.
+   - HTML admin render Previous/Next và Page input cho dashboard/audit.
+   - JSON API trả thêm `pagination` metadata cho `/admin/api/dashboard` và `/admin/api/audit`.
+   - Không đổi schema.
+   - Không đổi env.
+   - Không thêm production write workflow.
+   - Không push/deploy trong slice này nếu chưa có xác nhận riêng.
+   - Verify local:
+     node --check pass cho core/admin/dashboard-repository.js, core/admin/reader.js,
+     core/admin/views.js, core/admin/api-presenter.js, tests/admin-routes.test.js.
+     npm test: 283 passed.
+     npm audit --omit=dev: 0 vulnerabilities.
+     git diff --check pass, chỉ có cảnh báo line ending CRLF/LF.
+   - Không ghi production DB.
+   - Không ghi production /data.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
+- Dashboard overview tables có bounded read-only pagination code-only nếu slice
+  pagination đã được commit/deploy.
 - Bounded user detail view.
 - Mask phone/address/snippets trong admin UI.
 - Read-only SQL guard cho dashboard reader.
@@ -500,6 +538,8 @@ Tính năng admin hiện có:
   - owner: full admin gates hiện tại
 - /admin/audit read-only.
 - /admin/audit xử lý thiếu schema gracefully, không 500.
+- /admin/audit có bounded read-only pagination code-only nếu slice pagination đã
+  được commit/deploy.
 - Read-only JSON API foundation đã deploy:
   - /admin/api/dashboard
   - /admin/api/dashboard/users/:senderId
@@ -562,7 +602,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Ưu tiên tiếp theo là quan sát audit ổn định bằng count-only sau một thời gian sử dụng, rồi tiếp tục hardening read-only hoặc thiết kế identity provisioning/admin users trước khi thêm write workflow.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Ưu tiên trước mắt là hoàn tất slice read-only pagination đang ở local worktree, rồi chỉ push/deploy sau xác nhận riêng. Sau đó quan sát audit ổn định bằng count-only và làm Phase 3.5 login/identity hardening trước khi thêm bất kỳ write workflow nào.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -592,12 +632,16 @@ Phase 3 browser cookie smoke:
 
 Code-only hướng khác:
 - Tiếp tục hardening read-only:
-  - pagination read-only cho dashboard/audit
+  - pagination read-only cho user detail timelines nếu fixed limits bắt đầu thiếu
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
-  - chuẩn bị identity provisioning/admin users nhưng chưa thêm production user nếu chưa có thiết kế riêng
+- Phase 3.5 trước write workflow:
+  - thêm login rate limit cho /admin/login với tests
+  - thiết kế identity provisioning/admin users nhưng chưa thêm production user nếu chưa có rollback và xác nhận riêng
+  - định nghĩa actor/audit semantics cho Bearer automation và browser session
 
 Không làm vội:
 - Không thêm business write workflow cho tới khi audit production được quan sát ổn định.
+- Không bỏ qua Phase 3.5 login/identity hardening trước write workflow.
 - Không thêm admin user production nếu chưa review identity provisioning và rollback.
 - Không deploy/push/đổi env/ghi production DB nếu chưa có xác nhận riêng trong phiên mới.
 

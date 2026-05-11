@@ -42,6 +42,9 @@ Last verified baseline from May 11, 2026:
 - Latest verified code Railway deployment:
   `85084c38-40a2-44ef-acc1-882035dc89cb SUCCESS` at commit
   `0c30a9a Extract admin dashboard repository`
+- Latest verified Railway deployment after token-rotation handoff docs:
+  `f8faaaf0-69c2-4988-abc5-cfd13b72bd48 SUCCESS` at commit
+  `3c45166 Update handoff docs after token rotation`
 - Latest verified Railway deployment after `ADMIN_EXPORT_TOKEN` rotation:
   `255aacfd-1f58-4697-ba1f-378a65ec1f7a SUCCESS` at commit
   `0ac16bf Update handoff docs after repository deploy`
@@ -67,7 +70,9 @@ Last verified baseline from May 11, 2026:
   `46ca2d3 Update handoff docs after session deploy`,
   `affaf4b Add admin ops insights API`,
   `8cccc0c Update handoff docs after ops insights deploy`,
-  `0c30a9a Extract admin dashboard repository`
+  `0c30a9a Extract admin dashboard repository`,
+  `0ac16bf Update handoff docs after repository deploy`,
+  `3c45166 Update handoff docs after token rotation`
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-152322-postgres`
 - Latest known backup SHA256:
   `7AE33DB76481BE7A8FB33A0A1B7FDD4630DEEF8E1C6EEE0E072998680B087F6E`
@@ -181,6 +186,10 @@ Done:
 - Dashboard SQL extracted into `core/admin/dashboard-repository.js`, with
   `core/admin/reader.js` keeping filter normalization, limit config,
   PostgreSQL connection lifecycle, and the read-only SQL guard.
+- Read-only bounded pagination added for dashboard overview tables and audit
+  log in the HTML screens and JSON API. Dashboard sections use independent page
+  params for orders, conversations, and events. This is code-only until the
+  owner approves push/deploy.
 - Admin legacy export and state handlers extracted to
   `core/admin/legacy-routes.js`.
 - Production smoke checks for `/admin/dashboard` and `/admin/audit` passed
@@ -262,6 +271,36 @@ Security requirements:
 - Rate limit login endpoints.
 - No token in query params.
 
+### Phase 3.5: identity and login hardening
+
+Status: next recommended design/implementation phase before business write
+workflows.
+
+Goal: make admin identity safer and more traceable before the system allows
+operational writes.
+
+Recommended steps:
+
+- Add a small login rate limiter for `/admin/login` with tests. Keep it local
+  memory at first unless multi-instance behavior becomes a real production
+  issue.
+- Design PostgreSQL-backed admin user provisioning without creating production
+  users until there is a rollback plan and separate approval.
+- Decide how static `ADMIN_EXPORT_TOKEN` maps to an actor while browser
+  sessions continue to use the current token-based login.
+- Keep Bearer automation support, but document actor identity and audit
+  semantics clearly.
+- Re-check production audit counts and outcome breakdown using count-only
+  queries before enabling any write action.
+
+Exit criteria before Phase 4:
+
+- Login rate limit is implemented and tested.
+- Admin user provisioning design is documented.
+- Production audit logging has been observed without unexpected `error`
+  outcomes.
+- No new production write workflow exists yet.
+
 ### Phase 4: admin write workflows
 
 Goal: introduce small, explicit write actions.
@@ -342,7 +381,9 @@ Migration approach:
 
 Priority improvements:
 
-- Add pagination instead of only fixed limits.
+- Keep replacing fixed limits with bounded read-only pagination.
+- Extend pagination to user detail timelines if fixed detail limits become too
+  restrictive.
 - Add targeted indexes for slow dashboard queries.
 - Avoid loading full histories into memory for large tenants.
 - Keep dashboard insights read-only and bounded; promote them into dedicated
@@ -354,8 +395,9 @@ Priority improvements:
 
 Refactor targets:
 
-- Add read-only pagination for dashboard tables when fixed limits become too
-  restrictive.
+- Promote the local dashboard/audit pagination slice only after owner approval,
+  then smoke without authenticated admin reads unless DB-write audit smoke is
+  separately approved.
 - Keep HTML view helpers pure and testable.
 - Keep storage writes behind service functions.
 
@@ -376,7 +418,9 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. The next step is to observe audit stability with count-only checks,
-then continue read-only hardening or design identity provisioning/admin users.
-Do not add business write workflows until there is a separate design, backup
-plan, tests, and production approval.
+session. The immediate local step is to finish the read-only pagination slice
+and only push/deploy it after explicit approval. After that, observe audit
+stability with count-only checks and implement Phase 3.5 login/identity
+hardening before any business write workflow. Do not add business write
+workflows until there is a separate design, backup plan, tests, and production
+approval.

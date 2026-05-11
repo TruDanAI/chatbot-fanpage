@@ -866,13 +866,16 @@ describe('admin dashboard PostgreSQL reader', () => {
     });
 
     expect(model.schemaReady).toBeTrue();
-    expect(queries.length).toBe(1);
+    expect(queries.length).toBe(2);
     expect(queries[0].sql.trim()).toMatch(/^SELECT/i);
-    expect(queries[0].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard\\%%', 'success', 7]);
-    expect(queries[0].sql).toContain('actor_id ILIKE $3');
-    expect(queries[0].sql).toContain('action ILIKE $4');
-    expect(queries[0].sql).toContain('outcome = $5');
-    expect(queries[0].sql).toContain('LIMIT $6');
+    expect(queries[1].sql.trim()).toMatch(/^SELECT/i);
+    expect(queries[0].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard\\%%', 'success']);
+    expect(queries[1].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard\\%%', 'success', 7, 0]);
+    expect(queries[1].sql).toContain('actor_id ILIKE $3');
+    expect(queries[1].sql).toContain('action ILIKE $4');
+    expect(queries[1].sql).toContain('outcome = $5');
+    expect(queries[1].sql).toContain('LIMIT $6');
+    expect(queries[1].sql).toContain('OFFSET $7');
   });
 
   it('reader chỉ gửi SELECT statements tới client', async () => {
@@ -927,23 +930,31 @@ describe('admin dashboard PostgreSQL reader', () => {
       Client: FakeClient
     });
 
-    await reader.getOverview({
+    const model = await reader.getOverview({
       senderId: 'sender_1',
       status: 'confirmed',
       productCode: 'MÃ8',
       eventType: 'lead',
-      limit: '5'
+      limit: '5',
+      ordersPage: '3',
+      eventsPage: '2'
     });
 
-    const orderQuery = queries.find(item => item.sql.includes('FROM orders o'));
-    const eventQuery = queries.find(item => item.sql.includes('FROM events e'));
+    const orderQuery = queries.find(item => item.sql.includes('FROM orders o') && item.sql.includes('GROUP BY o.id'));
+    const eventQuery = queries.find(item => item.sql.includes('FROM events e') && item.sql.includes('ORDER BY event_at DESC'));
     expect(Boolean(orderQuery)).toBeTrue();
     expect(Boolean(eventQuery)).toBeTrue();
-    expect(orderQuery.params).toEqual(['default', 'page', '%sender\\_1%', '%MÃ8%', 'confirmed', 5]);
-    expect(eventQuery.params).toEqual(['default', 'page', '%sender\\_1%', '%MÃ8%', '%lead%', 5]);
+    expect(orderQuery.params).toEqual(['default', 'page', '%sender\\_1%', '%MÃ8%', 'confirmed', 5, 10]);
+    expect(eventQuery.params).toEqual(['default', 'page', '%sender\\_1%', '%MÃ8%', '%lead%', 5, 5]);
     expect(orderQuery.sql).toContain('o.sender_id ILIKE $3');
     expect(orderQuery.sql).toContain('o.status = $5');
     expect(orderQuery.sql).toContain('LIMIT $6');
+    expect(orderQuery.sql).toContain('OFFSET $7');
+    expect(model.filters.ordersPage).toBe(3);
+    expect(model.filters.ordersOffset).toBe(10);
+    expect(model.filters.eventsPage).toBe(2);
+    expect(model.filters.eventsOffset).toBe(5);
+    expect(model.pagination.orders.page).toBe(3);
   });
 
   it('reader trả operational insights bằng SELECT read-only', async () => {
@@ -1010,20 +1021,25 @@ describe('admin dashboard PostgreSQL reader', () => {
       Client: FakeClient
     });
 
-    await reader.getAuditLog({
+    const model = await reader.getAuditLog({
       actorId: 'admin_1',
       action: 'dashboard',
       outcome: 'success',
       limit: '7'
     });
 
-    expect(queries.length).toBe(1);
+    expect(queries.length).toBe(2);
     expect(queries[0].sql.trim()).toMatch(/^SELECT/i);
-    expect(queries[0].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard%', 'success', 7]);
-    expect(queries[0].sql).toContain('actor_id ILIKE $3');
-    expect(queries[0].sql).toContain('action ILIKE $4');
-    expect(queries[0].sql).toContain('outcome = $5');
-    expect(queries[0].sql).toContain('LIMIT $6');
+    expect(queries[1].sql.trim()).toMatch(/^SELECT/i);
+    expect(queries[0].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard%', 'success']);
+    expect(queries[1].params).toEqual(['default', 'page', '%admin\\_1%', '%dashboard%', 'success', 7, 0]);
+    expect(queries[1].sql).toContain('actor_id ILIKE $3');
+    expect(queries[1].sql).toContain('action ILIKE $4');
+    expect(queries[1].sql).toContain('outcome = $5');
+    expect(queries[1].sql).toContain('LIMIT $6');
+    expect(queries[1].sql).toContain('OFFSET $7');
+    expect(model.pagination.audit.page).toBe(1);
+    expect(model.pagination.audit.limit).toBe(7);
   });
 
   it('reader audit log trả trạng thái chưa sẵn sàng khi thiếu schema audit', async () => {

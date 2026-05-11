@@ -29,6 +29,25 @@ function presentFilters(filters = {}) {
   };
 }
 
+function presentPageMeta(page = {}) {
+  return {
+    page: Number(page.page || 1),
+    limit: Number(page.limit || 0),
+    offset: Number(page.offset || 0),
+    total: Number(page.total || 0),
+    hasPrevious: Boolean(page.hasPrevious),
+    hasNext: Boolean(page.hasNext),
+    previousPage: page.previousPage == null ? null : Number(page.previousPage),
+    nextPage: page.nextPage == null ? null : Number(page.nextPage)
+  };
+}
+
+function presentPagination(pagination = {}) {
+  return Object.fromEntries(
+    Object.entries(pagination).map(([key, value]) => [key, presentPageMeta(value)])
+  );
+}
+
 function presentCounts(counts = {}) {
   return {
     profiles: Number(counts.profiles || 0),
@@ -203,6 +222,7 @@ function presentDashboardApi(model = {}) {
     operations: presentOperations(model.operations || {}),
     filters: presentFilters(model.filters || {}),
     limits: model.limits || {},
+    pagination: presentPagination(model.pagination || {}),
     orders: (model.orders || []).map(presentOrder),
     conversations: (model.conversations || []).map(presentConversation),
     events: (model.events || []).map(presentEvent)
@@ -231,6 +251,7 @@ function presentAuditApi(model = {}) {
     schemaReady: model.schemaReady !== false,
     filters: presentFilters(model.filters || {}),
     limits: model.limits || {},
+    pagination: presentPagination(model.pagination || {}),
     rows: (model.rows || []).map(presentAuditRow)
   };
 }
