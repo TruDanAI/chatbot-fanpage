@@ -2,8 +2,14 @@ const { PERMISSIONS } = require('../admin-auth');
 const {
   presentAuditApi,
   presentDashboardApi,
+  presentInternalNotesApi,
   presentUserDetailApi
 } = require('./api-presenter');
+const {
+  DEFAULT_INTERNAL_NOTE_LIST_LIMIT,
+  MAX_INTERNAL_NOTE_LIST_LIMIT,
+  validateInternalNoteListInput
+} = require('./internal-notes');
 const { normalizeDashboardFilters } = require('./reader');
 const {
   renderAuditHtml,
@@ -13,9 +19,65 @@ const {
 
 function createAdminReadHandlers({
   reader,
+  internalNoteService,
+  tenantId = 'default',
+  pageId = '',
   authorizeAdminRequest,
   recordAdminAudit
 } = {}) {
+  function resolveInternalNoteReadPermission(targetType = '') {
+    const normalized = String(targetType || '').trim().toLowerCase();
+    if (normalized === 'order') return PERMISSIONS.DASHBOARD_READ;
+    return PERMISSIONS.USER_DETAIL_READ;
+  }
+
+  function normalizePaginationQuery(query = {}) {
+    const validation = validateInternalNoteListInput({
+      tenantId,
+      pageId,
+      targetType: query.target_type,
+      targetId: query.target_id,
+      limit: query.limit,
+      offset: query.offset
+    });
+    return validation.normalized || {
+      targetType: String(query.target_type || '').trim().slice(0, 40).toLowerCase(),
+      targetId: String(query.target_id || '').trim().slice(0, 200),
+      limit: DEFAULT_INTERNAL_NOTE_LIST_LIMIT,
+      offset: 0
+    };
+  }
+
+  function createEmptyInternalNotesModel({ query = {}, schemaReady = true, message = '', error = '' } = {}) {
+    const normalized = normalizePaginationQuery(query);
+    return presentInternalNotesApi({
+      schemaReady,
+      notes: [],
+      limit: Math.min(Number(normalized.limit || DEFAULT_INTERNAL_NOTE_LIST_LIMIT), MAX_INTERNAL_NOTE_LIST_LIMIT),
+      offset: Number(normalized.offset || 0),
+      message,
+      error
+    });
+  }
+
+  function isMissingInternalNotesSchemaError(err) {
+    return err?.code === '42P01' || err?.code === '42703';
+  }
+
+  function buildInternalNoteReadAuditMetadata({
+    query = {},
+    schemaReady = true
+  } = {}) {
+    const normalized = normalizePaginationQuery(query);
+    return {
+      target_type: normalized.targetType,
+      target_id: normalized.targetId,
+      limit: normalized.limit,
+      offset: normalized.offset,
+      schemaReady
+    };
+  }
+
   async function sendDashboard(req, res) {
     const principal = await authorizeAdminRequest(req, res, {
       permission: PERMISSIONS.DASHBOARD_READ,
@@ -203,11 +265,100 @@ function createAdminReadHandlers({
     }
   }
 
+  async function sendInternalNotesApi(req, res) {
+    const permission = resolveInternalNoteReadPermission(req.query?.target_type);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission,
+      bearerOnly: true,
+      action: 'admin.internal_note.read',
+      resourceType: 'internal_note'
+    });
+    if (!principal) return;
+
+    try {
+      const validation = validateInternalNoteListInput({
+        tenantId,
+        pageId,
+        targetType: req.query?.target_type,
+        targetId: req.query?.target_id,
+        limit: req.query?.limit,
+        offset: req.query?.offset
+      });
+      if (!validation.ok) {
+        await recordAdminAudit(req, {
+          principal,
+          action: 'admin.internal_note.read',
+          resourceType: 'internal_note',
+          outcome: 'denied',
+          includeAuthMethod: false,
+          metadata: buildInternalNoteReadAuditMetadata({ query: req.query || {}, schemaReady: true })
+        });
+        return res.status(400).json(createEmptyInternalNotesModel({
+          query: req.query || {},
+          error: 'invalid_internal_note_target',
+          message: 'Internal note target is invalid.'
+        }));
+      }
+
+      const model = await internalNoteService.listNotes({
+        targetType: validation.normalized.targetType,
+        targetId: validation.normalized.targetId,
+        limit: validation.normalized.limit,
+        offset: validation.normalized.offset,
+        visibleOnly: true
+      });
+      await recordAdminAudit(req, {
+        principal,
+        action: 'admin.internal_note.read',
+        resourceType: 'internal_note',
+        outcome: 'success',
+        includeAuthMethod: false,
+        metadata: buildInternalNoteReadAuditMetadata({ query: req.query || {}, schemaReady: true })
+      });
+      return res.json(presentInternalNotesApi({
+        schemaReady: true,
+        notes: model.notes || [],
+        limit: model.limit,
+        offset: model.offset
+      }));
+    } catch (err) {
+      if (isMissingInternalNotesSchemaError(err)) {
+        await recordAdminAudit(req, {
+          principal,
+          action: 'admin.internal_note.read',
+          resourceType: 'internal_note',
+          outcome: 'success',
+          includeAuthMethod: false,
+          metadata: buildInternalNoteReadAuditMetadata({ query: req.query || {}, schemaReady: false })
+        });
+        return res.json(createEmptyInternalNotesModel({
+          query: req.query || {},
+          schemaReady: false,
+          message: 'Internal notes schema is not ready.'
+        }));
+      }
+      await recordAdminAudit(req, {
+        principal,
+        action: 'admin.internal_note.read',
+        resourceType: 'internal_note',
+        outcome: 'error',
+        includeAuthMethod: false,
+        metadata: buildInternalNoteReadAuditMetadata({ query: req.query || {}, schemaReady: true })
+      });
+      return res.status(err.statusCode || 500).json(createEmptyInternalNotesModel({
+        query: req.query || {},
+        error: 'internal_notes_read_failed',
+        message: 'Internal notes could not be read.'
+      }));
+    }
+  }
+
   return {
     sendAuditLog,
     sendAuditLogApi,
     sendDashboard,
     sendDashboardApi,
+    sendInternalNotesApi,
     sendUserDetail,
     sendUserDetailApi
   };

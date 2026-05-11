@@ -288,6 +288,38 @@ function createDashboardReaderStub() {
   };
 }
 
+function createInternalNoteServiceStub({ failWith, noteRows } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async listNotes(filters = {}) {
+      calls.push(filters);
+      if (failWith) throw failWith;
+      return {
+        targetType: filters.targetType,
+        targetId: filters.targetId,
+        limit: filters.limit,
+        offset: filters.offset,
+        visibleOnly: filters.visibleOnly !== false,
+        notes: noteRows || [{
+          id: 7,
+          target_type: filters.targetType,
+          target_id: filters.targetId,
+          body: 'safe staff context',
+          status: 'visible',
+          created_by: 'admin-1',
+          created_at: '2026-05-12T01:00:00.000Z',
+          hidden_by: 'admin-2',
+          hide_reason: 'do not return',
+          raw_customer: { phone: '0987654321' },
+          raw_order: { address: '12 Tran Phu' },
+          raw_message: { text: 'raw message' }
+        }]
+      };
+    }
+  };
+}
+
 function createAuditLoggerStub() {
   const entries = [];
   return {
@@ -629,6 +661,258 @@ describe('admin dashboard routes', () => {
 
     expect(res.statusCode).toBe(401);
     expect(reader.calls).toBe(0);
+  });
+
+  it('internal notes API trả visible notes với field an toàn và audit metadata hẹp', async () => {
+    const app = createApp();
+    const notes = createInternalNoteServiceStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      internalNoteService: notes,
+      auditLogger,
+      adminPrincipalRoles: ['viewer'],
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/internal-notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: {
+        target_type: 'Customer',
+        target_id: 'sender_1',
+        limit: '5',
+        offset: '2',
+        body: 'must not be audited'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(['notes', 'pagination', 'schemaReady']);
+    expect(body.schemaReady).toBeTrue();
+    expect(body.pagination).toEqual({
+      limit: 5,
+      offset: 2,
+      count: 1,
+      hasNext: false
+    });
+    expect(notes.calls[0]).toEqual({
+      targetType: 'customer',
+      targetId: 'sender_1',
+      limit: 5,
+      offset: 2,
+      visibleOnly: true
+    });
+    expect(Object.keys(body.notes[0]).sort()).toEqual([
+      'body',
+      'created_at',
+      'created_by',
+      'id',
+      'status',
+      'target_id',
+      'target_type'
+    ]);
+    expect(body.notes[0].body).toBe('safe staff context');
+    expect(bodyText.includes('hidden_by')).toBeFalse();
+    expect(bodyText.includes('hide_reason')).toBeFalse();
+    expect(bodyText.includes('raw_customer')).toBeFalse();
+    expect(bodyText.includes('raw_order')).toBeFalse();
+    expect(bodyText.includes('raw_message')).toBeFalse();
+    expect(bodyText.includes('0987654321')).toBeFalse();
+    expect(bodyText.includes('12 Tran Phu')).toBeFalse();
+    expect(auditLogger.entries.length).toBe(1);
+    expect(auditLogger.entries[0].action).toBe('admin.internal_note.read');
+    expect(auditLogger.entries[0].resource_type).toBe('internal_note');
+    expect(auditLogger.entries[0].outcome).toBe('success');
+    expect(auditLogger.entries[0].metadata).toEqual({
+      target_type: 'customer',
+      target_id: 'sender_1',
+      limit: 5,
+      offset: 2,
+      schemaReady: true
+    });
+    expect(JSON.stringify(auditLogger.entries[0]).includes('must not be audited')).toBeFalse();
+    expect(JSON.stringify(auditLogger.entries[0]).includes('safe staff context')).toBeFalse();
+  });
+
+  it('internal notes API dùng quyền đọc target detail cho viewer support maintainer owner', async () => {
+    for (const role of ['viewer', 'support', 'maintainer', 'owner']) {
+      const app = createApp();
+      const notes = createInternalNoteServiceStub({ noteRows: [] });
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        internalNoteService: notes,
+        adminPrincipalRoles: [role],
+        tenantId: 'default',
+        pageId: 'page'
+      });
+
+      const customerRes = createRes();
+      await app.routes['/admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        query: { target_type: 'customer', target_id: 'sender_1' }
+      }), customerRes);
+      const orderRes = createRes();
+      await app.routes['/admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        query: { target_type: 'order', target_id: '123' }
+      }), orderRes);
+
+      expect(customerRes.statusCode).toBe(200);
+      expect(orderRes.statusCode).toBe(200);
+      expect(notes.calls.length).toBe(2);
+    }
+  });
+
+  it('internal notes API nhận browser session và vẫn không nhận x-admin-token', async () => {
+    const app = createApp();
+    const notes = createInternalNoteServiceStub({ noteRows: [] });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      internalNoteService: notes,
+      adminSessionSecret: TEST_SESSION_SECRET,
+      adminPrincipalRoles: ['viewer'],
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const tokenRes = createRes();
+    await app.routes['/admin/api/internal-notes'](createReq({
+      headers: { 'x-admin-token': 'secret' },
+      query: { token: 'secret', target_type: 'customer', target_id: 'sender_1' }
+    }), tokenRes);
+    expect(tokenRes.statusCode).toBe(401);
+
+    const loginRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'secret' }
+    }), loginRes);
+    const sessionRes = createRes();
+    await app.routes['/admin/api/internal-notes'](createReq({
+      headers: { cookie: loginRes.headers['set-cookie'].split(';')[0] },
+      query: { target_type: 'customer', target_id: 'sender_1' }
+    }), sessionRes);
+
+    expect(sessionRes.statusCode).toBe(200);
+    expect(JSON.parse(sessionRes.body).schemaReady).toBeTrue();
+  });
+
+  it('internal notes API rejects invalid target_type and target_id safely', async () => {
+    const app = createApp();
+    const notes = createInternalNoteServiceStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      internalNoteService: notes,
+      auditLogger,
+      adminPrincipalRoles: ['owner'],
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const invalidTypeRes = createRes();
+    await app.routes['/admin/api/internal-notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: { target_type: 'profile', target_id: 'sender_1' }
+    }), invalidTypeRes);
+    const emptyTargetRes = createRes();
+    await app.routes['/admin/api/internal-notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: { target_type: 'customer', target_id: '   ' }
+    }), emptyTargetRes);
+
+    expect(invalidTypeRes.statusCode).toBe(400);
+    expect(emptyTargetRes.statusCode).toBe(400);
+    expect(JSON.parse(invalidTypeRes.body).error).toBe('invalid_internal_note_target');
+    expect(JSON.parse(emptyTargetRes.body).notes).toEqual([]);
+    expect(notes.calls.length).toBe(0);
+    expect(JSON.stringify(invalidTypeRes.body).includes('secret')).toBeFalse();
+    expect(auditLogger.entries.every(entry => entry.action === 'admin.internal_note.read')).toBeTrue();
+  });
+
+  it('internal notes API bounds limit to 100', async () => {
+    const app = createApp();
+    const notes = createInternalNoteServiceStub({ noteRows: [] });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      internalNoteService: notes,
+      adminPrincipalRoles: ['support'],
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/internal-notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      query: { target_type: 'conversation', target_id: 'sender_1', limit: '10000' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(notes.calls[0].limit).toBe(100);
+    expect(body.pagination.limit).toBe(100);
+  });
+
+  it('internal notes API handles missing schema without raw DB error', async () => {
+    for (const code of ['42P01', '42703']) {
+      const err = new Error(`raw PostgreSQL ${code} relation "internal_notes" at postgres://secret`);
+      err.code = code;
+      const app = createApp();
+      const notes = createInternalNoteServiceStub({ failWith: err });
+      const auditLogger = createAuditLoggerStub();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        internalNoteService: notes,
+        auditLogger,
+        adminPrincipalRoles: ['viewer'],
+        tenantId: 'default',
+        pageId: 'page'
+      });
+
+      const res = createRes();
+      await app.routes['/admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        query: { target_type: 'customer', target_id: 'sender_1', limit: '5', offset: '1' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(200);
+      expect(body.schemaReady).toBeFalse();
+      expect(body.notes).toEqual([]);
+      expect(body.pagination).toEqual({
+        limit: 5,
+        offset: 1,
+        count: 0,
+        hasNext: false
+      });
+      expect(bodyText.includes(`raw PostgreSQL ${code}`)).toBeFalse();
+      expect(bodyText.includes('relation "internal_notes"')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+      expect(auditLogger.entries[0].outcome).toBe('success');
+      expect(auditLogger.entries[0].metadata.schemaReady).toBeFalse();
+    }
   });
 
   it('dashboard truyền filter query vào reader và render form filter', async () => {

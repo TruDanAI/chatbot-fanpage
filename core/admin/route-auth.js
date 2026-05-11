@@ -71,7 +71,8 @@ function createAdminRouteAuthorizer({
     resourceType,
     resourceId = '',
     outcome,
-    metadata = {}
+    metadata = {},
+    includeAuthMethod = true
   }) {
     if (!auditLogger || typeof auditLogger.record !== 'function') return null;
     const entry = buildAuditLogEntry({
@@ -83,7 +84,8 @@ function createAdminRouteAuthorizer({
       requestId: getRequestId(req),
       ip: getRequestIp(req),
       userAgent: getRequestHeader(req, 'user-agent'),
-      metadata
+      metadata,
+      includeAuthMethod
     });
     try {
       await auditLogger.record(entry);

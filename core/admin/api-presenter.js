@@ -152,6 +152,18 @@ function presentAuditRow(row = {}) {
   };
 }
 
+function presentInternalNote(note = {}) {
+  return {
+    id: note.id != null ? String(note.id) : '',
+    target_type: note.target_type || '',
+    target_id: note.target_id || '',
+    body: note.body || '',
+    status: note.status || '',
+    created_by: note.created_by || '',
+    created_at: note.created_at || ''
+  };
+}
+
 function presentActivity(activity = {}) {
   return {
     orders_24h: Number(activity.orders_24h || 0),
@@ -256,10 +268,29 @@ function presentAuditApi(model = {}) {
   };
 }
 
+function presentInternalNotesApi(model = {}) {
+  const notes = (model.notes || []).map(presentInternalNote);
+  const limit = Number(model.limit || 0);
+  const offset = Number(model.offset || 0);
+  return {
+    schemaReady: model.schemaReady !== false,
+    notes,
+    pagination: {
+      limit,
+      offset,
+      count: notes.length,
+      hasNext: Boolean(model.hasNext || (limit > 0 && notes.length === limit))
+    },
+    ...(model.message ? { message: limitText(model.message, 160) } : {}),
+    ...(model.error ? { error: limitText(model.error, 80) } : {})
+  };
+}
+
 module.exports = {
   maskSensitiveText,
   presentAuditApi,
   presentDashboardApi,
+  presentInternalNotesApi,
   presentOperations,
   presentUserDetailApi
 };

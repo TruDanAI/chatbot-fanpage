@@ -250,14 +250,15 @@ function buildAuditLogEntry({
   requestId = '',
   ip = '',
   userAgent = '',
-  metadata = {}
+  metadata = {},
+  includeAuthMethod = true
 } = {}) {
   const normalizedOutcome = AUDIT_OUTCOMES.has(outcome) ? outcome : 'error';
   const actor = principal || {};
   const metadataObject = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? metadata
     : { value: metadata };
-  const authMethod = normalizeText(actor.authMethod, 40);
+  const authMethod = includeAuthMethod ? normalizeText(actor.authMethod, 40) : '';
   const auditMetadata = {
     ...metadataObject,
     ...(authMethod && !Object.prototype.hasOwnProperty.call(metadataObject, 'auth_method')

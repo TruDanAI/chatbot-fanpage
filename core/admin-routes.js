@@ -3,6 +3,7 @@ const {
   getAdminRequestToken
 } = require('./admin-auth');
 const { createPostgresAuditLogger } = require('./admin/audit');
+const { createPostgresInternalNoteService } = require('./admin/internal-notes');
 const { createAdminLegacyHandlers } = require('./admin/legacy-routes');
 const {
   assertReadOnlySql,
@@ -51,6 +52,7 @@ function registerAdminRoutes(app, {
   adminIpAllowlist = [],
   getClientIp,
   dashboardReader,
+  internalNoteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
   tenantId = process.env.TENANT_ID || 'default',
   pageId = process.env.PAGE_ID || '',
@@ -78,6 +80,11 @@ function registerAdminRoutes(app, {
   const audit = auditLogger || createPostgresAuditLogger({
     enabled: adminAuditLogEnabled,
     databaseUrl: dashboardDatabaseUrl
+  });
+  const notes = internalNoteService || createPostgresInternalNoteService({
+    databaseUrl: dashboardDatabaseUrl,
+    tenantId,
+    pageId
   });
   const sessionManager = adminSessionManager || createAdminSessionManager({
     sessionSecret: adminSessionSecret,
@@ -131,10 +138,14 @@ function registerAdminRoutes(app, {
     sendAuditLogApi,
     sendDashboard,
     sendDashboardApi,
+    sendInternalNotesApi,
     sendUserDetail,
     sendUserDetailApi
   } = createAdminReadHandlers({
     reader,
+    internalNoteService: notes,
+    tenantId,
+    pageId,
     authorizeAdminRequest,
     recordAdminAudit
   });
@@ -158,6 +169,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/dashboard', sendDashboardApi);
   app.get('/admin/api/dashboard/users/:senderId', sendUserDetailApi);
   app.get('/admin/api/audit', sendAuditLogApi);
+  app.get('/admin/api/internal-notes', sendInternalNotesApi);
   app.get('/admin/dashboard', sendDashboard);
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
