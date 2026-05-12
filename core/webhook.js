@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const {
+  MENU_CODE_MENU_PRICE_REPLY,
   getMenuCodeHandoffMessage,
   isAiFallbackEnabled,
   isLeadCaptureEnabled,
@@ -114,7 +115,7 @@ function createWebhook({
 
     return /^(?:xin |cho |gui |xem |coi |tham khao )?(?:menu|bang gia|danh sach|danh muc|catalog)(?: san pham)?(?: shop)?$/.test(t)
       || /^(?:xem|coi|gui|cho xem|xin xem|co)\s+(?:san pham|sp|mau|hang)(?: nao| gi| ben shop| shop)?$/.test(t)
-      || /^(?:gia|gia san pham|gia san pham tu bao nhieu|bao nhieu|co mau nao|co san pham nao|co hang nao)$/.test(t)
+      || /^(?:gia|gia san pham|gia san pham tu bao nhieu|bao nhieu(?: vay)?|co mau nao|co san pham nao|co hang nao)$/.test(t)
       || /\bgia\b.*\b(?:san pham|bao nhieu|tu bao nhieu)\b/.test(t)
       || /\b(?:san pham|mau|hang)\b.*\b(?:bao nhieu|nao|gi)\b/.test(t);
   }
@@ -169,15 +170,18 @@ function createWebhook({
       return;
     }
 
-    if (isMenuCodeMenuQuestion(userText)) {
+    const requestedCodes = productCodeLookupEnabled
+      ? extractRequestedProductCodes(userText)
+      : [];
+
+    if (!requestedCodes.length && isMenuCodeMenuQuestion(userText)) {
       showTyping(senderId);
+      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
+      console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
       await sendImages(senderId, getMenuImageUrls(baseUrlOverride));
       return;
     }
 
-    const requestedCodes = productCodeLookupEnabled
-      ? extractRequestedProductCodes(userText)
-      : [];
     if (requestedCodes.length) {
       const reply = buildDeterministicReply(userText, senderId);
       const codes = getSuccessfulRequestedProductCodes(userText, senderId);

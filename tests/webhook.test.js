@@ -8,6 +8,7 @@ const shopConfig = require('../shops/adult-shop/config');
 const adultCustomIntents = require('../shops/adult-shop/custom-intents');
 const {
   MENU_CODE_HANDOFF_MESSAGE,
+  MENU_CODE_MENU_PRICE_REPLY,
   applyBotModeConfig
 } = require('../core/bot-mode');
 
@@ -206,61 +207,86 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
 }
 
 describe('webhook: menu_code_handoff mode', () => {
-  it('greeting sends menu images without text or handoff', async () => {
+  it('greeting sends price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('chào shop', 'minimal_greeting', 'm_greeting');
 
-    expect(h.sent[0].type).toBe('image');
-    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent[1].type).toBe('image');
-    expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent.length).toBe(2);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_greeting')).toBeFalse();
   });
 
-  it('"Giá sản phẩm từ bao nhiêu" sends menu images without text or handoff', async () => {
+  it('"Giá Sản Phẩm Từ Bao Nhiêu" sends price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
-    await h.handleText('Giá sản phẩm từ bao nhiêu', 'minimal_price_long', 'm_price_long');
+    await h.handleText('Giá Sản Phẩm Từ Bao Nhiêu', 'minimal_price_long', 'm_price_long');
 
-    expect(h.sent[0].type).toBe('image');
-    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent[1].type).toBe('image');
-    expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent.length).toBe(2);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_price_long')).toBeFalse();
   });
 
-  it('menu/product-list questions send menu images without text or handoff', async () => {
+  it('"Bao nhiêu vậy" sends price/menu reply and menu images without handoff', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('Bao nhiêu vậy', 'minimal_price_short_question', 'm_price_short_question');
+
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.storage.inHandoff('minimal_price_short_question')).toBeFalse();
+  });
+
+  it('menu/product-list questions send price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('xem sản phẩm', 'minimal_product_list', 'm_product_list');
 
-    expect(h.sent[0].type).toBe('image');
-    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent[1].type).toBe('image');
-    expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent.length).toBe(2);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_product_list')).toBeFalse();
   });
 
-  it('"Giá" sends menu images without text or handoff', async () => {
+  it('"Giá" sends price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('Giá', 'minimal_price_short', 'm_price_short');
 
-    expect(h.sent[0].type).toBe('image');
-    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent[1].type).toBe('image');
-    expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent.length).toBe(2);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_price_short')).toBeFalse();
