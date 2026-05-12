@@ -11,6 +11,7 @@ const {
 } = require('../core/admin-routes');
 const { createDashboardRepository } = require('../core/admin/dashboard-repository');
 const { PERMISSIONS } = require('../core/admin-auth');
+const { createPostgresInternalNoteService } = require('../core/admin/internal-notes');
 
 function createApp() {
   const routes = {};
@@ -288,10 +289,12 @@ function createDashboardReaderStub() {
   };
 }
 
-function createInternalNoteServiceStub({ failWith, noteRows } = {}) {
+function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, createdNote } = {}) {
   const calls = [];
+  const createCalls = [];
   return {
     calls,
+    createCalls,
     async listNotes(filters = {}) {
       calls.push(filters);
       if (failWith) throw failWith;
@@ -316,8 +319,67 @@ function createInternalNoteServiceStub({ failWith, noteRows } = {}) {
           raw_message: { text: 'raw message' }
         }]
       };
+    },
+    async createNote(input = {}) {
+      createCalls.push(input);
+      if (createFailWith) throw createFailWith;
+      const normalizedBody = String(input.body || '').replace(/\r\n/g, '\n').trim();
+      return createdNote || {
+        id: 'created-1',
+        targetType: String(input.targetType || '').trim().toLowerCase(),
+        targetId: String(input.targetId || '').trim(),
+        bodyLength: normalizedBody.length,
+        status: 'visible',
+        createdBy: input.principal?.id || '',
+        createdAt: '2026-05-12T02:00:00.000Z'
+      };
     }
   };
+}
+
+function createInternalNoteRouteFakeClientClass({
+  failAudit = false,
+  failNoteCode = '',
+  queries = []
+} = {}) {
+  return class FakeClient {
+    async connect() {
+      queries.push({ sql: 'CONNECT', params: [] });
+    }
+
+    async end() {
+      queries.push({ sql: 'END', params: [] });
+    }
+
+    async query(sql, params = []) {
+      const normalized = String(sql || '').trim();
+      queries.push({ sql: normalized, params });
+      if (/^INSERT INTO internal_notes/i.test(normalized)) {
+        if (failNoteCode) {
+          const err = new Error(`raw PostgreSQL ${failNoteCode} relation "internal_notes" at postgres://secret`);
+          err.code = failNoteCode;
+          throw err;
+        }
+        return {
+          rows: [{
+            id: '99',
+            status: 'visible',
+            created_by: params[5],
+            created_at: '2026-05-12T03:00:00.000Z'
+          }]
+        };
+      }
+      if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+        if (failAudit) throw new Error('audit insert failed at postgres://secret');
+        return { rows: [] };
+      }
+      return { rows: [] };
+    }
+  };
+}
+
+function findRouteQuery(queries, pattern) {
+  return queries.find(item => pattern.test(item.sql));
 }
 
 function createAuditLoggerStub() {
@@ -332,6 +394,30 @@ function createAuditLoggerStub() {
 }
 
 const TEST_SESSION_SECRET = 'test-session-secret-64-characters-minimum-value-for-admin-login';
+
+function registerInternalNoteRouteApp({
+  internalNoteService = createInternalNoteServiceStub(),
+  auditLogger,
+  adminPrincipalRoles = ['maintainer'],
+  adminPrincipalId = 'admin-1',
+  adminSessionSecret = ''
+} = {}) {
+  const app = createApp();
+  registerAdminRoutes(app, {
+    storage: createStorageStub(),
+    adminExportToken: 'secret',
+    getClientIp: () => '127.0.0.1',
+    dashboardReader: createDashboardReaderStub(),
+    internalNoteService,
+    auditLogger,
+    adminPrincipalRoles,
+    adminPrincipalId,
+    adminSessionSecret,
+    tenantId: 'default',
+    pageId: 'page'
+  });
+  return app;
+}
 
 describe('admin dashboard routes', () => {
   it('parseAdminRoles chuẩn hóa role list từ env', () => {
@@ -912,6 +998,345 @@ describe('admin dashboard routes', () => {
       expect(bodyText.includes('postgres://secret')).toBeFalse();
       expect(auditLogger.entries[0].outcome).toBe('success');
       expect(auditLogger.entries[0].metadata.schemaReady).toBeFalse();
+    }
+  });
+
+  it('internal notes POST lets maintainer and owner create notes through Bearer auth', async () => {
+    for (const role of ['maintainer', 'owner']) {
+      const notes = createInternalNoteServiceStub();
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: notes,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        body: {
+          target_type: 'Customer',
+          target_id: ' sender_1 ',
+          body: 'safe route note'
+        }
+      }), res);
+      const body = JSON.parse(res.body);
+      const responseText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(201);
+      expect(body.ok).toBeTrue();
+      expect(body.schemaReady).toBeTrue();
+      expect(body.note).toEqual({
+        id: 'created-1',
+        target_type: 'customer',
+        target_id: 'sender_1',
+        status: 'visible',
+        created_by: `${role}-actor`,
+        created_at: '2026-05-12T02:00:00.000Z',
+        body_length: 'safe route note'.length
+      });
+      expect(notes.createCalls.length).toBe(1);
+      expect(notes.createCalls[0].principal.roles).toEqual([role]);
+      expect(notes.createCalls[0].targetType).toBe('Customer');
+      expect(responseText.includes('safe route note')).toBeFalse();
+      expect(responseText.includes('raw_customer')).toBeFalse();
+      expect(responseText.includes('raw_order')).toBeFalse();
+      expect(responseText.includes('raw_message')).toBeFalse();
+    }
+  });
+
+  it('internal notes POST denies viewer and support without calling create service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const notes = createInternalNoteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: notes,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        body: {
+          target_type: 'customer',
+          target_id: 'sender_1',
+          body: 'must not be audited'
+        }
+      }), res);
+
+      expect(res.statusCode).toBe(403);
+      expect(notes.createCalls.length).toBe(0);
+      expect(auditLogger.entries.length).toBe(1);
+      expect(auditLogger.entries[0].action).toBe('admin.internal_note.create');
+      expect(auditLogger.entries[0].resource_type).toBe('internal_note');
+      expect(auditLogger.entries[0].outcome).toBe('denied');
+      expect(auditLogger.entries[0].metadata.permission).toBe(PERMISSIONS.INTERNAL_NOTE_WRITE);
+      expect(JSON.stringify(auditLogger.entries[0]).includes('must not be audited')).toBeFalse();
+    }
+  });
+
+  it('internal notes POST accepts browser sessions and rejects x-admin-token or query token', async () => {
+    const notes = createInternalNoteServiceStub();
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: notes,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'session-actor',
+      adminSessionSecret: TEST_SESSION_SECRET
+    });
+
+    const tokenRes = createRes();
+    await app.routes['POST /admin/api/internal-notes'](createReq({
+      headers: { 'x-admin-token': 'secret' },
+      query: { token: 'secret' },
+      body: {
+        target_type: 'customer',
+        target_id: 'sender_1',
+        body: 'safe note'
+      }
+    }), tokenRes);
+    expect(tokenRes.statusCode).toBe(401);
+    expect(notes.createCalls.length).toBe(0);
+
+    const noAuthRes = createRes();
+    await app.routes['POST /admin/api/internal-notes'](createReq({
+      body: {
+        target_type: 'customer',
+        target_id: 'sender_1',
+        body: 'safe note'
+      }
+    }), noAuthRes);
+    expect(noAuthRes.statusCode).toBe(401);
+    expect(notes.createCalls.length).toBe(0);
+
+    const loginRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'secret' }
+    }), loginRes);
+    const sessionRes = createRes();
+    await app.routes['POST /admin/api/internal-notes'](createReq({
+      headers: { cookie: loginRes.headers['set-cookie'].split(';')[0] },
+      body: {
+        target_type: 'customer',
+        target_id: 'sender_1',
+        body: 'safe note'
+      }
+    }), sessionRes);
+
+    expect(sessionRes.statusCode).toBe(201);
+    expect(notes.createCalls.length).toBe(1);
+    expect(JSON.parse(sessionRes.body).note.created_by).toBe('session-actor');
+  });
+
+  it('internal notes POST rejects invalid target and body input safely', async () => {
+    const cases = [
+      {
+        label: 'invalid target_type',
+        body: { target_type: 'profile', target_id: 'sender_1', body: 'safe note' },
+        expectedError: 'invalid_internal_note_target'
+      },
+      {
+        label: 'empty target_id',
+        body: { target_type: 'customer', target_id: '   ', body: 'safe note' },
+        expectedError: 'invalid_internal_note_target'
+      },
+      {
+        label: 'empty body',
+        body: { target_type: 'conversation', target_id: 'sender_1', body: '   ' },
+        expectedError: 'invalid_internal_note_body'
+      },
+      {
+        label: 'body too long',
+        body: { target_type: 'order', target_id: '123', body: 'x'.repeat(2001) },
+        expectedError: 'invalid_internal_note_body'
+      }
+    ];
+
+    for (const item of cases) {
+      const queries = [];
+      const service = createPostgresInternalNoteService({
+        databaseUrl: 'postgres://example.test/db',
+        tenantId: 'default',
+        pageId: 'page',
+        Client: createInternalNoteRouteFakeClientClass({ queries })
+      });
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: service,
+        adminPrincipalRoles: ['maintainer'],
+        adminPrincipalId: 'maintainer-actor'
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        body: item.body
+      }), res);
+      const responseText = String(res.body || '');
+      const auditInsert = findRouteQuery(queries, /^INSERT INTO admin_audit_log/i);
+      const metadataText = auditInsert?.params?.[12] || '';
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toBe(item.expectedError);
+      expect(Boolean(findRouteQuery(queries, /^INSERT INTO internal_notes/i))).toBeFalse();
+      expect(Boolean(auditInsert)).toBeTrue();
+      expect(auditInsert.params[8]).toBe('denied');
+      expect(Boolean(findRouteQuery(queries, /^COMMIT$/))).toBeTrue();
+      expect(responseText.includes(item.body.body)).toBeFalse();
+      expect(responseText.includes('postgres://')).toBeFalse();
+      expect(metadataText.includes(item.body.body)).toBeFalse();
+      expect(metadataText.includes('raw_customer')).toBeFalse();
+      expect(metadataText.includes('raw_order')).toBeFalse();
+      expect(metadataText.includes('raw_message')).toBeFalse();
+      expect(item.label.length > 0).toBeTrue();
+    }
+  });
+
+  it('internal notes POST returns safe success shape and writes safe audit metadata', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createInternalNoteRouteFakeClientClass({ queries })
+    });
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: service,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'maintainer-safe'
+    });
+    const noteBody = 'do not leak this note body token DATABASE_URL 0987654321 address 12 Tran Phu';
+
+    const res = createRes();
+    await app.routes['POST /admin/api/internal-notes'](createReq({
+      headers: {
+        authorization: 'Bearer secret',
+        'x-request-id': 'req-create-1',
+        'user-agent': 'unit-test'
+      },
+      body: {
+        target_type: 'customer',
+        target_id: 'sender_1',
+        body: noteBody
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const responseText = JSON.stringify(body);
+    const noteInsert = findRouteQuery(queries, /^INSERT INTO internal_notes/i);
+    const auditInsert = findRouteQuery(queries, /^INSERT INTO admin_audit_log/i);
+    const auditMetadata = JSON.parse(auditInsert.params[12]);
+    const metadataText = JSON.stringify(auditMetadata);
+
+    expect(res.statusCode).toBe(201);
+    expect(Object.keys(body).sort()).toEqual(['note', 'ok', 'schemaReady']);
+    expect(Object.keys(body.note).sort()).toEqual([
+      'body_length',
+      'created_at',
+      'created_by',
+      'id',
+      'status',
+      'target_id',
+      'target_type'
+    ]);
+    expect(body.note.id).toBe('99');
+    expect(body.note.created_by).toBe('maintainer-safe');
+    expect(body.note.body_length).toBe(noteBody.length);
+    expect(noteInsert.params[5]).toBe('maintainer-safe');
+    expect(auditInsert.params[5]).toBe('admin.internal_note.create');
+    expect(auditInsert.params[6]).toBe('internal_note');
+    expect(auditInsert.params[7]).toBe('99');
+    expect(auditInsert.params[8]).toBe('success');
+    expect(auditMetadata).toEqual({
+      target_type: 'customer',
+      target_id: 'sender_1',
+      body_length: noteBody.length,
+      auth_method: 'static_bearer'
+    });
+    expect(responseText.includes(noteBody)).toBeFalse();
+    expect(responseText.includes('token')).toBeFalse();
+    expect(responseText.includes('DATABASE_URL')).toBeFalse();
+    expect(responseText.includes('0987654321')).toBeFalse();
+    expect(responseText.includes('12 Tran Phu')).toBeFalse();
+    expect(metadataText.includes(noteBody)).toBeFalse();
+    expect(metadataText.includes('DATABASE_URL')).toBeFalse();
+    expect(metadataText.includes('0987654321')).toBeFalse();
+    expect(metadataText.includes('12 Tran Phu')).toBeFalse();
+    expect(metadataText.includes('raw_customer')).toBeFalse();
+    expect(metadataText.includes('raw_order')).toBeFalse();
+    expect(metadataText.includes('raw_message')).toBeFalse();
+    expect(Boolean(findRouteQuery(queries, /^COMMIT$/))).toBeTrue();
+    expect(Boolean(findRouteQuery(queries, /^ROLLBACK$/))).toBeFalse();
+  });
+
+  it('internal notes POST rolls back note insert when audit insert fails', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createInternalNoteRouteFakeClientClass({ queries, failAudit: true })
+    });
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: service,
+      adminPrincipalRoles: ['owner'],
+      adminPrincipalId: 'owner-actor'
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/internal-notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      body: {
+        target_type: 'customer',
+        target_id: 'sender_1',
+        body: 'safe note'
+      }
+    }), res);
+    const bodyText = String(res.body || '');
+
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body).error).toBe('internal_note_create_failed');
+    expect(Boolean(findRouteQuery(queries, /^INSERT INTO internal_notes/i))).toBeTrue();
+    expect(Boolean(findRouteQuery(queries, /^INSERT INTO admin_audit_log/i))).toBeTrue();
+    expect(Boolean(findRouteQuery(queries, /^ROLLBACK$/))).toBeTrue();
+    expect(Boolean(findRouteQuery(queries, /^COMMIT$/))).toBeFalse();
+    expect(bodyText.includes('audit insert failed')).toBeFalse();
+    expect(bodyText.includes('postgres://secret')).toBeFalse();
+  });
+
+  it('internal notes POST handles missing schema without raw DB error', async () => {
+    for (const code of ['42P01', '42703']) {
+      const queries = [];
+      const service = createPostgresInternalNoteService({
+        databaseUrl: 'postgres://example.test/db',
+        tenantId: 'default',
+        pageId: 'page',
+        Client: createInternalNoteRouteFakeClientClass({ queries, failNoteCode: code })
+      });
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: service,
+        adminPrincipalRoles: ['maintainer'],
+        adminPrincipalId: 'maintainer-actor'
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/internal-notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        body: {
+          target_type: 'customer',
+          target_id: 'sender_1',
+          body: 'safe note'
+        }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(503);
+      expect(body.ok).toBeFalse();
+      expect(body.schemaReady).toBeFalse();
+      expect(body.error).toBe('internal_notes_schema_not_ready');
+      expect(Boolean(findRouteQuery(queries, /^ROLLBACK$/))).toBeTrue();
+      expect(bodyText.includes(`raw PostgreSQL ${code}`)).toBeFalse();
+      expect(bodyText.includes('relation "internal_notes"')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
     }
   });
 
