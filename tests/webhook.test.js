@@ -7,9 +7,7 @@ const { buildQuickReplies, resolveQuickReplyPayload } = require('../core/quick-r
 const shopConfig = require('../shops/adult-shop/config');
 const adultCustomIntents = require('../shops/adult-shop/custom-intents');
 const {
-  MENU_CODE_LIMITED_REPLY,
   MENU_CODE_HANDOFF_MESSAGE,
-  MENU_CODE_MENU_PRICE_REPLY,
   applyBotModeConfig
 } = require('../core/bot-mode');
 
@@ -208,7 +206,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
 }
 
 describe('webhook: menu_code_handoff mode', () => {
-  it('greeting sends menu images and menu text', async () => {
+  it('greeting sends menu images without text or handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('chào shop', 'minimal_greeting', 'm_greeting');
@@ -217,14 +215,13 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[0].url).toContain('menu1.png');
     expect(h.sent[1].type).toBe('image');
     expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent[2].type).toBe('text');
-    expect(h.sent[2].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.length).toBe(2);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_greeting')).toBeFalse();
   });
 
-  it('"Giá sản phẩm từ bao nhiêu" sends menu images and fixed price/menu reply', async () => {
+  it('"Giá sản phẩm từ bao nhiêu" sends menu images without text or handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('Giá sản phẩm từ bao nhiêu', 'minimal_price_long', 'm_price_long');
@@ -233,14 +230,28 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[0].url).toContain('menu1.png');
     expect(h.sent[1].type).toBe('image');
     expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent[2].type).toBe('text');
-    expect(h.sent[2].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.length).toBe(2);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_price_long')).toBeFalse();
   });
 
-  it('"Giá" sends menu images and fixed price/menu reply', async () => {
+  it('menu/product-list questions send menu images without text or handoff', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('xem sản phẩm', 'minimal_product_list', 'm_product_list');
+
+    expect(h.sent[0].type).toBe('image');
+    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(2);
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.storage.inHandoff('minimal_product_list')).toBeFalse();
+  });
+
+  it('"Giá" sends menu images without text or handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('Giá', 'minimal_price_short', 'm_price_short');
@@ -249,8 +260,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[0].url).toContain('menu1.png');
     expect(h.sent[1].type).toBe('image');
     expect(h.sent[1].url).toContain('menu2.png');
-    expect(h.sent[2].type).toBe('text');
-    expect(h.sent[2].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.length).toBe(2);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
     expect(h.storage.inHandoff('minimal_price_short')).toBeFalse();
@@ -269,18 +279,34 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.storage.inHandoff('minimal_code')).toBeTrue();
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.getHandoffCaptureCalls()).toBe(0);
+    expect(h.getNotifyReadyOrderCalls()).toBe(0);
+    expect(h.getPushedLeadCalls()).toBe(0);
+    expect(h.getTelegramAlertCalls()).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+    expect(h.getFallbackAttentionCalls()).toBe(0);
     expect(h.getConversationTurnCalls()).toBe(0);
   });
 
-  it('out-of-scope text does not call Gemini/API and returns limited reply', async () => {
+  it('out-of-scope text before product code sends no reply and has no side effects', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('dùng sao', 'minimal_no_ai', 'm_no_ai');
 
     expect(h.getGeminiCalls()).toBe(0);
-    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
-    expect(h.sent[0].text).toBe(MENU_CODE_LIMITED_REPLY);
+    expect(h.sent.length).toBe(0);
     expect(h.storage.inHandoff('minimal_no_ai')).toBeFalse();
+    expect(h.storage._customers.length).toBe(0);
+    expect(h.storage._events.length).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.getHandoffCaptureCalls()).toBe(0);
+    expect(h.getNotifyReadyOrderCalls()).toBe(0);
+    expect(h.getPushedLeadCalls()).toBe(0);
+    expect(h.getTelegramAlertCalls()).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+    expect(h.getFallbackAttentionCalls()).toBe(0);
+    expect(h.getConversationTurnCalls()).toBe(0);
+    expect(h.getEventCalls()).toBe(0);
   });
 
   it('does not answer again after product-code handoff', async () => {
@@ -296,7 +322,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getHandoffCaptureCalls()).toBe(0);
   });
 
-  it('does not run order, export, follow-up, or alert side effects in this mode', async () => {
+  it('does not run Gemini, Telegram, order, export, follow-up, or alert side effects in this mode', async () => {
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
       throwOnHandoffCapture: true
@@ -304,7 +330,8 @@ describe('webhook: menu_code_handoff mode', () => {
 
     await h.handleText('sdt 0912345678', 'minimal_side_effects', 'm_side_effects');
 
-    expect(h.sent[0].text).toBe(MENU_CODE_LIMITED_REPLY);
+    expect(h.sent.length).toBe(0);
+    expect(h.getGeminiCalls()).toBe(0);
     expect(h.storage._customers.length).toBe(0);
     expect(h.storage._events.length).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);

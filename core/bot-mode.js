@@ -7,10 +7,6 @@ const MENU_CODE_HANDOFF_MESSAGE = [
   'Có kèm mã vận đơn để anh theo dõi hành trình của đơn hàng anh nhé. Bên em giao bằng đơn vị Giao Hàng Tiết Kiệm.'
 ].join('\n');
 
-const MENU_CODE_MENU_PRICE_REPLY = 'Dạ sản phẩm bên em từ 150k tuỳ mã ạ. Em gửi mình xem qua menu, ưng mã nào nhắn em tư vấn kỹ hơn nhé.';
-
-const MENU_CODE_LIMITED_REPLY = 'Dạ mình xem qua menu trước giúp em nhé. Ưng mã nào mình nhắn mã đó, em tư vấn kỹ hơn ạ.';
-
 const MENU_CODE_HANDOFF_DISABLED_INTENTS = [
   'AGE_POLICY',
   'ASKS_FOR_ORDER_INFO',
@@ -111,7 +107,6 @@ function applyBotModeConfig(config = {}) {
   const intents = config.intents || {};
   return {
     ...config,
-    fallbackReply: MENU_CODE_LIMITED_REPLY,
     quickReplies: {
       ...(config.quickReplies || {}),
       enabled: false
@@ -137,9 +132,7 @@ function applyBotModeConfig(config = {}) {
 
 module.exports = {
   MENU_CODE_HANDOFF,
-  MENU_CODE_LIMITED_REPLY,
   MENU_CODE_HANDOFF_MESSAGE,
-  MENU_CODE_MENU_PRICE_REPLY,
   applyBotModeConfig,
   getBotModeName,
   getMenuCodeHandoffMessage,

@@ -1,7 +1,5 @@
 const crypto = require('crypto');
 const {
-  MENU_CODE_LIMITED_REPLY,
-  MENU_CODE_MENU_PRICE_REPLY,
   getMenuCodeHandoffMessage,
   isAiFallbackEnabled,
   isLeadCaptureEnabled,
@@ -171,12 +169,9 @@ function createWebhook({
       return;
     }
 
-    showTyping(senderId);
-
     if (isMenuCodeMenuQuestion(userText)) {
+      showTyping(senderId);
       await sendImages(senderId, getMenuImageUrls(baseUrlOverride));
-      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
-      console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
       return;
     }
 
@@ -187,6 +182,7 @@ function createWebhook({
       const reply = buildDeterministicReply(userText, senderId);
       const codes = getSuccessfulRequestedProductCodes(userText, senderId);
       if (reply && codes.length) {
+        showTyping(senderId);
         await sendImages(
           senderId,
           buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride)
@@ -199,9 +195,6 @@ function createWebhook({
         return;
       }
     }
-
-    await sendMessage(senderId, MENU_CODE_LIMITED_REPLY);
-    console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_LIMITED_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
   }
 
   function registerWebhookRoutes(app) {
