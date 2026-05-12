@@ -103,28 +103,28 @@ function createAdminReadHandlers({
           targetType: 'customer',
           targetId,
           visibleOnly: true,
-          limit: USER_DETAIL_INTERNAL_NOTE_LIMIT,
+          limit: USER_DETAIL_INTERNAL_NOTE_LIMIT + 1,
           offset: 0
         }),
         internalNoteService.listNotes({
           targetType: 'conversation',
           targetId,
           visibleOnly: true,
-          limit: USER_DETAIL_INTERNAL_NOTE_LIMIT,
+          limit: USER_DETAIL_INTERNAL_NOTE_LIMIT + 1,
           offset: 0
         })
       ]);
-      const notes = [
+      const sortedNotes = [
         ...(customerModel.notes || []),
         ...(conversationModel.notes || [])
       ]
         .filter(note => String(note.status || '').toLowerCase() === 'visible')
-        .sort(compareInternalNotesNewestFirst)
-        .slice(0, USER_DETAIL_INTERNAL_NOTE_LIMIT);
+        .sort(compareInternalNotesNewestFirst);
 
       return {
         ...base,
-        notes
+        hasNext: sortedNotes.length > USER_DETAIL_INTERNAL_NOTE_LIMIT,
+        notes: sortedNotes.slice(0, USER_DETAIL_INTERNAL_NOTE_LIMIT)
       };
     } catch (err) {
       if (isMissingInternalNotesSchemaError(err)) {
@@ -202,6 +202,12 @@ function createAdminReadHandlers({
       const model = await reader.getUserDetail(senderId);
       model.filters = normalizeDashboardFilters(req.query || {});
       model.internalNotes = await getUserDetailInternalNotes(senderId, principal);
+      model.notes = model.internalNotes.notes || [];
+      model.notesHasNext = Boolean(model.internalNotes.hasNext);
+      model.notesSchemaReady = model.internalNotes.schemaReady !== false;
+      model.canCreateNote = Boolean(model.internalNotes.canCreate);
+      model.notesMessage = model.internalNotes.message || '';
+      model.notesError = model.internalNotes.error || '';
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.USER_DETAIL_READ,

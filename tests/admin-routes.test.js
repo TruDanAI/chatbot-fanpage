@@ -1,3 +1,5 @@
+const express = require('express');
+const http = require('http');
 const { describe, it, expect } = require('./harness');
 const {
   assertReadOnlySql,
@@ -86,6 +88,47 @@ function createRes() {
       return this;
     }
   };
+}
+
+function requestExpress(app, {
+  method = 'GET',
+  path = '/',
+  headers = {},
+  body = ''
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: address.port,
+        method,
+        path,
+        headers
+      }, res => {
+        let responseBody = '';
+        res.setEncoding('utf8');
+        res.on('data', chunk => {
+          responseBody += chunk;
+        });
+        res.on('end', () => {
+          server.close(() => {
+            resolve({
+              statusCode: res.statusCode,
+              headers: res.headers,
+              body: responseBody
+            });
+          });
+        });
+      });
+      req.on('error', err => {
+        server.close(() => reject(err));
+      });
+      if (body) req.write(body);
+      req.end();
+    });
+    server.on('error', reject);
+  });
 }
 
 function createStorageStub() {
@@ -1056,10 +1099,51 @@ describe('admin dashboard routes', () => {
     expect(res.body.indexOf('Ghi Chú Nội Bộ') < res.body.indexOf('<h2>Orders</h2>')).toBeTrue();
     expect(notes.calls.map(call => call.targetType).sort()).toEqual(['conversation', 'customer']);
     expect(notes.calls.every(call => call.targetId === 'sender_1')).toBeTrue();
-    expect(notes.calls.every(call => call.limit === 20 && call.offset === 0 && call.visibleOnly === true)).toBeTrue();
+    expect(notes.calls.every(call => call.limit === 21 && call.offset === 0 && call.visibleOnly === true)).toBeTrue();
     expect(res.body.indexOf('newer conversation note') < res.body.indexOf('customer note')).toBeTrue();
     expect(res.body.includes('hidden customer note')).toBeFalse();
     expect(notes.calls.some(call => call.targetType === 'order')).toBeFalse();
+  });
+
+  it('actual Express user detail route renders internal notes through real admin composition', async () => {
+    const notes = createInternalNoteServiceStub({
+      noteRows: filters => [{
+        id: filters.targetType === 'customer' ? 10 : 11,
+        target_type: filters.targetType,
+        target_id: filters.targetId,
+        body: filters.targetType === 'customer' ? '<script>alert(1)</script>' : 'conversation context',
+        status: 'visible',
+        created_by: 'admin-1',
+        created_at: filters.targetType === 'customer'
+          ? '2026-05-12T03:00:00.000Z'
+          : '2026-05-12T02:00:00.000Z'
+      }]
+    });
+    const app = express();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      internalNoteService: notes,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'maintainer-actor',
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const res = await requestExpress(app, {
+      path: '/admin/dashboard/users/sender_1',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Ghi Chú Nội Bộ');
+    expect(res.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(res.body.includes('<script>alert(1)</script>')).toBeFalse();
+    expect(res.body).toContain('conversation context');
+    expect(res.body).toContain('method="post" action="/admin/dashboard/users/sender_1/notes"');
+    expect(notes.calls.map(call => call.targetType).sort()).toEqual(['conversation', 'customer']);
   });
 
   it('user detail renders empty internal notes state', async () => {
@@ -1077,6 +1161,61 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('Ghi Chú Nội Bộ');
     expect(res.body).toContain('Chưa có ghi chú nào.');
+  });
+
+  it('user detail renders notes section when default internal note service is unavailable', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      dashboardDatabaseUrl: '',
+      adminPrincipalRoles: ['viewer'],
+      tenantId: 'default',
+      pageId: 'page'
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Ghi Chú Nội Bộ');
+    expect(res.body).toContain('Không đọc được ghi chú nội bộ.');
+    expect(res.body.includes('DATABASE_URL')).toBeFalse();
+    expect(res.body.includes('postgres://')).toBeFalse();
+  });
+
+  it('user detail exposes top-level internal note model fields to the renderer', async () => {
+    const rows = Array.from({ length: 25 }, (_, index) => ({
+      id: index + 1,
+      target_type: index % 2 === 0 ? 'customer' : 'conversation',
+      target_id: 'sender_1',
+      body: `note ${index + 1}`,
+      status: 'visible',
+      created_by: 'admin-1',
+      created_at: new Date(Date.UTC(2026, 4, 12, 1, index)).toISOString()
+    }));
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: createInternalNoteServiceStub({
+        noteRows: filters => rows.filter(row => row.target_type === filters.targetType)
+      }),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Ghi Chú Nội Bộ');
+    expect(res.body).toContain('Đang hiển thị các ghi chú mới nhất.');
+    expect(res.body).toContain('method="post" action="/admin/dashboard/users/sender_1/notes"');
   });
 
   it('user detail escapes internal note body and does not render unsafe HTML', async () => {
@@ -1598,17 +1737,13 @@ describe('admin dashboard routes', () => {
     expect(auditLogger.entries.length).toBe(0);
   });
 
-  it('user detail note form POST denies viewer and support through create service', async () => {
+  it('user detail note form POST denies viewer and support before create service', async () => {
     for (const role of ['viewer', 'support']) {
-      const queries = [];
-      const service = createPostgresInternalNoteService({
-        databaseUrl: 'postgres://example.test/db',
-        tenantId: 'default',
-        pageId: 'page',
-        Client: createInternalNoteRouteFakeClientClass({ queries })
-      });
+      const notes = createInternalNoteServiceStub();
+      const auditLogger = createAuditLoggerStub();
       const app = registerInternalNoteRouteApp({
-        internalNoteService: service,
+        internalNoteService: notes,
+        auditLogger,
         adminPrincipalRoles: [role],
         adminPrincipalId: `${role}-actor`
       });
@@ -1622,14 +1757,14 @@ describe('admin dashboard routes', () => {
           body: 'must not be created'
         }
       }), res);
-      const auditInsert = findRouteQuery(queries, /^INSERT INTO admin_audit_log/i);
 
       expect(res.statusCode).toBe(403);
       expect(String(res.body).includes('must not be created')).toBeFalse();
-      expect(Boolean(findRouteQuery(queries, /^INSERT INTO internal_notes/i))).toBeFalse();
-      expect(Boolean(auditInsert)).toBeTrue();
-      expect(auditInsert.params[8]).toBe('denied');
-      expect(Boolean(findRouteQuery(queries, /^COMMIT$/))).toBeTrue();
+      expect(notes.createCalls.length).toBe(0);
+      expect(auditLogger.entries.length).toBe(1);
+      expect(auditLogger.entries[0].action).toBe('admin.internal_note.create');
+      expect(auditLogger.entries[0].outcome).toBe('denied');
+      expect(auditLogger.entries[0].metadata.permission).toBe(PERMISSIONS.INTERNAL_NOTE_WRITE);
     }
   });
 

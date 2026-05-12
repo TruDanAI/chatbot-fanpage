@@ -204,9 +204,24 @@ function limitNoteBody(value = '', max = 800) {
   return `${text.slice(0, Math.max(0, max - 3))}...`;
 }
 
+function resolveInternalNotesViewModel(model = {}) {
+  const nested = model.internalNotes || {};
+  return {
+    canCreate: model.canCreateNote != null ? Boolean(model.canCreateNote) : Boolean(nested.canCreate),
+    error: model.notesError || nested.error || '',
+    hasNext: model.notesHasNext != null
+      ? Boolean(model.notesHasNext)
+      : Boolean(nested.hasNext || nested.pagination?.hasNext),
+    message: model.notesMessage || nested.message || '',
+    notes: Array.isArray(model.notes) ? model.notes : (nested.notes || []),
+    schemaReady: model.notesSchemaReady != null ? model.notesSchemaReady !== false : nested.schemaReady !== false,
+    targetId: model.senderId || nested.targetId || ''
+  };
+}
+
 function renderInternalNotesSection(model = {}) {
-  const notesModel = model.internalNotes || {};
-  const senderId = model.senderId || notesModel.targetId || '';
+  const notesModel = resolveInternalNotesViewModel(model);
+  const senderId = notesModel.targetId || '';
   const form = notesModel.canCreate && notesModel.schemaReady !== false && !notesModel.error
     ? `
       <form class="note-form" method="post" action="/admin/dashboard/users/${encodeRoutePart(senderId)}/notes">
@@ -230,14 +245,14 @@ function renderInternalNotesSection(model = {}) {
       ? `<div class="empty">${escapeHtml(notesModel.message || 'Không đọc được ghi chú nội bộ.')}</div>`
       : !notes.length
         ? '<div class="empty">Chưa có ghi chú nào.</div>'
-        : renderTable(['time', 'created_by', 'target_type', 'body'], notes, note => `
+        : `${renderTable(['time', 'created_by', 'target_type', 'body'], notes, note => `
         <tr>
           <td>${escapeHtml(formatDate(note.created_at))}</td>
           <td>${escapeHtml(note.created_by)}</td>
           <td><span class="status status-neutral">${escapeHtml(note.target_type)}</span></td>
           <td class="note-body">${escapeHtml(limitNoteBody(note.body, 800))}</td>
         </tr>
-      `);
+      `)}${notesModel.hasNext ? '<p class="meta">Đang hiển thị các ghi chú mới nhất.</p>' : ''}`;
 
   return `
     <h2>Ghi Chú Nội Bộ</h2>

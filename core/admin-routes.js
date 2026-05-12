@@ -331,7 +331,7 @@ function registerAdminRoutes(app, {
   async function createInternalNoteHtml(req, res) {
     const senderId = String(req.params.senderId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
-      permission: PERMISSIONS.USER_DETAIL_READ,
+      permission: PERMISSIONS.INTERNAL_NOTE_WRITE,
       bearerOnly: true,
       action: INTERNAL_NOTE_ACTION,
       resourceType: INTERNAL_NOTE_RESOURCE_TYPE,
