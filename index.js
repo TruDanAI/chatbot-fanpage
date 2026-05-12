@@ -30,6 +30,11 @@ const {
 } = require('./core/notification-service');
 const { createReminderService } = require('./core/reminder-service');
 const { createWebhook } = require('./core/webhook');
+const {
+  applyBotModeConfig,
+  isAiFallbackEnabled,
+  isFollowUpEnabled
+} = require('./core/bot-mode');
 
 const ROOT_DIR = __dirname;
 
@@ -70,7 +75,7 @@ function loadShopRuntime(rootDir) {
     if (Array.isArray(custom.append)) append.push(...custom.append);
   }
 
-  const mergedConfig = {
+  const mergedConfig = applyBotModeConfig({
     ...shopConfig,
     intents: {
       ...(shopConfig.intents || {}),
@@ -78,7 +83,7 @@ function loadShopRuntime(rootDir) {
       prepend: [...prepend, ...(shopConfig.intents?.prepend || [])],
       append: [...(shopConfig.intents?.append || []), ...append]
     }
-  };
+  });
 
   return { shopId, shopDir, config: mergedConfig, products };
 }
@@ -134,6 +139,7 @@ const GEMINI_API_KEY  = process.env.GEMINI_API_KEY;
 const GEMINI_PROVIDER = String(process.env.GEMINI_PROVIDER || 'vertex').trim().toLowerCase();
 const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const USE_GEMINI      = String(process.env.USE_GEMINI || 'true').toLowerCase() !== 'false';
+const EFFECTIVE_USE_GEMINI = USE_GEMINI && isAiFallbackEnabled(shopConfig);
 const MESSENGER_DRY_RUN = assertMessengerDryRunAllowed(
   envBoolean('MESSENGER_DRY_RUN', false),
   process.env
@@ -202,7 +208,7 @@ const required = { FB_VERIFY_TOKEN, FB_PAGE_TOKEN };
 if (REQUIRE_FB_APP_SECRET) {
   required.FB_APP_SECRET = FB_APP_SECRET;
 }
-if (USE_GEMINI) {
+if (EFFECTIVE_USE_GEMINI) {
   if (GEMINI_PROVIDER === 'api_key') {
     required.GEMINI_API_KEY = GEMINI_API_KEY;
   } else if (GEMINI_PROVIDER === 'vertex') {
@@ -361,7 +367,7 @@ const {
   STATES,
   trackEvent,
   config: {
-    enabled: ABANDONED_CART_REMINDER_ENABLED,
+    enabled: ABANDONED_CART_REMINDER_ENABLED && isFollowUpEnabled(shopConfig),
     reminderMs: ABANDONED_CART_REMINDER_MS,
     scanMs: ABANDONED_CART_REMINDER_SCAN_MS,
     maxAgeMs: ABANDONED_CART_REMINDER_MAX_AGE_MS
@@ -375,7 +381,7 @@ const { registerWebhookRoutes } = createWebhook({
   fbAppSecret: FB_APP_SECRET,
   webhookRateLimiter,
   handoffMs: HANDOFF_MS,
-  useGemini: USE_GEMINI,
+  useGemini: EFFECTIVE_USE_GEMINI,
   botMessageMetadata: BOT_MESSAGE_METADATA,
   resolveQuickReplyPayload,
   buildQuickReplies,
@@ -383,6 +389,7 @@ const { registerWebhookRoutes } = createWebhook({
   buildFallbackReply,
   buildLeadDetails,
   buildConfirmedSheetLead,
+  extractRequestedProductCodes,
   captureHandoffOrderUpdate,
   notifyStaffForReadyOrder,
   looksLikePhone,
@@ -471,7 +478,7 @@ function shutdown(signal) {
 async function startServer() {
   await storage.ready;
   server = app.listen(PORT, async () => {
-    const geminiLabel = USE_GEMINI ? `${GEMINI_PROVIDER}/${GEMINI_MODEL}` : 'off';
+    const geminiLabel = EFFECTIVE_USE_GEMINI ? `${GEMINI_PROVIDER}/${GEMINI_MODEL}` : 'off';
     console.log(`🚀 Bot shop="${ACTIVE_SHOP_ID}" port ${PORT} (sản phẩm: ${products.length}, Gemini: ${geminiLabel})`);
     await checkPageToken();
     startSheetOutboxWorker();

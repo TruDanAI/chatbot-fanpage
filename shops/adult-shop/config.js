@@ -4,6 +4,23 @@ module.exports = {
   shopName: 'shop',
   minAge: 18,
 
+  botMode: {
+    name: 'menu_code_handoff',
+    aiFallbackEnabled: false,
+    orderFlowEnabled: false,
+    leadCaptureEnabled: false,
+    followUpEnabled: false,
+    recommendationEnabled: false,
+    productCodeLookupEnabled: true,
+    menuSendingEnabled: true,
+    handoffMessage: [
+      'E gửi anh xem qua sp, anh ưng mã nào em tư vấn ạ',
+      'Bên em nhận hàng thanh toán, che tên sản phẩm trước khi gửi đi.',
+      'Freeship + tặng gel',
+      'Có kèm mã vận đơn để anh theo dõi hành trình của đơn hàng anh nhé. Bên em giao bằng đơn vị Giao Hàng Tiết Kiệm.'
+    ].join('\n')
+  },
+
   policies: {
     freeShipping: true,
     privacy: 'che tên sản phẩm trước khi gửi đi',

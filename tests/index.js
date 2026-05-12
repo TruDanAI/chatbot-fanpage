@@ -7,6 +7,7 @@ require('./quick-replies.test');
 require('./messenger-client.test');
 require('./image-service.test');
 require('./rules.test');
+require('./webhook.test');
 require('./storage-config.test');
 require('./storage-file-adapter.test');
 require('./storage-postgres-adapter.test');

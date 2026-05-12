@@ -1,4 +1,12 @@
 const crypto = require('crypto');
+const {
+  getMenuCodeHandoffMessage,
+  isAiFallbackEnabled,
+  isLeadCaptureEnabled,
+  isMenuCodeHandoffMode,
+  isOrderFlowEnabled,
+  isProductCodeLookupEnabled
+} = require('./bot-mode');
 
 function createWebhook({
   storage,
@@ -15,6 +23,7 @@ function createWebhook({
   buildFallbackReply,
   buildLeadDetails,
   buildConfirmedSheetLead,
+  extractRequestedProductCodes = () => [],
   captureHandoffOrderUpdate,
   notifyStaffForReadyOrder,
   looksLikePhone,
@@ -93,6 +102,39 @@ function createWebhook({
     return /(?:khong\s*hieu|tra\s*loi\s*gi|noi\s*gi|bot|tu\s*van\s*te|hoi\s*mai|lau\s*the|buc\s*minh|kho\s*chiu|lua\s*dao|chan\s*the|mat\s*thoi\s*gian)/.test(t);
   }
 
+  const effectiveUseGemini = useGemini && isAiFallbackEnabled(shopConfig);
+  const leadCaptureEnabled = isLeadCaptureEnabled(shopConfig);
+  const orderFlowEnabled = isOrderFlowEnabled(shopConfig);
+  const productCodeLookupEnabled = isProductCodeLookupEnabled(shopConfig);
+  const menuCodeHandoffMode = isMenuCodeHandoffMode(shopConfig);
+
+  function getSuccessfulRequestedProductCodes(userText, senderId) {
+    if (!menuCodeHandoffMode || !productCodeLookupEnabled) return [];
+    const requestedCodes = extractRequestedProductCodes(userText)
+      .map(code => String(code || '').trim().toUpperCase())
+      .filter(Boolean);
+    if (!requestedCodes.length) return [];
+
+    const lastCode = String(storage.getLastProductCode(senderId) || '').trim().toUpperCase();
+    if (!lastCode) return [];
+    return requestedCodes.filter(code => code === lastCode);
+  }
+
+  async function handoffAfterProductCode(senderId, userText) {
+    const codes = getSuccessfulRequestedProductCodes(userText, senderId);
+    if (!codes.length) return false;
+
+    const message = getMenuCodeHandoffMessage(shopConfig);
+    await sendMessage(senderId, message);
+    storage.setHandoff(senderId, Date.now() + handoffMs);
+    trackEvent(senderId, 'handoff_started', userText, {
+      reason: 'menu_code_handoff',
+      productCode: codes[0]
+    });
+    console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
+    return true;
+  }
+
   function registerWebhookRoutes(app) {
     app.get('/webhook', (req, res) => {
       const mode = req.query['hub.mode'];
@@ -166,9 +208,12 @@ function createWebhook({
       quickReplyPayload
     });
 
-    // Đang trong khoảng human handoff → bot không trả lời, nhưng vẫn ghi nhận cập nhật đơn.
+    // Đang trong khoảng human handoff → bot không trả lời, nhưng vẫn ghi nhận cập nhật đơn
+    // nếu shop còn bật order flow.
     if (storage.inHandoff(senderId)) {
-      const captured = captureHandoffOrderUpdate(senderId, userText, { messageId: mid || '' });
+      const captured = orderFlowEnabled
+        ? captureHandoffOrderUpdate(senderId, userText, { messageId: mid || '' })
+        : false;
       console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}${captured ? ' — đã ghi nhận cập nhật đơn' : ''}`);
       return;
     }
@@ -220,78 +265,89 @@ function createWebhook({
       return;
     }
 
-    // Nhận diện sđt → ghi lead vào customers.csv để nhân viên xem lại.
-    // Phần storage tự xếp hàng ghi file để nhiều khách nhắn cùng lúc không làm lẫn dòng CSV.
-    const leadDetails = buildLeadDetails(userText, senderId);
-    const prevOrderDraft = storage.getOrderDraft(senderId);
-    const hasOrderDetail = Boolean(
-      leadDetails.productCode || leadDetails.phone || leadDetails.name || leadDetails.address
-    );
-    const mergedOrderDraft = hasOrderDetail
-      ? storage.mergeOrderDraft(senderId, leadDetails)
-      : {};
-    const currentLead = Object.keys(mergedOrderDraft).length ? mergedOrderDraft : leadDetails;
+    if (leadCaptureEnabled || orderFlowEnabled) {
+      // Nhận diện sđt → ghi lead vào customers.csv để nhân viên xem lại.
+      // Phần storage tự xếp hàng ghi file để nhiều khách nhắn cùng lúc không làm lẫn dòng CSV.
+      const leadDetails = buildLeadDetails(userText, senderId);
+      const prevOrderDraft = storage.getOrderDraft(senderId);
+      const hasOrderDetail = Boolean(
+        leadDetails.productCode || leadDetails.phone || leadDetails.name || leadDetails.address
+      );
+      const mergedOrderDraft = hasOrderDetail
+        ? storage.mergeOrderDraft(senderId, leadDetails)
+        : {};
+      const currentLead = Object.keys(mergedOrderDraft).length ? mergedOrderDraft : leadDetails;
 
-    // CONFIRMED lưu từ phiên trước + khách gửi đơn mới → xóa cờ để "ok" lại tạo transition và đẩy Sheet.
-    const substantiveLead = Boolean(leadDetails.phone || leadDetails.name || leadDetails.address);
-    const productChanged = Boolean(
-      leadDetails.productCode &&
-      String(leadDetails.productCode).toUpperCase() !== String(prevOrderDraft.productCode || '').toUpperCase()
-    );
-    if (
-      storage.getSessionState(senderId) === STATES.CONFIRMED &&
-      (substantiveLead || productChanged)
-    ) {
-      storage.setSessionState(senderId, '');
-    }
-
-    if (looksLikePhone(userText)) {
-      trackEvent(senderId, 'lead_info_received', userText, { fields: ['phone'] });
-      storage.appendCustomer({
-        type: 'lead',
-        senderId,
-        ...currentLead,
-        phone: currentLead.phone || leadDetails.phone,
-        text: userText,
-        history: storage.getHistory(senderId).slice(-10),
-        at: new Date().toISOString()
-      });
-    } else if ((leadDetails.name || leadDetails.address) && currentLead.phone && currentLead.name && currentLead.address) {
-      trackEvent(senderId, 'lead_info_received', userText, {
-        fields: ['name', 'address'].filter(field => Boolean(leadDetails[field]))
-      });
-      storage.appendCustomer({
-        type: 'lead_update',
-        senderId,
-        ...currentLead,
-        text: userText,
-        history: storage.getHistory(senderId).slice(-10),
-        at: new Date().toISOString()
-      });
-    }
-
-    await notifyStaffForReadyOrder(senderId, userText, { messageId: mid || '' });
-
-    const sessionBeforeConfirm = storage.getSessionState(senderId);
-    if (shouldSilenceAfterCompleteOrder(userText, senderId)) {
-      const nowConfirmed = storage.getSessionState(senderId) === STATES.CONFIRMED;
-      const justConfirmed = nowConfirmed && sessionBeforeConfirm !== STATES.CONFIRMED;
-      if (justConfirmed) {
-        console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (${senderId}).`);
-        const confirmedLead = buildConfirmedSheetLead(senderId, { messageId: mid || '', userText });
-        trackEvent(senderId, 'order_confirmed', userText, {
-          productCode: confirmedLead.productCode || '',
-          productInterest: confirmedLead.productInterest || ''
-        });
-        void pushLeadToSheet(confirmedLead);
-        sendTelegramAlert({
-          ...confirmedLead,
-          text: 'ĐƠN ĐÃ ĐƯỢC KHÁCH XÁC NHẬN'
-        });
-        storage.setHandoff(senderId, Date.now() + handoffMs);
+      // CONFIRMED lưu từ phiên trước + khách gửi đơn mới → xóa cờ để "ok" lại tạo transition và đẩy Sheet.
+      const substantiveLead = Boolean(leadDetails.phone || leadDetails.name || leadDetails.address);
+      const productChanged = Boolean(
+        leadDetails.productCode &&
+        String(leadDetails.productCode).toUpperCase() !== String(prevOrderDraft.productCode || '').toUpperCase()
+      );
+      if (
+        orderFlowEnabled &&
+        storage.getSessionState(senderId) === STATES.CONFIRMED &&
+        (substantiveLead || productChanged)
+      ) {
+        storage.setSessionState(senderId, '');
       }
-      console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
-      return;
+
+      if (leadCaptureEnabled && looksLikePhone(userText)) {
+        trackEvent(senderId, 'lead_info_received', userText, { fields: ['phone'] });
+        storage.appendCustomer({
+          type: 'lead',
+          senderId,
+          ...currentLead,
+          phone: currentLead.phone || leadDetails.phone,
+          text: userText,
+          history: storage.getHistory(senderId).slice(-10),
+          at: new Date().toISOString()
+        });
+      } else if (
+        leadCaptureEnabled &&
+        (leadDetails.name || leadDetails.address) &&
+        currentLead.phone &&
+        currentLead.name &&
+        currentLead.address
+      ) {
+        trackEvent(senderId, 'lead_info_received', userText, {
+          fields: ['name', 'address'].filter(field => Boolean(leadDetails[field]))
+        });
+        storage.appendCustomer({
+          type: 'lead_update',
+          senderId,
+          ...currentLead,
+          text: userText,
+          history: storage.getHistory(senderId).slice(-10),
+          at: new Date().toISOString()
+        });
+      }
+
+      if (orderFlowEnabled) {
+        await notifyStaffForReadyOrder(senderId, userText, { messageId: mid || '' });
+
+        const sessionBeforeConfirm = storage.getSessionState(senderId);
+        if (shouldSilenceAfterCompleteOrder(userText, senderId)) {
+          const nowConfirmed = storage.getSessionState(senderId) === STATES.CONFIRMED;
+          const justConfirmed = nowConfirmed && sessionBeforeConfirm !== STATES.CONFIRMED;
+          if (justConfirmed) {
+            console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (${senderId}).`);
+            const confirmedLead = buildConfirmedSheetLead(senderId, { messageId: mid || '', userText });
+            trackEvent(senderId, 'order_confirmed', userText, {
+              productCode: confirmedLead.productCode || '',
+              productInterest: confirmedLead.productInterest || ''
+            });
+            void pushLeadToSheet(confirmedLead);
+            sendTelegramAlert({
+              ...confirmedLead,
+              text: 'ĐƠN ĐÃ ĐƯỢC KHÁCH XÁC NHẬN'
+            });
+            storage.setHandoff(senderId, Date.now() + handoffMs);
+          }
+          console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
+          return;
+        }
+      }
     }
 
     let imagePromise = Promise.resolve();
@@ -337,7 +393,7 @@ function createWebhook({
         resetFallbackAttention(senderId);
         trackEvent(senderId, 'deterministic_reply', userText, { stateBefore: stateBeforeReply });
         console.log('⚡ Trả lời rule-based, không gọi Gemini');
-      } else if (!useGemini) {
+      } else if (!effectiveUseGemini) {
         reply = buildFallbackReply(userText, senderId);
         usedFallbackReply = true;
         trackEvent(senderId, 'fallback_used', userText, { reason: 'gemini_disabled' });
@@ -385,6 +441,7 @@ function createWebhook({
       } else {
         await sendMessage(senderId, reply);
       }
+      await handoffAfterProductCode(senderId, userText);
       recordConversationTurn(senderId, userText, reply);
       console.log(`✉️  Đã gửi tin tới ${senderId}`);
     } catch (err) {

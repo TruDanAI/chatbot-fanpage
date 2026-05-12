@@ -1212,10 +1212,11 @@ function createRuleEngine({ products, config = defaultConfig, contextStore = {} 
   // ===== Áp dụng config-driven (disabled / prepend / append) =====
   const intentsConfig = config.intents || {};
   const disabledSet = new Set(intentsConfig.disabled || []);
+  const isIntentEnabled = intent => !disabledSet.has(intent.name);
   const intentRouters = [
-    ...(intentsConfig.prepend || []),
-    ...builtInIntents.filter(intent => !disabledSet.has(intent.name)),
-    ...(intentsConfig.append || [])
+    ...(intentsConfig.prepend || []).filter(isIntentEnabled),
+    ...builtInIntents.filter(isIntentEnabled),
+    ...(intentsConfig.append || []).filter(isIntentEnabled)
   ];
 
   // ===== Loop chính: duyệt qua các intent routers =====
