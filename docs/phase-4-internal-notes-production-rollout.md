@@ -2,12 +2,13 @@
 
 This is the production rollout record for applying
 `db/internal-notes-proposal.sql` and the later approved Phase 4 v1
-internal-notes API smokes. The production schema apply, authenticated read
-smoke, authenticated POST note-create smoke, and post-create authenticated GET
-read smoke have completed, but this document is not approval to run any future
-authenticated production smoke, deploy code, change environment variables,
-write production business data, create production admin users, hide/delete the
-smoke note, or touch production `/data`.
+internal-notes API/UI smokes. The production schema apply, authenticated read
+smoke, authenticated POST note-create smoke, post-create authenticated GET
+read smoke, and authenticated User Detail UI smoke have completed, but this
+document is not approval to run any future authenticated production smoke,
+deploy code, change environment variables, write production business data,
+create production admin users, hide/delete the smoke note, or touch production
+`/data`.
 
 ## Scope
 
@@ -21,9 +22,41 @@ and `notes=[]`. After schema apply, the authenticated production read smoke
 returned `schemaReady=true` and `notes=[]`. After the POST create API deploy,
 the approved note-create smoke created exactly one production smoke note, and
 the approved post-create GET read smoke returned `schemaReady=true` and
-`notes.length=1`. Authenticated routes must still not be smoked again without
+`notes.length=1`. User Detail UI/list/form is deployed and the authenticated UI
+smoke passed. Authenticated routes must still not be smoked again without
 approval because admin reads write audit rows and note creates write business
 data.
+
+## Latest User Detail UI Smoke Result
+
+Completed on May 12, 2026:
+
+- Latest code commit:
+  `fae7c7f Fix user detail internal notes UI contract`.
+- Railway deployment:
+  `a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS` at commit `fae7c7f`.
+- Exactly one authenticated user detail page was opened.
+- HTTP status: 200.
+- User Detail internal notes UI smoke passed.
+- Smoke note visible check passed.
+- Form visibility matched the current Bearer/admin role.
+- `internal_notes` count remained `1 -> 1`.
+- `admin_audit_log` moved `61 -> 62`.
+- Audit delta was `+1 success`, `+0 denied`, `+0 error`.
+- No `POST` calls were made.
+- No note create/hide/delete occurred.
+- No environment variable was changed.
+- No deploy occurred during the smoke.
+- Production `/data` was not touched.
+- Caveat: the literal Vietnamese heading check had a PowerShell encoding issue,
+  but deployed source contains `Ghi Chú Nội Bộ` and the live GET showed the
+  note body/form from the section.
+- Phase 4 v1 backend/API/UI is complete.
+- User Detail UI/list/form exists.
+- No edit/delete/hide/order-notes UI exists yet.
+- One production smoke note remains visible.
+- Next business-priority task: add configurable minimal shop mode
+  `menu_code_handoff`.
 
 ## Latest API Smoke Result
 
@@ -49,8 +82,8 @@ Completed on May 12, 2026:
 - `admin_audit_log` after GET smoke: total 55, success 36, denied 19, error 0.
 - Audit delta during GET smoke: `+1 success`.
 - Smoke note still exists and was not hidden/deleted.
-- Phase 4 v1 backend/API is complete.
-- UI/list/form integration remains future work.
+- Phase 4 v1 backend/API/UI is complete. Later User Detail UI smoke also passed;
+  see the latest UI smoke section above.
 - No environment variable was changed during the smokes.
 - No deploy occurred during the smokes.
 - No schema apply occurred during the smokes.
@@ -92,9 +125,10 @@ Completed on May 12, 2026:
 - Production `/data` was not touched.
 - Git remained clean, `origin/main...HEAD = 0 0`.
 
-Next major task: plan UI/list/form integration separately. Future production
-internal-notes smokes or writes still require explicit approval; the existing
-smoke note must not be hidden/deleted without separate approval.
+Next business-priority task: add configurable minimal shop mode
+`menu_code_handoff`. Future production internal-notes smokes or writes still
+require explicit approval; the existing smoke note must not be hidden/deleted
+without separate approval.
 
 ## Preconditions
 

@@ -64,11 +64,16 @@ Last verified baseline from May 12, 2026:
   internal-notes GET read smoke: `admin_audit_log=55`, outcomes `denied=19`,
   `success=36`, `error=0`. The GET smoke produced the expected
   `auditDelta=+1 success` and returned `schemaReady=true`, `notes.length=1`.
+- Latest production admin audit count after approved User Detail internal notes
+  UI smoke: `admin_audit_log=62`, outcomes `denied=22`, `success=40`,
+  `error=0`. The UI smoke produced the expected `auditDelta=+1 success`, HTTP
+  200, visible smoke note, correct form visibility for the current
+  Bearer/admin role, and `internal_notes` remained `1 -> 1`.
 - Latest verified Railway deployment:
-  `71daeacd-015f-4f03-b5fc-b21e72bac1b0 SUCCESS` at commit
-  `9f10f24 Add internal notes create API`
-- Latest pushed commit:
-  `9f10f24 Add internal notes create API`
+  `a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS` at commit
+  `fae7c7f Fix user detail internal notes UI contract`
+- Latest pushed/code commit:
+  `fae7c7f Fix user detail internal notes UI contract`
 - Latest git state: clean worktree, `origin/main...HEAD = 0 0`.
 - Latest production internal_notes schema apply:
   `db/internal-notes-proposal.sql` has been applied to production PostgreSQL.
@@ -113,6 +118,13 @@ Last verified baseline from May 12, 2026:
 - Production DB writes in this baseline were limited to the additive
   `internal_notes` schema apply, one production smoke note, and the expected
   audit success rows from the approved internal-notes smokes.
+- No POST calls, note create/hide/delete, env change, deploy, schema apply, or
+  production `/data` touch occurred during the User Detail UI smoke.
+- User Detail UI/list/form exists for internal notes. There is no
+  edit/delete/hide/order-notes UI yet.
+- Caveat from the User Detail UI smoke: the literal Vietnamese heading check
+  had a PowerShell encoding issue, but deployed source contains
+  `Ghi Chú Nội Bộ` and the live GET showed the note body/form from the section.
 - No deploy, schema apply, or production `/data` touch occurred during the
   POST/GET smoke session.
 - Production `/data` was not touched.
@@ -223,14 +235,17 @@ Last verified baseline from May 12, 2026:
   authenticated production post-create GET read smoke passed with
   `schemaReady=true`, `notes.length=1`, pagination present, and
   `auditDelta=+1 success`;
+  User Detail internal notes UI/list/form is implemented and deployed;
+  authenticated production User Detail UI smoke passed with HTTP 200, smoke
+  note visible, form visibility matching the current Bearer/admin role,
+  `internal_notes` unchanged `1 -> 1`, and `auditDelta=+1 success`;
   production `internal_notes` count is now 1;
-  latest known `admin_audit_log` is 55, outcomes `denied=19`, `success=36`,
+  latest known `admin_audit_log` is 62, outcomes `denied=22`, `success=40`,
   `error=0`;
   tests cover validation, RBAC, transaction/audit fail-closed behavior, static
   SQL checks, verifier guardrails, and read model behavior in
-  `tests/admin-internal-notes.test.js`; there is no UI form/list yet; UI/list
-  and form integration remains future work. The smoke note still exists and was
-  not hidden/deleted.
+  `tests/admin-internal-notes.test.js`; there is no edit/delete/hide/order-notes
+  UI yet. The smoke note still exists and was not hidden/deleted.
 - Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply`
 - Latest known backup archive:
   `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz`
@@ -242,6 +257,9 @@ Last verified baseline from May 12, 2026:
 - Latest count-only internal_notes/audit check after POST + post-create GET
   smokes:
   internal_notes 1; admin_audit_log 55, outcomes denied 19, success 36,
+  error 0.
+- Latest count-only internal_notes/audit check after User Detail UI smoke:
+  internal_notes 1; admin_audit_log 62, outcomes denied 22, success 40,
   error 0.
 
 Treat this baseline as a snapshot only. Every future session must re-check git,
@@ -497,9 +515,12 @@ Current internal-notes status:
 - Authenticated production post-create GET read smoke passed with HTTP 200,
   `schemaReady=true`, `notes.length=1`, pagination present, safe note fields
   only, no raw customer/order/message data, and no DB error.
+- Authenticated production User Detail UI smoke passed with HTTP 200, smoke
+  note visible, form visibility matching the current Bearer/admin role,
+  `internal_notes` unchanged `1 -> 1`, and `auditDelta=+1 success`.
 - Production `internal_notes` count is now 1.
-- Latest known audit count after GET smoke: `admin_audit_log=55`, outcomes
-  `success=36`, `denied=19`, `error=0`.
+- Latest known audit count after User Detail UI smoke: `admin_audit_log=62`,
+  outcomes `success=40`, `denied=22`, `error=0`.
 - The smoke note still exists and was not hidden/deleted.
 - No env change, deploy, schema apply, or production `/data` touch occurred
   during the POST/GET smoke session.
@@ -512,9 +533,10 @@ Current internal-notes status:
   process; the proposal was applied twice inside an isolated schema; table,
   columns, indexes, and CHECK constraints were verified; the isolated schema
   was dropped; 0 `internal_notes_verify_%` schemas remained.
-- No UI form/list exists.
-- Phase 4 v1 backend/API is complete.
-- UI/list/form integration remains future work.
+- User Detail UI/list/form exists and has passed the authenticated production
+  UI smoke.
+- No edit/delete/hide/order-notes UI exists yet.
+- Phase 4 v1 backend/API/UI is complete.
 
 Candidate first write actions:
 
@@ -525,7 +547,7 @@ Candidate first write actions:
 
 Recommended next task:
 
-- Plan and implement UI/list/form integration only after separate approval.
+- Add configurable minimal shop mode `menu_code_handoff`.
 - Any further deploy or production smoke still needs separate approval.
   Authenticated read smoke writes audit rows, and create-note smoke writes
   business data.
@@ -653,7 +675,11 @@ verifier, focused tests, and a passing live local PostgreSQL SQL verification
 against an isolated schema. Production `internal_notes` schema is applied and
 verified; production POST note-create smoke passed and created exactly 1 smoke
 note; post-create GET read smoke passed with `schemaReady=true`,
-`notes.length=1`, pagination present, and `auditDelta=+1 success`. Latest known
-counts are `internal_notes=1` and `admin_audit_log=55` with `success=36`,
-`denied=19`, `error=0`. The smoke note still exists and was not hidden/deleted.
-There is still no UI form/list; UI/list/form integration remains future work.
+`notes.length=1`, pagination present, and `auditDelta=+1 success`; User Detail
+UI smoke passed with HTTP 200, smoke note visible, correct form visibility, and
+`internal_notes` unchanged `1 -> 1`. Latest known counts are
+`internal_notes=1` and `admin_audit_log=62` with `success=40`, `denied=22`,
+`error=0`. The smoke note still exists and was not hidden/deleted. User Detail
+UI/list/form exists; edit/delete/hide/order-notes UI does not exist yet. The
+next business-priority task is configurable minimal shop mode
+`menu_code_handoff`.

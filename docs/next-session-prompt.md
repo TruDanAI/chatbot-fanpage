@@ -14,12 +14,13 @@ Branch chính: main
 Mục tiêu sản phẩm:
 - Biến chatbot Messenger hiện tại thành một hệ thống admin/SaaS nội bộ ổn định.
 - Ưu tiên an toàn dữ liệu production hơn tốc độ làm tính năng.
-- Admin dashboard hiện vẫn không có UI business write workflow. Phase 4
-  internal notes v1 backend/API đã complete: design/SQL proposal/safe
+- Admin dashboard hiện có internal-notes UI/list/form trên user detail, nhưng
+  chưa có edit/delete/hide/order-notes UI. Phase 4 internal notes v1
+  backend/API/UI đã complete: design/SQL proposal/safe
   verifier/live local PostgreSQL verification/create service/read-list model,
   GET+POST API/tests, production schema đã apply, production POST note-create
-  smoke đã pass, và post-create GET read smoke đã pass. UI form/list vẫn là
-  future work.
+  smoke đã pass, post-create GET read smoke đã pass, và User Detail UI smoke
+  đã pass.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -65,10 +66,10 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified Railway deployment:
-  71daeacd-015f-4f03-b5fc-b21e72bac1b0 SUCCESS ở commit 9f10f24
-  Add internal notes create API
-- Latest pushed commit:
-  9f10f24 Add internal notes create API
+  a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS ở commit fae7c7f
+  Fix user detail internal notes UI contract
+- Latest pushed/code commit:
+  fae7c7f Fix user detail internal notes UI contract
 - Latest git state:
   Git clean, origin/main...HEAD = 0 0.
 - Latest production internal_notes schema apply:
@@ -106,6 +107,15 @@ Trạng thái production mới nhất đã biết:
 - internal_notes after GET smoke: 1.
 - admin_audit_log after GET smoke: total 55, success 36, denied 19, error 0.
 - Smoke note vẫn tồn tại và chưa bị hidden/deleted.
+- Authenticated production User Detail internal notes UI smoke đã pass sau
+  deploy `fae7c7f`: opened exactly one authenticated user detail page; HTTP
+  200; smoke note visible; form visibility matched current Bearer/admin role;
+  internal_notes count 1 -> 1; admin_audit_log 61 -> 62; audit delta +1
+  success, +0 denied, +0 error; no POST calls; no note create/hide/delete; no
+  env change; no deploy during smoke; no production /data touch. Caveat:
+  literal Vietnamese heading check had a PowerShell encoding issue, but
+  deployed source contains `Ghi Chú Nội Bộ` and the live GET showed the note
+  body/form from that section.
 - Không đổi production env.
 - Không deploy trong lúc POST/GET smoke.
 - Không apply schema trong lúc POST/GET smoke.
@@ -135,7 +145,7 @@ Trạng thái production mới nhất đã biết:
 - Production DB writes đã biết cho Phase 4 internal notes: additive schema
   apply; +1 audit success row từ schema-era read smoke; +1 production smoke
   note từ POST smoke; +1 audit success row từ POST smoke; +1 audit success row
-  từ post-create GET smoke.
+  từ post-create GET smoke; +1 audit success row từ User Detail UI smoke.
 - Không production env change.
 - Không deploy trong lúc POST/GET smoke.
 - Không apply schema trong lúc POST/GET smoke.
@@ -964,6 +974,28 @@ Backup production mới nhất đã biết:
    - No schema apply during smoke.
    - No production /data touch.
    - Git remained clean, origin/main...HEAD = 0 0.
+23. Phiên Phase 4 User Detail internal notes UI contract fix + production UI
+    smoke, đã làm sau xác nhận riêng:
+   - Latest code commit:
+     fae7c7f Fix user detail internal notes UI contract.
+   - Railway deployment:
+     a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS ở commit fae7c7f.
+   - User Detail internal notes UI smoke opened exactly one authenticated user
+     detail page.
+   - HTTP 200.
+   - Smoke note visible: pass.
+   - Form visibility: pass for current Bearer/admin role.
+   - internal_notes count: 1 -> 1.
+   - admin_audit_log: 61 -> 62.
+   - audit delta: +1 success, +0 denied, +0 error.
+   - No POST calls.
+   - No note create/hide/delete.
+   - No env change.
+   - No deploy during smoke.
+   - No production /data touch.
+   - Caveat: literal Vietnamese heading check had a PowerShell encoding issue,
+     but deployed source contains `Ghi Chú Nội Bộ` and live GET showed note
+     body/form from the section.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -1023,7 +1055,7 @@ Tính năng admin hiện có:
 - Admin read routes production đang ghi audit log.
 - Phase 3.5 identity provisioning design:
   docs/admin-identity-provisioning.md
-- Phase 4 internal notes v1 backend/API đã complete:
+- Phase 4 internal notes v1 backend/API/UI đã complete:
   - design doc: docs/phase-4-internal-notes-design.md
   - SQL proposal: db/internal-notes-proposal.sql
   - safe SQL verifier: npm run verify:internal-notes-sql
@@ -1037,8 +1069,12 @@ Tính năng admin hiện có:
   - authenticated production GET read smoke sau create đã pass với
     schemaReady=true, notes.length=1, pagination present, và auditDelta=+1
     success
+  - User Detail UI/list/form đã implement/deploy; authenticated production UI
+    smoke đã pass với HTTP 200, smoke note visible, form visibility đúng theo
+    Bearer/admin role, internal_notes count 1 -> 1, admin_audit_log 61 -> 62,
+    auditDelta=+1 success
   - internal_notes production count hiện = 1
-  - admin_audit_log latest known total = 55, success 36, denied 19, error 0
+  - admin_audit_log latest known total = 62, success 40, denied 22, error 0
   - smoke note vẫn tồn tại và chưa bị hidden/deleted
   - tests: tests/admin-internal-notes.test.js cover validation, RBAC,
     transaction/audit fail-closed behavior, static SQL checks, verifier
@@ -1048,8 +1084,7 @@ Tính năng admin hiện có:
     npm run verify:internal-notes-sql với CHATBOT_TEST_DATABASE_URL trong
     isolated schema; proposal apply 2 lần, table/columns/indexes/constraints
     verified, schema dropped, 0 internal_notes_verify_% schemas còn lại
-  - chưa có UI form/list
-  - UI/list/form integration remains future work
+  - chưa có edit/delete/hide/order-notes UI
 
 File quan trọng:
 - core/admin-auth.js
@@ -1101,11 +1136,10 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes v1 backend/API đã complete: design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, create service, read/list model, GET+POST API deployed, production internal_notes schema applied, production POST note-create smoke passed creating exactly 1 smoke note, and post-create GET read smoke passed với schemaReady=true/notes.length=1/pagination present/auditDelta=+1 success. Latest known counts: internal_notes=1; admin_audit_log=55, success=36, denied=19, error=0. Smoke note vẫn tồn tại và chưa bị hidden/deleted. UI/list/form integration remains future work.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes v1 backend/API/UI đã complete: design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, create service, read/list model, GET+POST API deployed, production internal_notes schema applied, production POST note-create smoke passed creating exactly 1 smoke note, post-create GET read smoke passed với schemaReady=true/notes.length=1/pagination present/auditDelta=+1 success, và User Detail UI smoke passed với HTTP 200, smoke note visible, form visibility đúng theo role, internal_notes 1 -> 1, admin_audit_log 61 -> 62, auditDelta=+1 success. Latest known counts: internal_notes=1; admin_audit_log=62, success=40, denied=22, error=0. Smoke note vẫn tồn tại và chưa bị hidden/deleted. User Detail UI/list/form exists; chưa có edit/delete/hide/order-notes UI.
 
 Next recommended task:
-- Implement UI/list/form integration for internal notes only after a separate
-  plan and approval.
+- Add configurable minimal shop mode `menu_code_handoff`.
 - Any further production internal-notes smoke or write still needs separate
   approval because GET writes audit rows and POST writes business data.
 - Tiếp tục chỉ dùng explicit non-production URL như CHATBOT_TEST_DATABASE_URL
@@ -1113,8 +1147,8 @@ Next recommended task:
   DATABASE_URL vì có thể là production.
 - Không chạy authenticated /admin/api/internal-notes smoke nếu chưa có xác nhận
   riêng vì route sẽ ghi audit rows.
-- Không thêm UI write/list workflow trước khi có rollout plan, tests, và
-  approval rõ cho production impact.
+- Không thêm edit/delete/hide/order-notes UI trước khi có rollout plan, tests,
+  và approval rõ cho production impact.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -1149,18 +1183,19 @@ Code-only hướng khác:
   - pagination read-only cho user detail timelines nếu fixed limits bắt đầu thiếu
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
 - Phase 4 internal notes:
-  - v1 backend/API đã complete
+  - v1 backend/API/UI đã complete
   - internal notes design/create service/read-list model/test baseline đã có
   - live local SQL verification bằng non-production PostgreSQL isolated schema
     đã pass, gồm idempotency/constraints/index checks và cleanup schema
   - production schema đã apply
   - production POST note-create smoke đã pass và tạo đúng 1 smoke note
   - production GET read smoke sau create đã pass với notes.length=1
-  - next major task là UI/list/form integration, chỉ sau plan và approval riêng
+  - User Detail UI smoke đã pass; UI/list/form đã tồn tại trên user detail
+  - chưa có edit/delete/hide/order-notes UI
   - chưa thêm production admin user nếu chưa có implementation path và xác nhận DB write riêng
 
 Không làm vội:
-- Không thêm UI form/list cho internal notes trước khi có plan/test/approval rõ.
+- Không thêm edit/delete/hide/order-notes UI cho internal notes trước khi có plan/test/approval rõ.
 - Không re-apply hoặc mutate internal_notes schema production nếu chưa có fresh backup và xác nhận riêng.
 - Không dùng DATABASE_URL cho verification vì có thể là production.
 - Không chạy authenticated admin smoke nếu chưa xác nhận riêng vì sẽ ghi audit rows.
