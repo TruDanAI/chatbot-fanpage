@@ -1,5 +1,7 @@
 const crypto = require('crypto');
 const {
+  MENU_CODE_LIMITED_REPLY,
+  MENU_CODE_MENU_PRICE_REPLY,
   getMenuCodeHandoffMessage,
   isAiFallbackEnabled,
   isLeadCaptureEnabled,
@@ -108,6 +110,29 @@ function createWebhook({
   const productCodeLookupEnabled = isProductCodeLookupEnabled(shopConfig);
   const menuCodeHandoffMode = isMenuCodeHandoffMode(shopConfig);
 
+  function isMenuCodeMenuQuestion(userText) {
+    const t = normalizeText(userText).replace(/\s+/g, ' ').trim();
+    if (isGreetingText(userText)) return true;
+
+    return /^(?:xin |cho |gui |xem |coi |tham khao )?(?:menu|bang gia|danh sach|danh muc|catalog)(?: san pham)?(?: shop)?$/.test(t)
+      || /^(?:xem|coi|gui|cho xem|xin xem|co)\s+(?:san pham|sp|mau|hang)(?: nao| gi| ben shop| shop)?$/.test(t)
+      || /^(?:gia|gia san pham|gia san pham tu bao nhieu|bao nhieu|co mau nao|co san pham nao|co hang nao)$/.test(t)
+      || /\bgia\b.*\b(?:san pham|bao nhieu|tu bao nhieu)\b/.test(t)
+      || /\b(?:san pham|mau|hang)\b.*\b(?:bao nhieu|nao|gi)\b/.test(t);
+  }
+
+  async function sendImages(senderId, images) {
+    for (const { file, url } of images) {
+      try {
+        await sendImage(senderId, url);
+        console.log(`🖼️  Gửi ảnh: ${file}`);
+      } catch (e) {
+        const msg = e.response?.data?.error?.message || e.message;
+        console.error(`❌ Gửi ảnh ${file} fail: ${msg}`);
+      }
+    }
+  }
+
   function getSuccessfulRequestedProductCodes(userText, senderId) {
     if (!menuCodeHandoffMode || !productCodeLookupEnabled) return [];
     const requestedCodes = extractRequestedProductCodes(userText)
@@ -133,6 +158,50 @@ function createWebhook({
     });
     console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
     return true;
+  }
+
+  function buildProductImageLookupText(code) {
+    const number = String(code || '').match(/\d+/)?.[0];
+    return number ? `ma ${number}` : String(code || '');
+  }
+
+  async function handleMenuCodeHandoffEvent(senderId, userText, baseUrlOverride) {
+    if (storage.inHandoff(senderId)) {
+      console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}`);
+      return;
+    }
+
+    showTyping(senderId);
+
+    if (isMenuCodeMenuQuestion(userText)) {
+      await sendImages(senderId, getMenuImageUrls(baseUrlOverride));
+      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
+      console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
+      return;
+    }
+
+    const requestedCodes = productCodeLookupEnabled
+      ? extractRequestedProductCodes(userText)
+      : [];
+    if (requestedCodes.length) {
+      const reply = buildDeterministicReply(userText, senderId);
+      const codes = getSuccessfulRequestedProductCodes(userText, senderId);
+      if (reply && codes.length) {
+        await sendImages(
+          senderId,
+          buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride)
+        );
+        await sendMessage(senderId, reply);
+        const message = getMenuCodeHandoffMessage(shopConfig);
+        await sendMessage(senderId, message);
+        storage.setHandoff(senderId, Date.now() + handoffMs);
+        console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
+        return;
+      }
+    }
+
+    await sendMessage(senderId, MENU_CODE_LIMITED_REPLY);
+    console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_LIMITED_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
   }
 
   function registerWebhookRoutes(app) {
@@ -203,6 +272,11 @@ function createWebhook({
     if (!userText) return;
 
     console.log(`📩 [${senderId}]: ${redactSensitiveText(userText)}`);
+    if (menuCodeHandoffMode) {
+      await handleMenuCodeHandoffEvent(senderId, userText, baseUrlOverride);
+      return;
+    }
+
     trackEvent(senderId, 'message_received', userText, {
       messageId: mid || '',
       quickReplyPayload

@@ -7,7 +7,9 @@ const { buildQuickReplies, resolveQuickReplyPayload } = require('../core/quick-r
 const shopConfig = require('../shops/adult-shop/config');
 const adultCustomIntents = require('../shops/adult-shop/custom-intents');
 const {
+  MENU_CODE_LIMITED_REPLY,
   MENU_CODE_HANDOFF_MESSAGE,
+  MENU_CODE_MENU_PRICE_REPLY,
   applyBotModeConfig
 } = require('../core/bot-mode');
 
@@ -99,6 +101,13 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   let geminiCalls = 0;
   let leadParserCalls = 0;
   let handoffCaptureCalls = 0;
+  let notifyReadyOrderCalls = 0;
+  let pushedLeadCalls = 0;
+  let telegramAlertCalls = 0;
+  let telegramOperationalAlertCalls = 0;
+  let fallbackAttentionCalls = 0;
+  let conversationTurnCalls = 0;
+  let eventCalls = 0;
 
   const webhook = createWebhook({
     storage,
@@ -125,7 +134,10 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
       if (options.throwOnHandoffCapture) throw new Error('handoff capture should not run');
       return options.captureHandoffOrderUpdate ? options.captureHandoffOrderUpdate(...args) : false;
     },
-    notifyStaffForReadyOrder: async () => false,
+    notifyStaffForReadyOrder: async () => {
+      notifyReadyOrderCalls += 1;
+      return false;
+    },
     looksLikePhone: rules.looksLikePhone,
     shouldSilenceAfterCompleteOrder: rules.shouldSilenceAfterCompleteOrder,
     wantsHuman: rules.wantsHuman,
@@ -155,13 +167,25 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
       const codes = rules.extractRequestedProductCodes(text);
       return codes.length ? [{ file: 'ma8.png', url: `${base}/media/ma8.png` }] : [];
     },
-    pushLeadToSheet: () => {},
-    sendTelegramAlert: () => {},
-    sendTelegramOperationalAlert: () => {},
+    pushLeadToSheet: () => {
+      pushedLeadCalls += 1;
+    },
+    sendTelegramAlert: () => {
+      telegramAlertCalls += 1;
+    },
+    sendTelegramOperationalAlert: () => {
+      telegramOperationalAlertCalls += 1;
+    },
     resetFallbackAttention: () => {},
-    trackFallbackAttention: async () => {},
-    recordConversationTurn: () => {},
-    trackEvent: () => {},
+    trackFallbackAttention: async () => {
+      fallbackAttentionCalls += 1;
+    },
+    recordConversationTurn: () => {
+      conversationTurnCalls += 1;
+    },
+    trackEvent: () => {
+      eventCalls += 1;
+    },
     maybeResetTimedOutSession: () => {},
     redactSensitiveText: text => text
   });
@@ -172,7 +196,14 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     storage,
     getGeminiCalls: () => geminiCalls,
     getLeadParserCalls: () => leadParserCalls,
-    getHandoffCaptureCalls: () => handoffCaptureCalls
+    getHandoffCaptureCalls: () => handoffCaptureCalls,
+    getNotifyReadyOrderCalls: () => notifyReadyOrderCalls,
+    getPushedLeadCalls: () => pushedLeadCalls,
+    getTelegramAlertCalls: () => telegramAlertCalls,
+    getTelegramOperationalAlertCalls: () => telegramOperationalAlertCalls,
+    getFallbackAttentionCalls: () => fallbackAttentionCalls,
+    getConversationTurnCalls: () => conversationTurnCalls,
+    getEventCalls: () => eventCalls
   };
 }
 
@@ -187,9 +218,42 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[1].type).toBe('image');
     expect(h.sent[1].url).toContain('menu2.png');
     expect(h.sent[2].type).toBe('text');
-    expect(h.sent[2].text).toContain('xem qua mẫu');
+    expect(h.sent[2].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.storage.inHandoff('minimal_greeting')).toBeFalse();
+  });
+
+  it('"Giá sản phẩm từ bao nhiêu" sends menu images and fixed price/menu reply', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('Giá sản phẩm từ bao nhiêu', 'minimal_price_long', 'm_price_long');
+
+    expect(h.sent[0].type).toBe('image');
+    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu2.png');
+    expect(h.sent[2].type).toBe('text');
+    expect(h.sent[2].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.storage.inHandoff('minimal_price_long')).toBeFalse();
+  });
+
+  it('"Giá" sends menu images and fixed price/menu reply', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('Giá', 'minimal_price_short', 'm_price_short');
+
+    expect(h.sent[0].type).toBe('image');
+    expect(h.sent[0].url).toContain('menu1.png');
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu2.png');
+    expect(h.sent[2].type).toBe('text');
+    expect(h.sent[2].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.storage.inHandoff('minimal_price_short')).toBeFalse();
   });
 
   it('product code lookup sends product info, fixed handoff message, and enables handoff', async () => {
@@ -205,15 +269,18 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.storage.inHandoff('minimal_code')).toBeTrue();
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.getLeadParserCalls()).toBe(0);
+    expect(h.getConversationTurnCalls()).toBe(0);
   });
 
-  it('does not continue into AI fallback in this mode', async () => {
+  it('out-of-scope text does not call Gemini/API and returns limited reply', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
-    await h.handleText('câu ngoài rule hoàn toàn', 'minimal_no_ai', 'm_no_ai');
+    await h.handleText('dùng sao', 'minimal_no_ai', 'm_no_ai');
 
     expect(h.getGeminiCalls()).toBe(0);
     expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent[0].text).toBe(MENU_CODE_LIMITED_REPLY);
+    expect(h.storage.inHandoff('minimal_no_ai')).toBeFalse();
   });
 
   it('does not answer again after product-code handoff', async () => {
@@ -225,18 +292,30 @@ describe('webhook: menu_code_handoff mode', () => {
 
     expect(h.storage.inHandoff('minimal_after_handoff')).toBeTrue();
     expect(h.sent.length).toBe(countAfterHandoff);
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getHandoffCaptureCalls()).toBe(0);
   });
 
-  it('does not capture handoff order updates after product-code handoff', async () => {
+  it('does not run order, export, follow-up, or alert side effects in this mode', async () => {
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
       throwOnHandoffCapture: true
     });
 
-    await h.handleText('MÃ8', 'minimal_handoff_capture', 'm_handoff_first');
-    await h.handleText('sdt 0912345678', 'minimal_handoff_capture', 'm_handoff_second');
+    await h.handleText('sdt 0912345678', 'minimal_side_effects', 'm_side_effects');
 
+    expect(h.sent[0].text).toBe(MENU_CODE_LIMITED_REPLY);
+    expect(h.storage._customers.length).toBe(0);
+    expect(h.storage._events.length).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
     expect(h.getHandoffCaptureCalls()).toBe(0);
+    expect(h.getNotifyReadyOrderCalls()).toBe(0);
+    expect(h.getPushedLeadCalls()).toBe(0);
+    expect(h.getTelegramAlertCalls()).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+    expect(h.getFallbackAttentionCalls()).toBe(0);
+    expect(h.getConversationTurnCalls()).toBe(0);
+    expect(h.getEventCalls()).toBe(0);
   });
 });
 
