@@ -1,21 +1,63 @@
 # Phase 4 Internal Notes Production Schema Rollout
 
-This is a production rollout plan for applying
-`db/internal-notes-proposal.sql`. It is not approval to apply the schema, run
+This is the production rollout record for applying
+`db/internal-notes-proposal.sql`. The production schema apply and authenticated
+read smoke have completed, but this document is not approval to run any future
 authenticated production smoke, deploy code, change environment variables,
 write production business data, create production admin users, or touch
 production `/data`.
 
 ## Scope
 
-The only schema change in scope for a future approved rollout is:
+The only schema change that was in scope for the approved rollout was:
 
 - apply `db/internal-notes-proposal.sql` to production PostgreSQL.
 
-The current deployed code already handles missing production `internal_notes`
-schema safely for `GET /admin/api/internal-notes` by returning
-`schemaReady=false` and `notes=[]`. The authenticated route must still not be
-smoked without approval because admin read routes write audit rows.
+The deployed code previously handled missing production `internal_notes` schema
+safely for `GET /admin/api/internal-notes` by returning `schemaReady=false`
+and `notes=[]`. After schema apply, the authenticated production read smoke
+returned `schemaReady=true` and `notes=[]`. The authenticated route must still
+not be smoked again without approval because admin read routes write audit
+rows.
+
+## Latest Execution Result
+
+Completed on May 12, 2026:
+
+- Latest code/docs commit before production schema work:
+  `d6e8cb9 Add internal notes production rollout runbook`.
+- Railway deployment remained:
+  `48b0f11b-f577-4853-90c6-4e04ceac7d82 SUCCESS` at commit `d6e8cb9`.
+- Backup used:
+  `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply`.
+- Backup archive:
+  `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz`.
+- Backup SHA256:
+  `59CF7048631D86E8F5E5E0CFA5777A0224B41FEB8F09BC79B344F218789E0384`.
+- Production schema apply completed for `db/internal-notes-proposal.sql`.
+- Production schema verification passed:
+  `internal_notes` table exists, `internal_notes` count is 0, expected indexes
+  exist, and expected CHECK constraints exist.
+- Authenticated production read API smoke completed for
+  `GET /admin/api/internal-notes`; it used an existing customer `sender_id`
+  from `profiles` without printing the value.
+- Read smoke result: HTTP 200, `schemaReady=true`, `notes=[]`, pagination
+  present, and no raw DB error indicators.
+- `admin_audit_log` before read smoke: total 52, denied 19, success 33.
+- `admin_audit_log` after read smoke: total 53, denied 19, success 34.
+- Audit delta: `+1 success`.
+- `internal_notes` before read smoke: 0.
+- `internal_notes` after read smoke: 0.
+- No production internal note was created.
+- No `POST`/create-note workflow was run.
+- No environment variable was changed.
+- No deploy occurred during schema apply/read smoke.
+- Production `/data` was not touched.
+- Git remained clean, `origin/main...HEAD = 0 0`.
+
+Next major task: implement `POST` create internal note local-only first, then
+deploy/smoke only with separate approvals. Future create-note production smoke
+requires explicit business-data write approval.
 
 ## Preconditions
 
@@ -38,18 +80,20 @@ record:
   `npm run verify:internal-notes-sql`.
 - No authenticated production smoke has been run without approval.
 
-Known baseline at the time this runbook was written:
+Known baseline at the time this runbook was written, before the approved
+production schema apply:
 
-- Latest commit: `6bba618 Update handoff after internal notes read API deploy`
+- Latest commit: `d6e8cb9 Add internal notes production rollout runbook`
 - Latest verified Railway deployment:
-  `aa566ba9-b01b-4eec-8d64-862195e55266 SUCCESS`
+  `48b0f11b-f577-4853-90c6-4e04ceac7d82 SUCCESS`
 - Public `/healthz`: HTTP 200, `ok=true`, `storage.adapter=postgres`,
   `storage.ready=true`, `messenger.dryRun=false`
 - Public `GET /admin/login`: HTTP 200, Admin Login form present
 - Git clean, `origin/main...HEAD = 0 0`
-- No authenticated production smoke, production `/admin/api/internal-notes`
-  call, production schema apply, production env change, production DB write, or
-  production `/data` touch after that deployment
+- Before the schema apply/read smoke approvals, no authenticated production
+  smoke, production `/admin/api/internal-notes` call, production schema apply,
+  production env change, production DB write, or production `/data` touch had
+  occurred after that deployment.
 
 Treat this baseline as a snapshot only. Re-check it in the rollout session.
 

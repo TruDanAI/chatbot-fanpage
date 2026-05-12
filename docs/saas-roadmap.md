@@ -53,16 +53,23 @@ Last verified baseline from May 12, 2026:
   `admin_audit_log=52`, outcomes `denied=19`, `success=33`, `error=0`.
   The rate-limit smoke produced the expected `auditDelta=14` from the fresh
   pre-smoke backup count.
+- Latest production admin audit count after approved internal-notes read API
+  smoke: `admin_audit_log=53`, outcomes `denied=19`, `success=34`.
+  The read smoke produced the expected `auditDelta=+1 success`.
 - Latest verified Railway deployment:
-  `06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS` at commit
-  `834c157 Add internal notes read API`
+  `48b0f11b-f577-4853-90c6-4e04ceac7d82 SUCCESS` at commit
+  `d6e8cb9 Add internal notes production rollout runbook`
 - Latest pushed commit:
-  `834c157 Add internal notes read API`
+  `d6e8cb9 Add internal notes production rollout runbook`
 - Latest git state: clean worktree, `origin/main...HEAD = 0 0`.
-- Latest safe public smoke checks:
-  `/healthz 200`, `ok=true`, `storage.adapter=postgres`,
-  `storage.ready=true`, `messenger.dryRun=false`;
-  `GET /admin/login 200`, Admin Login form present.
+- Latest production internal_notes schema apply:
+  `db/internal-notes-proposal.sql` has been applied to production PostgreSQL.
+- Backup used before internal_notes schema apply/read smoke:
+  `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply`
+- Backup archive:
+  `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz`
+- Backup SHA256:
+  `59CF7048631D86E8F5E5E0CFA5777A0224B41FEB8F09BC79B344F218789E0384`
 - Latest local Phase 4 internal notes SQL verification:
   `npm run verify:internal-notes-sql` passed against a local-only Docker
   PostgreSQL container `chatbot-fanpage-internal-notes-pg`, bound to
@@ -76,14 +83,23 @@ Last verified baseline from May 12, 2026:
   tests cover validation, RBAC, transaction/audit fail-closed behavior, static
   SQL checks, verifier guardrails, and read model behavior.
 - `GET /admin/api/internal-notes` read API is implemented and deployed.
-- The read API handles missing production `internal_notes` schema gracefully
-  with `schemaReady=false` and `notes=[]`.
-- No authenticated admin smoke was run after the latest deployment.
-- No authenticated production `/admin/api/internal-notes` smoke/call was run.
-- No production `internal_notes` schema apply has been run.
+- Production `internal_notes` schema verification passed: table exists,
+  `internal_notes` count is 0, expected indexes exist, and expected CHECK
+  constraints exist.
+- Authenticated production `GET /admin/api/internal-notes` read smoke passed:
+  HTTP 200, `schemaReady=true`, `notes=[]`, pagination present, and no raw DB
+  error indicators. The smoke used an existing customer `sender_id` from
+  `profiles` without printing it.
+- No production internal note has been created.
+- No `POST`/create-note workflow has been run.
 - No production environment change was made.
-- No intentional production DB write was made.
+- Production DB writes in this baseline were limited to the additive
+  `internal_notes` schema apply and the single audit success row from the
+  authenticated read smoke.
 - Production `/data` was not touched.
+- Previous verified Railway deployment:
+  `06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS` at commit
+  `834c157 Add internal notes read API`
 - Previous verified Railway deployment:
   `c220b138-ff42-4630-a0db-4404e4b39370 SUCCESS` at commit
   `1a8f8d7 Add internal notes read model`
@@ -164,7 +180,8 @@ Last verified baseline from May 12, 2026:
   `5989b2e Complete Phase 3.5 identity audit design`,
   `d138144 Add internal notes SQL proposal checks`,
   `1a8f8d7 Add internal notes read model`,
-  `834c157 Add internal notes read API`
+  `834c157 Add internal notes read API`,
+  `d6e8cb9 Add internal notes production rollout runbook`
 - Phase 4 internal notes current status:
   design doc exists in `docs/phase-4-internal-notes-design.md`;
   SQL proposal exists in `db/internal-notes-proposal.sql`;
@@ -174,23 +191,25 @@ Last verified baseline from May 12, 2026:
   create service exists local-only in `core/admin/internal-notes.js`;
   read/list model exists local-only in `core/admin/internal-notes.js`;
   `GET /admin/api/internal-notes` read API is implemented and deployed;
-  read API handles missing production schema gracefully with
-  `schemaReady=false` and `notes=[]`;
+  production `internal_notes` schema is applied and verified;
+  authenticated production read API smoke passed with `schemaReady=true`,
+  `notes=[]`, pagination present, and `auditDelta=+1 success`;
+  production `internal_notes` count remains 0;
   tests cover validation, RBAC, transaction/audit fail-closed behavior, static
   SQL checks, verifier guardrails, and read model behavior in
   `tests/admin-internal-notes.test.js`; there is no POST route; there is no UI
-  form/list; production schema has not been applied; no authenticated
-  production internal-notes read API smoke/call has been run; no authenticated
+  form/list; no production internal note has been created; no authenticated
   production note-create smoke has been run.
-- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke`
+- Latest known backup: `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply`
+- Latest known backup archive:
+  `C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz`
 - Latest known backup SHA256:
-  `06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85`
-- Latest backup counts: profiles 1, conversations 4, messages 53, orders 6,
+  `59CF7048631D86E8F5E5E0CFA5777A0224B41FEB8F09BC79B344F218789E0384`
+- Previous backup counts: profiles 1, conversations 4, messages 53, orders 6,
   order_items 7, events 249, processed_mids 94, admin_users 0,
   admin_roles 4, admin_user_roles 0, admin_audit_log 38
-- Latest count-only audit stability check after rate-limit smoke:
-  admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 52,
-  outcomes denied 19, success 33, error 0.
+- Latest count-only internal_notes/audit check after read smoke:
+  internal_notes 0; admin_audit_log 53, outcomes denied 19, success 34.
 
 Treat this baseline as a snapshot only. Every future session must re-check git,
 Railway deployment, `/healthz`, and backup status before production work.
@@ -435,8 +454,12 @@ Current internal-notes status:
 - Local create service exists: `core/admin/internal-notes.js`.
 - Local read/list model exists: `core/admin/internal-notes.js`.
 - `GET /admin/api/internal-notes` read API is implemented and deployed.
-- The read API handles missing production schema gracefully with
-  `schemaReady=false` and `notes=[]`.
+- Production `internal_notes` schema is applied and verified.
+- Authenticated production read API smoke passed with HTTP 200,
+  `schemaReady=true`, `notes=[]`, pagination present, and
+  `auditDelta=+1 success`.
+- Production `internal_notes` count remains 0.
+- No production internal note has been created.
 - Tests exist for validation, RBAC, transaction/audit fail-closed behavior,
   static SQL checks, verifier guardrails, and read model behavior.
 - Live local PostgreSQL SQL verification passed using the existing verifier:
@@ -448,9 +471,6 @@ Current internal-notes status:
   was dropped; 0 `internal_notes_verify_%` schemas remained.
 - No POST route exists.
 - No UI form/list exists.
-- No production `internal_notes` schema apply has been run.
-- No authenticated production `/admin/api/internal-notes` smoke/call has been
-  run.
 - No authenticated production note-create smoke has been run.
 
 Candidate first write actions:
@@ -460,11 +480,12 @@ Candidate first write actions:
 - Trigger one safe staff notification retry.
 - Update limited shop setting in staging first.
 
-Recommended next task before any route/UI work:
+Recommended next task before any UI work:
 
-- Prepare a production rollout/runbook decision for `internal_notes` schema
-  apply, including fresh backup, additive/idempotent SQL review, count-only
-  verification, and separate owner approval for any production DB write.
+- Implement `POST` create internal note local-only first, with focused tests
+  for validation, RBAC, transaction/audit behavior, and no production impact.
+- Deploy and smoke only after separate approvals. Authenticated read smoke
+  writes audit rows, and future create-note smoke writes business data.
 - Keep using explicit non-production variables such as
   `CHATBOT_TEST_DATABASE_URL` or `CHATBOT_STAGING_DATABASE_URL` for verification;
   do not use `DATABASE_URL` for schema verification.
@@ -476,8 +497,8 @@ Rules:
 - Every write action needs tests.
 - Every write action needs a rollback plan.
 - Production write approval must be action-specific.
-- Do not apply the `internal_notes` schema to production without a fresh backup
-  and separate approval.
+- Do not re-apply or mutate the production `internal_notes` schema without a
+  fresh backup and separate approval.
 - Do not run authenticated production admin smoke without approval because it
   writes audit rows.
 - Do not run authenticated `/admin/api/internal-notes` smoke without approval
@@ -586,10 +607,10 @@ Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
 session. Phase 4 internal notes now has a design doc, SQL proposal, local
 create service, local read/list model, deployed read API, safe SQL verifier,
 focused tests, and a passing live local PostgreSQL SQL verification against an
-isolated schema. The read API handles missing production schema gracefully with
-`schemaReady=false` and `notes=[]`. There is still no POST route, no UI
-form/list, no production schema apply, no authenticated production
-internal-notes API smoke, and no authenticated production note-create smoke.
-The next step is a conservative rollout/runbook decision for any production
-`internal_notes` schema apply, with fresh backup and separate owner approval
-before any production DB write.
+isolated schema. Production `internal_notes` schema is applied and verified;
+authenticated production read API smoke passed with `schemaReady=true`,
+`notes=[]`, pagination present, and `auditDelta=+1 success`; production
+`internal_notes` count remains 0. There is still no POST route, no UI
+form/list, no production internal note, and no authenticated production
+note-create smoke. The next major task is `POST` create internal note
+local-only first, then deploy/smoke only with separate approvals.

@@ -16,10 +16,10 @@ Mục tiêu sản phẩm:
 - Ưu tiên an toàn dữ liệu production hơn tốc độ làm tính năng.
 - Admin dashboard hiện vẫn không có exposed business write workflow. Phase 4
   internal notes đã có design/SQL proposal/safe verifier/live local
-  PostgreSQL verification/local create service/local read-list model/read API/tests,
-  nhưng chưa có POST route, chưa có UI form/list, chưa apply production
-  schema, chưa authenticated production internal-notes smoke, và chưa smoke
-  tạo note production.
+  PostgreSQL verification/local create service/local read-list model/read
+  API/tests, production schema đã apply, authenticated production read smoke
+  đã pass, nhưng chưa có POST route, chưa có UI form/list, và chưa smoke tạo
+  note production.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -65,15 +65,38 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified Railway deployment:
-  06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS ở commit 834c157
-  Add internal notes read API
-- Latest safe public smoke không ghi DB:
-  /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
-  GET /admin/login 200, Admin Login form present
+  48b0f11b-f577-4853-90c6-4e04ceac7d82 SUCCESS ở commit d6e8cb9
+  Add internal notes production rollout runbook
 - Latest pushed commit:
-  834c157 Add internal notes read API
+  d6e8cb9 Add internal notes production rollout runbook
 - Latest git state:
   Git clean, origin/main...HEAD = 0 0.
+- Latest production internal_notes schema apply:
+  db/internal-notes-proposal.sql đã apply thành công vào production
+  PostgreSQL sau backup mới.
+- Backup dùng trước schema apply/read smoke:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply
+- Backup archive:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz
+- Backup SHA256:
+  59CF7048631D86E8F5E5E0CFA5777A0224B41FEB8F09BC79B344F218789E0384
+- Production internal_notes schema verification:
+  internal_notes table exists; internal_notes count = 0; expected indexes
+  exist; expected CHECK constraints exist.
+- Authenticated production read API smoke đã pass:
+  GET /admin/api/internal-notes chỉ đọc, dùng existing customer sender_id từ
+  profiles nhưng không in raw value; HTTP 200; schemaReady=true; notes=[];
+  pagination present; không có raw DB error indicators.
+- Audit delta during internal-notes read smoke:
+  admin_audit_log before total 52, denied 19, success 33; after total 53,
+  denied 19, success 34; auditDelta=+1 success.
+- internal_notes before read smoke: 0.
+- internal_notes after read smoke: 0.
+- Không tạo production internal note.
+- Không chạy POST/create-note workflow.
+- Không đổi production env.
+- Không deploy trong lúc schema apply/read smoke.
+- Không đụng production /data.
 - Latest local test coverage baseline:
   Phase 4 internal notes tests cover validation, RBAC, transaction/audit
   fail-closed behavior, static SQL checks, verifier guardrails, and read model
@@ -88,17 +111,19 @@ Trạng thái production mới nhất đã biết:
   db/internal-notes-proposal.sql twice, verified table, columns, indexes, and
   CHECK constraints, dropped the isolated schema, and left 0 remaining
   internal_notes_verify_% schemas.
-- GET /admin/api/internal-notes read API đã implement và deploy, nhưng chưa
-  chạy authenticated production smoke/call sau deployment này vì route admin
-  authenticated sẽ ghi audit rows.
-- Read API xử lý production thiếu internal_notes schema gracefully:
-  schemaReady=false, notes=[].
-- Không có authenticated admin smoke sau deployment này.
-- Không có production /admin/api/internal-notes call sau deployment này.
-- Không production schema apply.
+- GET /admin/api/internal-notes read API đã implement/deploy và authenticated
+  production read smoke đã pass sau production schema apply.
+- Read API production hiện trả schemaReady=true với notes=[] khi target chưa có
+  note.
+- Production schema apply đã hoàn tất cho internal_notes.
+- Production DB write trong đợt này: additive schema apply và +1 audit success
+  row từ authenticated read smoke; không có business data write.
 - Không production env change.
-- Không intentional production DB write.
+- Không deploy trong lúc schema apply/read smoke.
 - Không production /data touch.
+- Previous verified Railway deployment:
+  06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS ở commit 834c157
+  Add internal notes read API
 - Previous verified Railway deployment:
   c220b138-ff42-4630-a0db-4404e4b39370 SUCCESS ở commit 1a8f8d7
   Add internal notes read model
@@ -113,6 +138,10 @@ Trạng thái production mới nhất đã biết:
   Update handoff docs after login rate limit deploy
 - Previous verified code/docs deployment:
   5989b2e Complete Phase 3.5 identity audit design
+- Latest verified docs deployment:
+  d6e8cb9 Add internal notes production rollout runbook
+- Latest verified docs Railway deployment:
+  48b0f11b-f577-4853-90c6-4e04ceac7d82 SUCCESS ở commit d6e8cb9
 - Latest verified code deployment:
   834c157 Add internal notes read API
 - Latest verified code Railway deployment:
@@ -194,9 +223,14 @@ Trạng thái production mới nhất đã biết:
 - Audit production count-only sau approved login rate-limit smoke:
   after admin_audit_log=52, outcomes denied=19, success=33, error=0,
   auditDelta=14 từ backup trước smoke.
+- Audit production count-only sau approved internal-notes read API smoke:
+  after admin_audit_log=53, outcomes denied=19, success=34,
+  auditDelta=+1 success.
 
 Git state mới nhất đã biết:
 - Latest code/docs commit đã push/deploy:
+  d6e8cb9 Add internal notes production rollout runbook
+- Previous code/docs commit đã push/deploy:
   834c157 Add internal notes read API
 - Previous code/docs commit đã push/deploy:
   1a8f8d7 Add internal notes read model
@@ -235,20 +269,26 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  d6e8cb9 Add internal notes production rollout runbook
   834c157 Add internal notes read API
   1a8f8d7 Add internal notes read model
   d138144 Add internal notes SQL proposal checks
   5989b2e Complete Phase 3.5 identity audit design
-  2841e69 Update handoff docs after login rate limit deploy
 
 Backup production mới nhất đã biết:
 - Latest backup:
-  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply
 - Latest backup archive:
-  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke\postgres-jsonl.tar.gz
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz
 - Latest backup SHA256:
-  06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85
-- Latest backup counts:
+  59CF7048631D86E8F5E5E0CFA5777A0224B41FEB8F09BC79B344F218789E0384
+- Latest post-apply internal_notes verification:
+  internal_notes table exists; count = 0; expected indexes exist; expected
+  CHECK constraints exist.
+- Previous backup:
+  C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260511-180314-postgres-login-rate-smoke
+  SHA256 06828A6B579FA434DD48C7153668E4CB5F3FA7326139095E4097D0BFEAB8DA85
+  Counts:
   profiles 1, conversations 4, messages 53, orders 6, order_items 7, events 249, processed_mids 94,
   admin_users 0, admin_roles 4, admin_user_roles 0, admin_audit_log 38
 - Previous backup:
@@ -842,6 +882,38 @@ Backup production mới nhất đã biết:
    - Không intentional production DB write.
    - Không ghi production /data.
    - Git clean, origin/main...HEAD = 0 0.
+21. Phiên Phase 4 internal_notes production schema apply + read smoke, đã làm
+    sau backup và xác nhận riêng:
+   - Latest code/docs commit trước production schema work:
+     d6e8cb9 Add internal notes production rollout runbook.
+   - Railway deployment giữ nguyên:
+     48b0f11b-f577-4853-90c6-4e04ceac7d82 SUCCESS ở commit d6e8cb9.
+   - Backup dùng trước schema apply/read smoke:
+     C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply
+   - Backup archive:
+     C:\Users\Pc\Desktop\chatbot-fanpage-backups\20260512-110333-postgres-internal-notes-preapply\postgres-base64jsonl.tar.gz
+   - Backup SHA256:
+     59CF7048631D86E8F5E5E0CFA5777A0224B41FEB8F09BC79B344F218789E0384
+   - Production schema apply completed for:
+     db/internal-notes-proposal.sql.
+   - Production internal_notes schema verification:
+     internal_notes table exists; internal_notes count = 0; expected indexes
+     exist; expected CHECK constraints exist.
+   - Authenticated production read API smoke completed:
+     GET /admin/api/internal-notes only; used existing customer sender_id from
+     profiles without printing it; HTTP 200; schemaReady=true; notes=[];
+     pagination present; no raw DB error indicators.
+   - admin_audit_log before: total 52, denied 19, success 33.
+   - admin_audit_log after: total 53, denied 19, success 34.
+   - auditDelta: +1 success.
+   - internal_notes before: 0.
+   - internal_notes after: 0.
+   - No production internal note created.
+   - No POST/create-note workflow run.
+   - No env change.
+   - No deploy during schema apply/read smoke.
+   - No production /data touch.
+   - Git remained clean, origin/main...HEAD = 0 0.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -908,8 +980,10 @@ Tính năng admin hiện có:
   - local create service: core/admin/internal-notes.js
   - local read/list model: core/admin/internal-notes.js
   - GET /admin/api/internal-notes read API đã implement/deploy
-  - read API xử lý thiếu production schema gracefully với
-    schemaReady=false, notes=[]
+  - production internal_notes schema đã apply
+  - authenticated production read smoke đã pass với schemaReady=true,
+    notes=[], pagination present, và auditDelta=+1 success
+  - internal_notes production count vẫn = 0
   - tests: tests/admin-internal-notes.test.js cover validation, RBAC,
     transaction/audit fail-closed behavior, static SQL checks, verifier
     guardrails, and read model behavior
@@ -920,8 +994,7 @@ Tính năng admin hiện có:
     verified, schema dropped, 0 internal_notes_verify_% schemas còn lại
   - chưa có POST route
   - chưa có UI form/list
-  - chưa production schema apply
-  - chưa authenticated production internal-notes smoke/call
+  - chưa có production internal note nào được tạo
   - chưa authenticated production note-create smoke
 
 File quan trọng:
@@ -974,12 +1047,14 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes đã có design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, local create service, local read/list model, GET /admin/api/internal-notes read API deployed, và tests cho validation/RBAC/transaction/audit fail-closed/static SQL/verifier guardrails/read model behavior. Read API xử lý production thiếu schema gracefully bằng schemaReady=false, notes=[]. Vẫn chưa có POST route, chưa có UI form/list, chưa production schema apply, chưa authenticated production internal-notes smoke/call, và chưa authenticated production note-create smoke.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes đã có design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, local create service, local read/list model, GET /admin/api/internal-notes read API deployed, production internal_notes schema applied, authenticated production read smoke passed với schemaReady=true/notes=[]/pagination present/auditDelta=+1 success, và tests cho validation/RBAC/transaction/audit fail-closed/static SQL/verifier guardrails/read model behavior. Vẫn chưa có POST route, chưa có UI form/list, chưa có production internal note nào được tạo, và chưa authenticated production note-create smoke.
 
 Next recommended task:
-- Chuẩn bị rollout/runbook decision cho internal_notes schema apply nếu muốn tiến
-  tới production, gồm fresh backup, review SQL additive/idempotent, verify
-  count-only, rollback stance, và xác nhận riêng cho mọi production DB write.
+- Implement POST create internal note local-only first, with focused tests for
+  validation, RBAC, audit behavior, and no production impact.
+- Sau local-only POST create-note pass, deploy/smoke production chỉ khi có
+  xác nhận riêng cho từng bước; production create-note smoke cần approval riêng
+  vì sẽ ghi business data.
 - Tiếp tục chỉ dùng explicit non-production URL như CHATBOT_TEST_DATABASE_URL
   hoặc CHATBOT_STAGING_DATABASE_URL cho schema verification; không dùng
   DATABASE_URL vì có thể là production.
@@ -1024,12 +1099,14 @@ Code-only hướng khác:
   - internal notes design/create service/read-list model/test baseline đã có
   - live local SQL verification bằng non-production PostgreSQL isolated schema
     đã pass, gồm idempotency/constraints/index checks và cleanup schema
-  - chưa implement route/UI write nếu chưa có verified schema path, tests, rollback, audit semantics và backup plan
+  - production schema đã apply và authenticated production read smoke đã pass
+  - next major task là POST create internal note local-only, rồi mới deploy/smoke
+    với approval riêng
   - chưa thêm production admin user nếu chưa có implementation path và xác nhận DB write riêng
 
 Không làm vội:
-- Không thêm POST route hoặc UI form/list cho internal notes trước khi SQL verification và rollout plan rõ.
-- Không apply internal_notes schema production nếu chưa có fresh backup và xác nhận riêng.
+- Không thêm UI form/list cho internal notes trước khi POST create route local-only có tests rõ.
+- Không re-apply hoặc mutate internal_notes schema production nếu chưa có fresh backup và xác nhận riêng.
 - Không dùng DATABASE_URL cho verification vì có thể là production.
 - Không chạy authenticated admin smoke nếu chưa xác nhận riêng vì sẽ ghi audit rows.
 - Không tạo production internal note nếu chưa xác nhận rõ vì sẽ ghi business data.
