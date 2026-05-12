@@ -46,6 +46,10 @@ function makeStorage() {
     setLastProductCode: (userId, code) => {
       entry(userId).lastProductCode = code;
     },
+    getLastUserAt: userId => entry(userId).lastUserAt || '',
+    setLastUserAt: (userId, at = new Date().toISOString()) => {
+      entry(userId).lastUserAt = at;
+    },
     getOrderDraft: userId => ({ ...(entry(userId).orderDraft || {}) }),
     mergeOrderDraft: (userId, details) => {
       const value = entry(userId);
@@ -91,6 +95,29 @@ function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`) {
     sender: { id: senderId },
     message: { mid, text }
   };
+}
+
+function makeReferralEvent(senderId = 'sender_1', source = 'ADS') {
+  return {
+    sender: { id: senderId },
+    referral: { source, ad_id: 'ad_test', ref: 'ref_test' }
+  };
+}
+
+function makeMessageWithReferral(text, senderId = 'sender_1', source = 'ADS', mid = `mid_${Math.random()}`) {
+  return {
+    sender: { id: senderId },
+    message: {
+      mid,
+      text,
+      referral: { source, ad_id: 'ad_test', ref: 'ref_test' }
+    }
+  };
+}
+
+function markReturningCustomer(storage, senderId, daysAgo = 1) {
+  const at = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+  storage.setLastUserAt(senderId, at);
 }
 
 function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) {
@@ -191,6 +218,9 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
 
   return {
     handleText: (text, senderId = 'sender_1', mid) => webhook.handleEvent(makeEvent(text, senderId, mid), 'https://example.test'),
+    handleReferral: (senderId = 'sender_1', source = 'ADS') => webhook.handleEvent(makeReferralEvent(senderId, source), 'https://example.test'),
+    handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid) =>
+      webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid), 'https://example.test'),
     sent,
     storage,
     getGeminiCalls: () => geminiCalls,
@@ -314,8 +344,9 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getConversationTurnCalls()).toBe(0);
   });
 
-  it('out-of-scope text before product code sends no reply and has no side effects', async () => {
+  it('out-of-scope text from returning customer sends no reply and has no side effects', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'minimal_no_ai', 1);
 
     await h.handleText('dùng sao', 'minimal_no_ai', 'm_no_ai');
 
@@ -348,11 +379,142 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getHandoffCaptureCalls()).toBe(0);
   });
 
+  it('first message from new customer (off-topic) sends price/menu reply regardless of regex', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('bên kia rẻ hơn shop', 'first_touch_offtopic', 'm_first_offtopic');
+
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+    expect(h.storage.getLastUserAt('first_touch_offtopic')).toBeTruthy();
+  });
+
+  it('returning customer (within 30 days) off-topic stays silent', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'returning_recent', 5);
+
+    await h.handleText('có ship Cần Thơ không', 'returning_recent', 'm_returning_recent');
+
+    expect(h.sent.length).toBe(0);
+  });
+
+  it('returning customer after 30+ days off-topic gets menu+caption again', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'returning_lapsed', 45);
+
+    await h.handleText('bên kia rẻ hơn shop', 'returning_lapsed', 'm_returning_lapsed');
+
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+  });
+
+  it('pure ads referral event without message text sends price/menu reply', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleReferral('ads_referral_only', 'ADS');
+
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+  });
+
+  it('SHORTLINK referral (m.me link) also triggers menu+caption', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'shortlink_returning', 5);
+
+    await h.handleReferral('shortlink_returning', 'SHORTLINK');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('ads referral with off-topic message overrides returning-customer silence', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'ads_returning', 5);
+
+    await h.handleTextWithReferral('bên kia rẻ hơn shop', 'ads_returning', 'ADS', 'm_ads_returning');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('ads referral during handoff does not break handoff silence', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    h.storage.setHandoff('ads_in_handoff', Date.now() + 30 * 60 * 1000);
+
+    await h.handleReferral('ads_in_handoff', 'ADS');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage.inHandoff('ads_in_handoff')).toBeTrue();
+  });
+
+  it('non-ads referral source (e.g. CUSTOMER_CHAT_PLUGIN) is ignored', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'chat_plugin_returning', 5);
+
+    await h.handleReferral('chat_plugin_returning', 'CUSTOMER_CHAT_PLUGIN');
+
+    expect(h.sent.length).toBe(0);
+  });
+
+  it('"bao nhiêu tiền" from returning customer matches expanded regex and sends menu+caption', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'returning_price_tien', 5);
+
+    await h.handleText('bao nhiêu tiền', 'returning_price_tien', 'm_returning_price_tien');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('"giá thế nào" from returning customer matches expanded regex and sends menu+caption', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'returning_price_tn', 5);
+
+    await h.handleText('giá thế nào ạ', 'returning_price_tn', 'm_returning_price_tn');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('"yo" greeting variant from returning customer triggers menu+caption', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'returning_yo', 5);
+
+    await h.handleText('yo', 'returning_yo', 'm_returning_yo');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('first message with product code still goes through product-code branch, not menu', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('cho xem MÃ8', 'first_with_code', 'm_first_with_code');
+
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma8.png'))).toBeTrue();
+    expect(h.storage.inHandoff('first_with_code')).toBeTrue();
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(textMessages.includes(MENU_CODE_MENU_PRICE_REPLY)).toBeFalse();
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+  });
+
   it('does not run Gemini, Telegram, order, export, follow-up, or alert side effects in this mode', async () => {
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
       throwOnHandoffCapture: true
     });
+    markReturningCustomer(h.storage, 'minimal_side_effects', 1);
 
     await h.handleText('sdt 0912345678', 'minimal_side_effects', 'm_side_effects');
 

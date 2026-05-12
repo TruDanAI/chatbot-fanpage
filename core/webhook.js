@@ -109,15 +109,54 @@ function createWebhook({
   const productCodeLookupEnabled = isProductCodeLookupEnabled(shopConfig);
   const menuCodeHandoffMode = isMenuCodeHandoffMode(shopConfig);
 
+  // Khách quay lại sau ngần này mới được tự động chào lại bằng menu+cap.
+  const MENU_CODE_REENGAGE_MS = 30 * 24 * 60 * 60 * 1000;
+  // Các nguồn referral của Messenger được coi là "khách từ quảng cáo / link campaign".
+  const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
+
   function isMenuCodeMenuQuestion(userText) {
     const t = normalizeText(userText).replace(/\s+/g, ' ').trim();
+    if (!t) return false;
     if (isGreetingText(userText)) return true;
+
+    if (/^(?:yo|hey|helo|helu|hej|hola)\b/.test(t)) return true;
+    if (/^(?:chao|hi|hello|alo|shop|em|chi|anh)\s+(?:ad|admin|mn|moi nguoi|cac ban|ban|page)\b/.test(t)) return true;
+    if (/\bad(?:min)?\s*oi\b/.test(t)) return true;
 
     return /^(?:xin |cho |gui |xem |coi |tham khao )?(?:menu|bang gia|danh sach|danh muc|catalog)(?: san pham)?(?: shop)?$/.test(t)
       || /^(?:xem|coi|gui|cho xem|xin xem|co)\s+(?:san pham|sp|mau|hang)(?: nao| gi| ben shop| shop)?$/.test(t)
       || /^(?:gia|gia san pham|gia san pham tu bao nhieu|bao nhieu(?: vay)?|co mau nao|co san pham nao|co hang nao)$/.test(t)
-      || /\bgia\b.*\b(?:san pham|bao nhieu|tu bao nhieu)\b/.test(t)
-      || /\b(?:san pham|mau|hang)\b.*\b(?:bao nhieu|nao|gi)\b/.test(t);
+      || /\bgia\b.*\b(?:san pham|bao nhieu|tu bao nhieu|the nao|ntn|ra sao|nhu nao)\b/.test(t)
+      || /\b(?:san pham|mau|hang)\b.*\b(?:bao nhieu|nao|gi)\b/.test(t)
+      || /^bao nhieu(?:\s+(?:tien|ay|a|vay|nhi|ne|z|day|ha|hi|shop|shop oi|tien vay|tien a|tien nhi|tien ne|tien z))?$/.test(t)
+      || /^(?:bn|bnhieu|bnh|bnhiu)(?:\s+(?:tien|vay|ay|nhi|shop|shop oi))?$/.test(t)
+      || /^gia\s*(?:the nao|sao|ntn|ra sao|nhu nao|nhu the nao)$/.test(t);
+  }
+
+  function isMenuCodeAdsReferral(event) {
+    if (!menuCodeHandoffMode || !event) return false;
+    const refs = [event.referral, event.message?.referral, event.postback?.referral];
+    for (const ref of refs) {
+      if (!ref) continue;
+      const source = String(ref.source || '').toUpperCase();
+      if (MENU_CODE_ADS_REFERRAL_SOURCES.has(source)) return true;
+    }
+    return false;
+  }
+
+  function isFirstTouchOrLapsedCustomer(senderId) {
+    if (typeof storage.getLastUserAt !== 'function') return true;
+    const lastUserAt = storage.getLastUserAt(senderId);
+    if (!lastUserAt) return true;
+    const ts = Date.parse(lastUserAt);
+    if (!Number.isFinite(ts)) return true;
+    return (Date.now() - ts) > MENU_CODE_REENGAGE_MS;
+  }
+
+  function markMenuCodeLastUserAt(senderId) {
+    if (typeof storage.setLastUserAt === 'function') {
+      storage.setLastUserAt(senderId);
+    }
   }
 
   async function sendImages(senderId, images) {
@@ -164,23 +203,21 @@ function createWebhook({
     return number ? `ma ${number}` : String(code || '');
   }
 
-  async function handleMenuCodeHandoffEvent(senderId, userText, baseUrlOverride) {
+  async function handleMenuCodeHandoffEvent(senderId, userText, baseUrlOverride, options = {}) {
+    const adsReferral = options.adsReferral === true;
+    // Chụp trước flag first-touch để lát sau dù markMenuCodeLastUserAt cập nhật
+    // timestamp thì quyết định vẫn dựa trên trạng thái lúc tin vừa tới.
+    const firstTouch = isFirstTouchOrLapsedCustomer(senderId);
+
     if (storage.inHandoff(senderId)) {
       console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}`);
+      markMenuCodeLastUserAt(senderId);
       return;
     }
 
     const requestedCodes = productCodeLookupEnabled
       ? extractRequestedProductCodes(userText)
       : [];
-
-    if (!requestedCodes.length && isMenuCodeMenuQuestion(userText)) {
-      showTyping(senderId);
-      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
-      console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
-      await sendImages(senderId, getMenuImageUrls(baseUrlOverride));
-      return;
-    }
 
     if (requestedCodes.length) {
       const reply = buildDeterministicReply(userText, senderId);
@@ -196,9 +233,21 @@ function createWebhook({
         await sendMessage(senderId, message);
         storage.setHandoff(senderId, Date.now() + handoffMs);
         console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
+        markMenuCodeLastUserAt(senderId);
         return;
       }
     }
+
+    if (adsReferral || firstTouch || isMenuCodeMenuQuestion(userText)) {
+      showTyping(senderId);
+      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
+      console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
+      await sendImages(senderId, getMenuImageUrls(baseUrlOverride));
+      markMenuCodeLastUserAt(senderId);
+      return;
+    }
+
+    markMenuCodeLastUserAt(senderId);
   }
 
   function registerWebhookRoutes(app) {
@@ -258,6 +307,8 @@ function createWebhook({
     if (mid && storage.seenMid(mid)) return;
     if (mid) storage.markMid(mid);
 
+    const adsReferralEvent = isMenuCodeAdsReferral(event);
+
     let userText = null;
     let quickReplyPayload = '';
     if (event.message?.quick_reply?.payload) {
@@ -266,11 +317,18 @@ function createWebhook({
       userText = resolved?.text || event.message?.text || quickReplyPayload;
     } else if (event.message?.text) userText = event.message.text;
     else if (event.postback?.payload) userText = event.postback.payload;
-    if (!userText) return;
+
+    if (!userText) {
+      if (menuCodeHandoffMode && adsReferralEvent) {
+        console.log(`📣 [${senderId}]: referral từ quảng cáo (không kèm tin nhắn)`);
+        await handleMenuCodeHandoffEvent(senderId, '', baseUrlOverride, { adsReferral: true });
+      }
+      return;
+    }
 
     console.log(`📩 [${senderId}]: ${redactSensitiveText(userText)}`);
     if (menuCodeHandoffMode) {
-      await handleMenuCodeHandoffEvent(senderId, userText, baseUrlOverride);
+      await handleMenuCodeHandoffEvent(senderId, userText, baseUrlOverride, { adsReferral: adsReferralEvent });
       return;
     }
 
