@@ -156,7 +156,7 @@ describe('index: security hardening helpers', () => {
 
     expect(health.ok).toBeTrue();
     expect(health.shop).toBe('adult-shop');
-    expect(health.products).toBe(12);
+    expect(health.products).toBe(13);
     expect(health.storage.adapter).toBe('file');
     expect(health.storage.ready).toBeTrue();
     expect(health.messenger.dryRun).toBeFalse();
