@@ -16,9 +16,10 @@ Mục tiêu sản phẩm:
 - Ưu tiên an toàn dữ liệu production hơn tốc độ làm tính năng.
 - Admin dashboard hiện vẫn không có exposed business write workflow. Phase 4
   internal notes đã có design/SQL proposal/safe verifier/live local
-  PostgreSQL verification/local create service/local read-list model/tests,
+  PostgreSQL verification/local create service/local read-list model/read API/tests,
   nhưng chưa có POST route, chưa có UI form/list, chưa apply production
-  schema, và chưa smoke tạo note production.
+  schema, chưa authenticated production internal-notes smoke, và chưa smoke
+  tạo note production.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -64,13 +65,13 @@ Production:
 
 Trạng thái production mới nhất đã biết:
 - Latest verified Railway deployment:
-  c220b138-ff42-4630-a0db-4404e4b39370 SUCCESS ở commit 1a8f8d7
-  Add internal notes read model
+  06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS ở commit 834c157
+  Add internal notes read API
 - Latest safe public smoke không ghi DB:
   /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false
   GET /admin/login 200, Admin Login form present
 - Latest pushed commit:
-  1a8f8d7 Add internal notes read model
+  834c157 Add internal notes read API
 - Latest git state:
   Git clean, origin/main...HEAD = 0 0.
 - Latest local test coverage baseline:
@@ -87,11 +88,20 @@ Trạng thái production mới nhất đã biết:
   db/internal-notes-proposal.sql twice, verified table, columns, indexes, and
   CHECK constraints, dropped the isolated schema, and left 0 remaining
   internal_notes_verify_% schemas.
+- GET /admin/api/internal-notes read API đã implement và deploy, nhưng chưa
+  chạy authenticated production smoke/call sau deployment này vì route admin
+  authenticated sẽ ghi audit rows.
+- Read API xử lý production thiếu internal_notes schema gracefully:
+  schemaReady=false, notes=[].
 - Không có authenticated admin smoke sau deployment này.
+- Không có production /admin/api/internal-notes call sau deployment này.
 - Không production schema apply.
 - Không production env change.
 - Không intentional production DB write.
 - Không production /data touch.
+- Previous verified Railway deployment:
+  c220b138-ff42-4630-a0db-4404e4b39370 SUCCESS ở commit 1a8f8d7
+  Add internal notes read model
 - Previous verified Railway deployment:
   39f5f647-9815-4b70-8891-9a612b8b8444 SUCCESS ở commit d138144
   Add internal notes SQL proposal checks
@@ -104,8 +114,12 @@ Trạng thái production mới nhất đã biết:
 - Previous verified code/docs deployment:
   5989b2e Complete Phase 3.5 identity audit design
 - Latest verified code deployment:
-  1a8f8d7 Add internal notes read model
+  834c157 Add internal notes read API
 - Latest verified code Railway deployment:
+  06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS ở commit 834c157
+- Previous verified code deployment:
+  1a8f8d7 Add internal notes read model
+- Previous verified code Railway deployment:
   c220b138-ff42-4630-a0db-4404e4b39370 SUCCESS ở commit 1a8f8d7
 - Previous verified code deployment:
   d138144 Add internal notes SQL proposal checks
@@ -183,8 +197,10 @@ Trạng thái production mới nhất đã biết:
 
 Git state mới nhất đã biết:
 - Latest code/docs commit đã push/deploy:
-  1a8f8d7 Add internal notes read model
+  834c157 Add internal notes read API
 - Previous code/docs commit đã push/deploy:
+  1a8f8d7 Add internal notes read model
+- Earlier code/docs commit đã push/deploy:
   d138144 Add internal notes SQL proposal checks
 - Previous code/docs commit đã push/deploy:
   5989b2e Complete Phase 3.5 identity audit design
@@ -219,11 +235,11 @@ Git state mới nhất đã biết:
 - Trước docs-only handoff update cuối phiên:
   worktree clean, origin/main...HEAD = 0 0.
 - Latest commits:
+  834c157 Add internal notes read API
   1a8f8d7 Add internal notes read model
   d138144 Add internal notes SQL proposal checks
   5989b2e Complete Phase 3.5 identity audit design
   2841e69 Update handoff docs after login rate limit deploy
-  31bcf1f Add admin login rate limit
 
 Backup production mới nhất đã biết:
 - Latest backup:
@@ -801,6 +817,31 @@ Backup production mới nhất đã biết:
    - Không intentional production DB write.
    - Không ghi production /data.
    - Git clean, origin/main...HEAD = 0 0.
+20. Phiên Phase 4 internal notes read API, đã push/deploy sau xác nhận:
+   - Baseline latest commit:
+     834c157 Add internal notes read API.
+   - Railway deployment:
+     06f98cbf-c6f8-4eae-b6e1-f63367b2d2e9 SUCCESS ở commit 834c157.
+   - Safe public smoke sau deploy không ghi DB:
+     /healthz 200, ok=true, storage.adapter=postgres, storage.ready=true, messenger.dryRun=false.
+     GET /admin/login 200, Admin Login form present.
+   - GET /admin/api/internal-notes read API đã implement và deploy.
+   - Read API handles missing production schema gracefully:
+     schemaReady=false, notes=[].
+   - Phase 4 internal notes status:
+     design doc exists; SQL proposal exists; safe SQL verifier exists; live
+     local PostgreSQL verification passed; create service exists local-only;
+     read/list model exists local-only; GET /admin/api/internal-notes read API
+     is implemented and deployed.
+   - Không thêm POST route.
+   - Không thêm UI form/list.
+   - Không apply production internal_notes schema.
+   - Không chạy authenticated production internal-notes smoke/call.
+   - Không chạy authenticated production note-create smoke.
+   - Không đổi production env.
+   - Không intentional production DB write.
+   - Không ghi production /data.
+   - Git clean, origin/main...HEAD = 0 0.
 
 Tính năng admin hiện có:
 - Dashboard read-only với filters.
@@ -860,12 +901,15 @@ Tính năng admin hiện có:
 - Admin read routes production đang ghi audit log.
 - Phase 3.5 identity provisioning design:
   docs/admin-identity-provisioning.md
-- Phase 4 internal notes hiện chỉ có local service/read-list layer và proposal:
+- Phase 4 internal notes hiện có local service/read-list layer, read API, và proposal:
   - design doc: docs/phase-4-internal-notes-design.md
   - SQL proposal: db/internal-notes-proposal.sql
   - safe SQL verifier: npm run verify:internal-notes-sql
   - local create service: core/admin/internal-notes.js
   - local read/list model: core/admin/internal-notes.js
+  - GET /admin/api/internal-notes read API đã implement/deploy
+  - read API xử lý thiếu production schema gracefully với
+    schemaReady=false, notes=[]
   - tests: tests/admin-internal-notes.test.js cover validation, RBAC,
     transaction/audit fail-closed behavior, static SQL checks, verifier
     guardrails, and read model behavior
@@ -877,6 +921,7 @@ Tính năng admin hiện có:
   - chưa có POST route
   - chưa có UI form/list
   - chưa production schema apply
+  - chưa authenticated production internal-notes smoke/call
   - chưa authenticated production note-create smoke
 
 File quan trọng:
@@ -929,7 +974,7 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes đã có design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, local create service, local read/list model, và tests cho validation/RBAC/transaction/audit fail-closed/static SQL/verifier guardrails/read model behavior. Vẫn chưa có POST route, chưa có UI form/list, chưa production schema apply, và chưa authenticated production note-create smoke.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes đã có design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, local create service, local read/list model, GET /admin/api/internal-notes read API deployed, và tests cho validation/RBAC/transaction/audit fail-closed/static SQL/verifier guardrails/read model behavior. Read API xử lý production thiếu schema gracefully bằng schemaReady=false, notes=[]. Vẫn chưa có POST route, chưa có UI form/list, chưa production schema apply, chưa authenticated production internal-notes smoke/call, và chưa authenticated production note-create smoke.
 
 Next recommended task:
 - Chuẩn bị rollout/runbook decision cho internal_notes schema apply nếu muốn tiến
@@ -938,6 +983,8 @@ Next recommended task:
 - Tiếp tục chỉ dùng explicit non-production URL như CHATBOT_TEST_DATABASE_URL
   hoặc CHATBOT_STAGING_DATABASE_URL cho schema verification; không dùng
   DATABASE_URL vì có thể là production.
+- Không chạy authenticated /admin/api/internal-notes smoke nếu chưa có xác nhận
+  riêng vì route sẽ ghi audit rows.
 - Chưa thêm route/UI write trước khi có rollout plan, audit semantics, tests,
   và approval rõ cho production impact.
 
@@ -955,6 +1002,7 @@ Việc nên làm đầu phiên tới:
 4. Chỉ smoke thêm bằng Bearer/cookie sau xác nhận riêng vì sẽ ghi audit production:
    - /admin/dashboard
    - /admin/audit
+   - /admin/api/internal-notes
 5. Chỉ smoke note-create production sau xác nhận riêng rõ ràng vì sẽ ghi business data.
 6. Verify count-only nếu có đường kết nối không in secrets:
    - admin_users
