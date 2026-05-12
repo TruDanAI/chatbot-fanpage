@@ -182,6 +182,14 @@ function presentInternalNoteCreateError(err) {
   };
 }
 
+function presentInternalNoteCreateTextError(err) {
+  const response = presentInternalNoteCreateError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Internal note could not be created.'
+  };
+}
+
 function registerAdminRoutes(app, {
   storage,
   adminExportToken,
@@ -320,6 +328,34 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function createInternalNoteHtml(req, res) {
+    const senderId = String(req.params.senderId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.USER_DETAIL_READ,
+      bearerOnly: true,
+      action: INTERNAL_NOTE_ACTION,
+      resourceType: INTERNAL_NOTE_RESOURCE_TYPE,
+      resourceId: senderId
+    });
+    if (!principal) return;
+
+    const body = req.body || {};
+    try {
+      await notes.createNote({
+        principal,
+        targetType: body.target_type,
+        targetId: senderId,
+        body: body.body,
+        allowedTargetTypes: ['customer', 'conversation'],
+        requestContext: buildInternalNoteRequestContext(req, getClientIp)
+      });
+      return res.redirect(303, `/admin/dashboard/users/${encodeURIComponent(senderId)}`);
+    } catch (err) {
+      const response = presentInternalNoteCreateTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   if (typeof app.use === 'function') {
     app.use('/admin', setAdminNoStoreHeaders);
   }
@@ -335,6 +371,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/dashboard', sendDashboard);
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
+  app.post('/admin/dashboard/users/:senderId/notes', createInternalNoteHtml);
   app.get('/admin/db/users/:senderId', sendUserDetail);
   app.get('/admin/audit', sendAuditLog);
   app.get('/admin/customers.csv', sendCustomersCsv);

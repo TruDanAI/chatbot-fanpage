@@ -1,4 +1,7 @@
-const { PERMISSIONS } = require('../admin-auth');
+const {
+  PERMISSIONS,
+  hasPermission
+} = require('../admin-auth');
 const {
   presentAuditApi,
   presentDashboardApi,
@@ -16,6 +19,8 @@ const {
   renderDashboardHtml,
   renderUserDetailHtml
 } = require('./views');
+
+const USER_DETAIL_INTERNAL_NOTE_LIMIT = 20;
 
 function createAdminReadHandlers({
   reader,
@@ -62,6 +67,81 @@ function createAdminReadHandlers({
 
   function isMissingInternalNotesSchemaError(err) {
     return err?.code === '42P01' || err?.code === '42703';
+  }
+
+  function getInternalNoteSortTime(note = {}) {
+    if (!note.created_at) return 0;
+    const date = note.created_at instanceof Date ? note.created_at : new Date(note.created_at);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  }
+
+  function compareInternalNotesNewestFirst(a = {}, b = {}) {
+    const timeDelta = getInternalNoteSortTime(b) - getInternalNoteSortTime(a);
+    if (timeDelta) return timeDelta;
+    return String(b.id || '').localeCompare(String(a.id || ''), undefined, { numeric: true });
+  }
+
+  async function getUserDetailInternalNotes(senderId = '', principal) {
+    const targetId = String(senderId || '').trim().slice(0, 160);
+    const base = {
+      canCreate: hasPermission(principal, PERMISSIONS.INTERNAL_NOTE_WRITE),
+      schemaReady: true,
+      notes: [],
+      targetId
+    };
+    if (!targetId) {
+      return {
+        ...base,
+        error: 'invalid_internal_note_target',
+        message: 'Không đọc được ghi chú nội bộ.'
+      };
+    }
+
+    try {
+      const [customerModel, conversationModel] = await Promise.all([
+        internalNoteService.listNotes({
+          targetType: 'customer',
+          targetId,
+          visibleOnly: true,
+          limit: USER_DETAIL_INTERNAL_NOTE_LIMIT,
+          offset: 0
+        }),
+        internalNoteService.listNotes({
+          targetType: 'conversation',
+          targetId,
+          visibleOnly: true,
+          limit: USER_DETAIL_INTERNAL_NOTE_LIMIT,
+          offset: 0
+        })
+      ]);
+      const notes = [
+        ...(customerModel.notes || []),
+        ...(conversationModel.notes || [])
+      ]
+        .filter(note => String(note.status || '').toLowerCase() === 'visible')
+        .sort(compareInternalNotesNewestFirst)
+        .slice(0, USER_DETAIL_INTERNAL_NOTE_LIMIT);
+
+      return {
+        ...base,
+        notes
+      };
+    } catch (err) {
+      if (isMissingInternalNotesSchemaError(err)) {
+        return {
+          ...base,
+          schemaReady: false,
+          notes: [],
+          message: 'Ghi chú nội bộ chưa sẵn sàng.'
+        };
+      }
+      return {
+        ...base,
+        notes: [],
+        error: 'internal_notes_read_failed',
+        message: 'Không đọc được ghi chú nội bộ.'
+      };
+    }
   }
 
   function buildInternalNoteReadAuditMetadata({
@@ -121,6 +201,7 @@ function createAdminReadHandlers({
     try {
       const model = await reader.getUserDetail(senderId);
       model.filters = normalizeDashboardFilters(req.query || {});
+      model.internalNotes = await getUserDetailInternalNotes(senderId, principal);
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.USER_DETAIL_READ,

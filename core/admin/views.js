@@ -155,6 +155,14 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .login-panel input { min-height: 38px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit; }
     .login-panel button { min-height: 38px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-weight: 700; cursor: pointer; }
     .error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; padding: 9px 10px; font-size: 14px; }
+    .note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .note-form { display: grid; gap: 10px; margin: 12px 0 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .note-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 12px; }
+    .note-form legend, .note-form label { color: #334155; font-size: 13px; font-weight: 700; }
+    .note-form label { display: grid; gap: 5px; }
+    .note-form fieldset label { display: inline-flex; align-items: center; gap: 5px; }
+    .note-form textarea { min-height: 92px; border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px; color: #17202a; background: #ffffff; font: inherit; resize: vertical; }
+    .note-form button { width: fit-content; min-height: 36px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-weight: 700; padding: 7px 11px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -188,6 +196,54 @@ function renderCounts(counts = {}) {
 function renderTable(headers, rows, renderRow) {
   if (!rows.length) return '<div class="empty">Không có dữ liệu.</div>';
   return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table>`;
+}
+
+function limitNoteBody(value = '', max = 800) {
+  const text = String(value || '');
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
+}
+
+function renderInternalNotesSection(model = {}) {
+  const notesModel = model.internalNotes || {};
+  const senderId = model.senderId || notesModel.targetId || '';
+  const form = notesModel.canCreate && notesModel.schemaReady !== false && !notesModel.error
+    ? `
+      <form class="note-form" method="post" action="/admin/dashboard/users/${encodeRoutePart(senderId)}/notes">
+        <p class="meta">Sender <code>${escapeHtml(senderId)}</code></p>
+        <fieldset>
+          <legend>Đối tượng</legend>
+          <label><input type="radio" name="target_type" value="customer" checked> Customer</label>
+          <label><input type="radio" name="target_type" value="conversation"> Conversation</label>
+        </fieldset>
+        <label>Nội dung
+          <textarea name="body" required maxlength="2000"></textarea>
+        </label>
+        <button type="submit">Lưu ghi chú</button>
+      </form>
+    `
+    : '';
+  const notes = notesModel.notes || [];
+  const content = notesModel.schemaReady === false
+    ? `<div class="empty">${escapeHtml(notesModel.message || 'Ghi chú nội bộ chưa sẵn sàng.')}</div>`
+    : notesModel.error
+      ? `<div class="empty">${escapeHtml(notesModel.message || 'Không đọc được ghi chú nội bộ.')}</div>`
+      : !notes.length
+        ? '<div class="empty">Chưa có ghi chú nào.</div>'
+        : renderTable(['time', 'created_by', 'target_type', 'body'], notes, note => `
+        <tr>
+          <td>${escapeHtml(formatDate(note.created_at))}</td>
+          <td>${escapeHtml(note.created_by)}</td>
+          <td><span class="status status-neutral">${escapeHtml(note.target_type)}</span></td>
+          <td class="note-body">${escapeHtml(limitNoteBody(note.body, 800))}</td>
+        </tr>
+      `);
+
+  return `
+    <h2>Ghi Chú Nội Bộ</h2>
+    ${form}
+    ${content}
+  `;
 }
 
 function renderPagination(page = {}, filters = {}, queryString = dashboardQueryString, pageParam = 'page') {
@@ -421,6 +477,8 @@ function renderUserDetailHtml(model) {
       <tr><th>Last Product</th><td>${escapeHtml(conversation.last_product_code || '')}</td></tr>
       <tr><th>Last User At</th><td>${escapeHtml(formatDate(conversation.last_user_at))}</td></tr>
     </tbody></table>
+
+    ${renderInternalNotesSection(model)}
 
     <h2>Orders</h2>
     ${renderTable(['updated', 'status', 'product', 'name', 'phone', 'address', 'items'], model.orders, order => {

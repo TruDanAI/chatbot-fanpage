@@ -298,13 +298,14 @@ function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, cre
     async listNotes(filters = {}) {
       calls.push(filters);
       if (failWith) throw failWith;
+      const rows = typeof noteRows === 'function' ? noteRows(filters) : noteRows;
       return {
         targetType: filters.targetType,
         targetId: filters.targetId,
         limit: filters.limit,
         offset: filters.offset,
         visibleOnly: filters.visibleOnly !== false,
-        notes: noteRows || [{
+        notes: rows == null ? [{
           id: 7,
           target_type: filters.targetType,
           target_id: filters.targetId,
@@ -317,7 +318,7 @@ function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, cre
           raw_customer: { phone: '0987654321' },
           raw_order: { address: '12 Tran Phu' },
           raw_message: { text: 'raw message' }
-        }]
+        }] : rows
       };
     },
     async createNote(input = {}) {
@@ -1001,6 +1002,196 @@ describe('admin dashboard routes', () => {
     }
   });
 
+  it('user detail renders internal notes section with latest visible customer and conversation notes', async () => {
+    const notes = createInternalNoteServiceStub({
+      noteRows: filters => {
+        if (filters.targetType === 'customer') {
+          return [
+            {
+              id: 2,
+              target_type: 'customer',
+              target_id: filters.targetId,
+              body: 'customer note',
+              status: 'visible',
+              created_by: 'admin-1',
+              created_at: '2026-05-12T01:00:00.000Z'
+            },
+            {
+              id: 3,
+              target_type: 'customer',
+              target_id: filters.targetId,
+              body: 'hidden customer note',
+              status: 'hidden',
+              created_by: 'admin-1',
+              created_at: '2026-05-12T03:00:00.000Z'
+            }
+          ];
+        }
+        return [{
+          id: 4,
+          target_type: 'conversation',
+          target_id: filters.targetId,
+          body: 'newer conversation note',
+          status: 'visible',
+          created_by: 'admin-2',
+          created_at: '2026-05-12T02:00:00.000Z'
+        }];
+      }
+    });
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: notes,
+      adminPrincipalRoles: ['viewer'],
+      adminPrincipalId: 'viewer-actor'
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Ghi Chú Nội Bộ');
+    expect(res.body.indexOf('Ghi Chú Nội Bộ') > res.body.indexOf('<h2>Profile</h2>')).toBeTrue();
+    expect(res.body.indexOf('Ghi Chú Nội Bộ') < res.body.indexOf('<h2>Orders</h2>')).toBeTrue();
+    expect(notes.calls.map(call => call.targetType).sort()).toEqual(['conversation', 'customer']);
+    expect(notes.calls.every(call => call.targetId === 'sender_1')).toBeTrue();
+    expect(notes.calls.every(call => call.limit === 20 && call.offset === 0 && call.visibleOnly === true)).toBeTrue();
+    expect(res.body.indexOf('newer conversation note') < res.body.indexOf('customer note')).toBeTrue();
+    expect(res.body.includes('hidden customer note')).toBeFalse();
+    expect(notes.calls.some(call => call.targetType === 'order')).toBeFalse();
+  });
+
+  it('user detail renders empty internal notes state', async () => {
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: createInternalNoteServiceStub({ noteRows: [] }),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Ghi Chú Nội Bộ');
+    expect(res.body).toContain('Chưa có ghi chú nào.');
+  });
+
+  it('user detail escapes internal note body and does not render unsafe HTML', async () => {
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: createInternalNoteServiceStub({
+        noteRows: [{
+          id: 8,
+          target_type: 'customer',
+          target_id: 'sender_1',
+          body: '<script>alert(1)</script>\nline 2',
+          status: 'visible',
+          created_by: '<b>admin</b>',
+          created_at: '2026-05-12T01:00:00.000Z'
+        }]
+      }),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('class="note-body"');
+    expect(res.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(res.body).toContain('&lt;b&gt;admin&lt;/b&gt;');
+    expect(res.body.includes('<script>alert(1)</script>')).toBeFalse();
+    expect(res.body.includes('<b>admin</b>')).toBeFalse();
+  });
+
+  it('internal note form is visible for maintainer and owner only', async () => {
+    for (const role of ['maintainer', 'owner']) {
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: createInternalNoteServiceStub({ noteRows: [] }),
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const res = createRes();
+      await app.routes['/admin/dashboard/users/:senderId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { senderId: 'sender_1' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('method="post" action="/admin/dashboard/users/sender_1/notes"');
+      expect(res.body).toContain('name="target_type" value="customer" checked');
+      expect(res.body).toContain('name="target_type" value="conversation"');
+      expect(res.body).toContain('textarea name="body" required maxlength="2000"');
+      expect(res.body).toContain('Lưu ghi chú');
+    }
+
+    for (const role of ['viewer', 'support']) {
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: createInternalNoteServiceStub({ noteRows: [] }),
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const res = createRes();
+      await app.routes['/admin/dashboard/users/:senderId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { senderId: 'sender_1' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.includes('action="/admin/dashboard/users/sender_1/notes"')).toBeFalse();
+      expect(res.body.includes('Lưu ghi chú')).toBeFalse();
+    }
+  });
+
+  it('user detail internal notes read handles missing schema safely', async () => {
+    const err = new Error('raw PostgreSQL relation "internal_notes" at postgres://secret');
+    err.code = '42P01';
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: createInternalNoteServiceStub({ failWith: err }),
+      adminPrincipalRoles: ['owner']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Ghi chú nội bộ chưa sẵn sàng.');
+    expect(res.body.includes('relation "internal_notes"')).toBeFalse();
+    expect(res.body.includes('postgres://secret')).toBeFalse();
+    expect(res.body.includes('raw PostgreSQL')).toBeFalse();
+  });
+
+  it('user detail internal notes read hides non-schema DB errors and secrets', async () => {
+    const err = new Error('raw DB failure password=secret postgres://secret');
+    err.code = 'XX000';
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: createInternalNoteServiceStub({ failWith: err }),
+      adminPrincipalRoles: ['owner']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard/users/:senderId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Không đọc được ghi chú nội bộ.');
+    expect(res.body.includes('raw DB failure')).toBeFalse();
+    expect(res.body.includes('password=secret')).toBeFalse();
+    expect(res.body.includes('postgres://secret')).toBeFalse();
+  });
+
   it('internal notes POST lets maintainer and owner create notes through Bearer auth', async () => {
     for (const role of ['maintainer', 'owner']) {
       const notes = createInternalNoteServiceStub();
@@ -1340,6 +1531,218 @@ describe('admin dashboard routes', () => {
     }
   });
 
+  it('user detail note form POST accepts browser session, calls create service, and redirects', async () => {
+    const notes = createInternalNoteServiceStub();
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: notes,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'session-maintainer',
+      adminSessionSecret: TEST_SESSION_SECRET
+    });
+
+    const loginRes = createRes();
+    await app.routes['POST /admin/login'](createReq({
+      body: { adminToken: 'secret' }
+    }), loginRes);
+    const res = createRes();
+    await app.routes['POST /admin/dashboard/users/:senderId/notes'](createReq({
+      headers: { cookie: loginRes.headers['set-cookie'].split(';')[0] },
+      params: { senderId: 'sender_1' },
+      body: {
+        target_type: 'conversation',
+        body: 'safe browser note'
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/dashboard/users/sender_1');
+    expect(notes.createCalls.length).toBe(1);
+    expect(notes.createCalls[0].targetType).toBe('conversation');
+    expect(notes.createCalls[0].targetId).toBe('sender_1');
+    expect(notes.createCalls[0].body).toBe('safe browser note');
+    expect(notes.createCalls[0].allowedTargetTypes).toEqual(['customer', 'conversation']);
+    expect(notes.createCalls[0].principal.id).toBe('session-maintainer');
+    expect(notes.createCalls[0].principal.authMethod).toBe('admin_session');
+  });
+
+  it('user detail note form POST does not perform a second manual audit', async () => {
+    const queries = [];
+    const auditLogger = createAuditLoggerStub();
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createInternalNoteRouteFakeClientClass({ queries })
+    });
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: service,
+      auditLogger,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'maintainer-actor'
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/dashboard/users/:senderId/notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' },
+      body: {
+        target_type: 'customer',
+        body: 'safe form note'
+      }
+    }), res);
+    const auditInserts = queries.filter(item => /^INSERT INTO admin_audit_log/i.test(item.sql));
+
+    expect(res.statusCode).toBe(303);
+    expect(Boolean(findRouteQuery(queries, /^INSERT INTO internal_notes/i))).toBeTrue();
+    expect(auditInserts.length).toBe(1);
+    expect(auditLogger.entries.length).toBe(0);
+  });
+
+  it('user detail note form POST denies viewer and support through create service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const queries = [];
+      const service = createPostgresInternalNoteService({
+        databaseUrl: 'postgres://example.test/db',
+        tenantId: 'default',
+        pageId: 'page',
+        Client: createInternalNoteRouteFakeClientClass({ queries })
+      });
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: service,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/dashboard/users/:senderId/notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { senderId: 'sender_1' },
+        body: {
+          target_type: 'customer',
+          body: 'must not be created'
+        }
+      }), res);
+      const auditInsert = findRouteQuery(queries, /^INSERT INTO admin_audit_log/i);
+
+      expect(res.statusCode).toBe(403);
+      expect(String(res.body).includes('must not be created')).toBeFalse();
+      expect(Boolean(findRouteQuery(queries, /^INSERT INTO internal_notes/i))).toBeFalse();
+      expect(Boolean(auditInsert)).toBeTrue();
+      expect(auditInsert.params[8]).toBe('denied');
+      expect(Boolean(findRouteQuery(queries, /^COMMIT$/))).toBeTrue();
+    }
+  });
+
+  it('user detail note form POST rejects x-admin-token and query token', async () => {
+    const notes = createInternalNoteServiceStub();
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: notes,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'maintainer-actor',
+      adminSessionSecret: TEST_SESSION_SECRET
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/dashboard/users/:senderId/notes'](createReq({
+      headers: { 'x-admin-token': 'secret' },
+      query: { token: 'secret' },
+      params: { senderId: 'sender_1' },
+      body: {
+        target_type: 'customer',
+        body: 'safe note'
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(401);
+    expect(notes.createCalls.length).toBe(0);
+  });
+
+  it('user detail note form POST rejects empty body, overlong body, invalid target type, and empty sender', async () => {
+    const cases = [
+      {
+        label: 'empty body',
+        params: { senderId: 'sender_1' },
+        body: { target_type: 'customer', body: '   ' }
+      },
+      {
+        label: 'overlong body',
+        params: { senderId: 'sender_1' },
+        body: { target_type: 'conversation', body: 'x'.repeat(2001) }
+      },
+      {
+        label: 'invalid target type',
+        params: { senderId: 'sender_1' },
+        body: { target_type: 'order', body: 'safe note' }
+      },
+      {
+        label: 'empty sender',
+        params: { senderId: '   ' },
+        body: { target_type: 'customer', body: 'safe note' }
+      }
+    ];
+
+    for (const item of cases) {
+      const queries = [];
+      const service = createPostgresInternalNoteService({
+        databaseUrl: 'postgres://example.test/db',
+        tenantId: 'default',
+        pageId: 'page',
+        Client: createInternalNoteRouteFakeClientClass({ queries })
+      });
+      const app = registerInternalNoteRouteApp({
+        internalNoteService: service,
+        adminPrincipalRoles: ['maintainer'],
+        adminPrincipalId: 'maintainer-actor'
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/dashboard/users/:senderId/notes'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: item.params,
+        body: item.body
+      }), res);
+      const auditInsert = findRouteQuery(queries, /^INSERT INTO admin_audit_log/i);
+
+      expect(res.statusCode).toBe(400);
+      expect(Boolean(findRouteQuery(queries, /^INSERT INTO internal_notes/i))).toBeFalse();
+      expect(Boolean(auditInsert)).toBeTrue();
+      expect(auditInsert.params[8]).toBe('denied');
+      expect(String(res.body).includes(item.body.body)).toBeFalse();
+      expect(String(res.body).includes('postgres://')).toBeFalse();
+      expect(item.label.length > 0).toBeTrue();
+    }
+  });
+
+  it('user detail note form POST handles missing schema without raw DB error', async () => {
+    const queries = [];
+    const service = createPostgresInternalNoteService({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: createInternalNoteRouteFakeClientClass({ queries, failNoteCode: '42P01' })
+    });
+    const app = registerInternalNoteRouteApp({
+      internalNoteService: service,
+      adminPrincipalRoles: ['maintainer'],
+      adminPrincipalId: 'maintainer-actor'
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/dashboard/users/:senderId/notes'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { senderId: 'sender_1' },
+      body: {
+        target_type: 'customer',
+        body: 'safe note'
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toBe('Internal notes schema is not ready.');
+    expect(String(res.body).includes('relation "internal_notes"')).toBeFalse();
+    expect(String(res.body).includes('postgres://secret')).toBeFalse();
+  });
+
   it('dashboard truyền filter query vào reader và render form filter', async () => {
     const app = createApp();
     const reader = createDashboardReaderStub();
@@ -1382,7 +1785,8 @@ describe('admin dashboard routes', () => {
       storage: createStorageStub(),
       adminExportToken: 'secret',
       getClientIp: () => '127.0.0.1',
-      dashboardReader: reader
+      dashboardReader: reader,
+      internalNoteService: createInternalNoteServiceStub({ noteRows: [] })
     });
 
     const res = createRes();

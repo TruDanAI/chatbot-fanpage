@@ -60,8 +60,17 @@ function validateInternalNoteInput({
   targetType = '',
   targetId = '',
   body = '',
-  createdBy = ''
+  createdBy = '',
+  allowedTargetTypes = INTERNAL_NOTE_TARGET_TYPES
 } = {}) {
+  const allowedTypes = new Set(
+    (Array.isArray(allowedTargetTypes) && allowedTargetTypes.length
+      ? allowedTargetTypes
+      : INTERNAL_NOTE_TARGET_TYPES
+    )
+      .map(normalizeTargetType)
+      .filter(type => INTERNAL_NOTE_TARGET_TYPES.includes(type))
+  );
   const normalized = {
     tenantId: normalizeText(tenantId, 120),
     pageId: normalizeText(pageId, 120),
@@ -77,7 +86,7 @@ function validateInternalNoteInput({
   if (!normalized.pageId) {
     return { ok: false, reason: 'page_id_required', normalized };
   }
-  if (!INTERNAL_NOTE_TARGET_TYPES.includes(normalized.targetType)) {
+  if (!allowedTypes.has(normalized.targetType)) {
     return { ok: false, reason: 'invalid_target_type', normalized };
   }
   if (!normalized.targetId) {
@@ -251,6 +260,7 @@ function createPostgresInternalNoteService({
     targetType = '',
     targetId = '',
     body = '',
+    allowedTargetTypes = INTERNAL_NOTE_TARGET_TYPES,
     requestContext = {}
   } = {}) {
     if (!databaseUrl) {
@@ -294,7 +304,8 @@ function createPostgresInternalNoteService({
         targetType,
         targetId,
         body,
-        createdBy
+        createdBy,
+        allowedTargetTypes
       });
       if (!validation.ok) {
         const isActorError = validation.reason === 'created_by_required';
