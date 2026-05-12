@@ -1,11 +1,13 @@
 # Phase 4 Internal Notes Production Schema Rollout
 
 This is the production rollout record for applying
-`db/internal-notes-proposal.sql`. The production schema apply and authenticated
+`db/internal-notes-proposal.sql` and the later approved Phase 4 v1
+internal-notes API smokes. The production schema apply, authenticated read
+smoke, authenticated POST note-create smoke, and post-create authenticated GET
 read smoke have completed, but this document is not approval to run any future
 authenticated production smoke, deploy code, change environment variables,
-write production business data, create production admin users, or touch
-production `/data`.
+write production business data, create production admin users, hide/delete the
+smoke note, or touch production `/data`.
 
 ## Scope
 
@@ -16,11 +18,46 @@ The only schema change that was in scope for the approved rollout was:
 The deployed code previously handled missing production `internal_notes` schema
 safely for `GET /admin/api/internal-notes` by returning `schemaReady=false`
 and `notes=[]`. After schema apply, the authenticated production read smoke
-returned `schemaReady=true` and `notes=[]`. The authenticated route must still
-not be smoked again without approval because admin read routes write audit
-rows.
+returned `schemaReady=true` and `notes=[]`. After the POST create API deploy,
+the approved note-create smoke created exactly one production smoke note, and
+the approved post-create GET read smoke returned `schemaReady=true` and
+`notes.length=1`. Authenticated routes must still not be smoked again without
+approval because admin reads write audit rows and note creates write business
+data.
 
-## Latest Execution Result
+## Latest API Smoke Result
+
+Completed on May 12, 2026:
+
+- Latest code commit:
+  `9f10f24 Add internal notes create API`.
+- Railway deployment:
+  `71daeacd-015f-4f03-b5fc-b21e72bac1b0 SUCCESS` at commit `9f10f24`.
+- Production `POST /admin/api/internal-notes` note-create smoke passed.
+- The POST smoke created exactly 1 production smoke note.
+- POST response was HTTP 201 with safe response shape: note id present,
+  `body_length` present, note body not returned, no raw customer/order/message
+  data, no raw DB error, and no target id/token/DB URL printed.
+- `internal_notes` count after POST smoke: 1.
+- `admin_audit_log` after POST smoke: total 54, success 35, denied 19,
+  error 0.
+- Production `GET /admin/api/internal-notes` read smoke after create passed.
+- GET response was HTTP 200, `schemaReady=true`, `notes.length=1`,
+  pagination present, safe note fields only, no raw customer/order/message
+  data, no DB error, and no target id/token/DB URL printed.
+- `internal_notes` count after GET smoke: 1.
+- `admin_audit_log` after GET smoke: total 55, success 36, denied 19, error 0.
+- Audit delta during GET smoke: `+1 success`.
+- Smoke note still exists and was not hidden/deleted.
+- Phase 4 v1 backend/API is complete.
+- UI/list/form integration remains future work.
+- No environment variable was changed during the smokes.
+- No deploy occurred during the smokes.
+- No schema apply occurred during the smokes.
+- Production `/data` was not touched.
+- Git remained clean, `origin/main...HEAD = 0 0`.
+
+## Schema Apply And Initial Read Result
 
 Completed on May 12, 2026:
 
@@ -55,9 +92,9 @@ Completed on May 12, 2026:
 - Production `/data` was not touched.
 - Git remained clean, `origin/main...HEAD = 0 0`.
 
-Next major task: implement `POST` create internal note local-only first, then
-deploy/smoke only with separate approvals. Future create-note production smoke
-requires explicit business-data write approval.
+Next major task: plan UI/list/form integration separately. Future production
+internal-notes smokes or writes still require explicit approval; the existing
+smoke note must not be hidden/deleted without separate approval.
 
 ## Preconditions
 
@@ -107,6 +144,8 @@ Use separate owner approvals for each production-impacting step:
    writes `admin_audit_log` rows.
 4. Future `POST` note-create smoke approval because it writes business data to
    `internal_notes`.
+5. Future smoke-note hide/delete approval because it mutates production
+   business data.
 
 Approval for one gate does not imply approval for any later gate.
 
@@ -204,7 +243,8 @@ This read smoke writes an `admin_audit_log` row. Verify only count/outcome
 delta for `admin_audit_log`; do not print raw audit rows or metadata rows.
 
 Do not run future `POST` note-create smoke without separate explicit approval,
-because it writes business data to `internal_notes`.
+because it writes business data to `internal_notes`. Do not hide/delete the
+smoke note without separate explicit approval.
 
 ## Rollback Stance
 
@@ -225,9 +265,9 @@ The default rollback stance is non-destructive:
 Do not do any of the following during this rollout unless a later approved plan
 explicitly changes scope:
 
-- Do not add a `POST` route.
 - Do not add a UI form.
-- Do not create production internal notes.
+- Do not create more production internal notes.
+- Do not hide/delete the smoke note.
 - Do not create production admin users.
 - Do not change production environment variables.
 - Do not deploy.
