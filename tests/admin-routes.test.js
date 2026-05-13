@@ -14,6 +14,7 @@ const {
 const { createDashboardRepository } = require('../core/admin/dashboard-repository');
 const { PERMISSIONS } = require('../core/admin-auth');
 const { createPostgresInternalNoteService } = require('../core/admin/internal-notes');
+const { createPostgresProductWriteService } = require('../core/admin/product-writes');
 
 function createApp() {
   const routes = {};
@@ -24,6 +25,12 @@ function createApp() {
     },
     post(path, handler) {
       routes[`POST ${path}`] = handler;
+    },
+    patch(path, handler) {
+      routes[`PATCH ${path}`] = handler;
+    },
+    delete(path, handler) {
+      routes[`DELETE ${path}`] = handler;
     }
   };
 }
@@ -474,6 +481,64 @@ function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, cre
         status: 'visible',
         createdBy: input.principal?.id || '',
         createdAt: '2026-05-12T02:00:00.000Z'
+      };
+    }
+  };
+}
+
+function createProductWriteServiceStub({ failWith, createdProduct, updatedProduct, statusProduct, archivedProduct } = {}) {
+  const calls = [];
+  const baseProduct = {
+    id: 'prod-1',
+    shop_id: 'adult-shop',
+    code: 'DB1',
+    name: 'DB Product',
+    description: 'safe product',
+    price_text: '150k',
+    status: 'active',
+    enabled: true,
+    sort_order: 1,
+    tags: ['featured'],
+    category: 'demo',
+    metadata_json: {
+      priceText: '150k',
+      customerPhone: '0987654321',
+      accessToken: 'do-not-return'
+    },
+    updated_at: '2026-05-12T04:00:00.000Z'
+  };
+  return {
+    calls,
+    async createProduct(input = {}) {
+      calls.push({ method: 'createProduct', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        product: createdProduct || { ...baseProduct, code: 'DB2', name: 'Created Product' }
+      };
+    },
+    async updateProduct(input = {}) {
+      calls.push({ method: 'updateProduct', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        product: updatedProduct || { ...baseProduct, name: 'Updated Product' }
+      };
+    },
+    async setProductEnabled(input = {}) {
+      calls.push({ method: 'setProductEnabled', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        product: statusProduct || { ...baseProduct, status: input.enabled ? 'active' : 'hidden', enabled: Boolean(input.enabled) }
+      };
+    },
+    async archiveProduct(input = {}) {
+      calls.push({ method: 'archiveProduct', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        product: archivedProduct || { ...baseProduct, status: 'archived', enabled: false }
       };
     }
   };
@@ -2135,6 +2200,158 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('0987654321')).toBeFalse();
   });
 
+  it('product create API trims input and returns sanitized product fields', async () => {
+    const app = createApp();
+    const productWrites = createProductWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productWriteService: productWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/products'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        code: ' DB2 ',
+        name: ' Created Product ',
+        price_text: ' 180k ',
+        description: ' new product ',
+        token: 'do-not-return'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(201);
+    expect(body.ok).toBeTrue();
+    expect(body.product.code).toBe('DB2');
+    expect(body.product.name).toBe('Created Product');
+    expect(body.product.price_text).toBe('150k');
+    expect(body.product.metadata_json.customerPhone).toBe(undefined);
+    expect(bodyText.includes('0987654321')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(productWrites.calls[0].method).toBe('createProduct');
+    expect(productWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(productWrites.calls[0].input.body.code).toBe(' DB2 ');
+  });
+
+  it('product update API succeeds and keeps write scoped to route shop/product', async () => {
+    const app = createApp();
+    const productWrites = createProductWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productWriteService: productWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['PATCH /admin/api/shops/:shopId/products/:productId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', productId: 'prod-1' },
+      body: { title: 'Updated Product', sort_order: '5' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.product.name).toBe('Updated Product');
+    expect(productWrites.calls[0].method).toBe('updateProduct');
+    expect(productWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(productWrites.calls[0].input.productId).toBe('prod-1');
+  });
+
+  it('product enable/disable API succeeds', async () => {
+    const app = createApp();
+    const productWrites = createProductWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productWriteService: productWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/products/:productId/status'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', productId: 'prod-1' },
+      body: { enabled: 'false' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.product.status).toBe('hidden');
+    expect(body.product.enabled).toBeFalse();
+    expect(productWrites.calls[0].method).toBe('setProductEnabled');
+    expect(productWrites.calls[0].input.enabled).toBeFalse();
+  });
+
+  it('product archive API uses soft archive response without hard delete wording', async () => {
+    const app = createApp();
+    const productWrites = createProductWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productWriteService: productWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['DELETE /admin/api/shops/:shopId/products/:productId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', productId: 'prod-1' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.product.status).toBe('archived');
+    expect(productWrites.calls[0].method).toBe('archiveProduct');
+  });
+
+  it('product write API maps duplicate code and missing schema to safe errors', async () => {
+    for (const item of [
+      { code: 'duplicate_product_code', status: 409, error: 'duplicate_product_code' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shop_products" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        productWriteService: createProductWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/products'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { code: 'DB1', name: 'Duplicate Product' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
   it('shops API trả schemaReady=false khi thiếu multi-shop schema', async () => {
     const app = createApp();
     const reader = createDashboardReaderStub();
@@ -2657,6 +2874,202 @@ describe('admin dashboard PostgreSQL reader', () => {
         throw new Error(`unexpected write SQL: ${sql}`);
       }
     }
+  });
+
+  it('product write service rejects cross-shop update before issuing UPDATE', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
+        }
+        if (normalized.includes('FROM shop_products') && normalized.includes('WHERE shop_id = $1 AND id = $2')) {
+          expect(params).toEqual(['adult-shop', 'prod-other']);
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.updateProduct({
+        principal: {
+          id: 'admin-1',
+          roles: ['maintainer'],
+          tenantId: 'default',
+          pageId: 'page',
+          authMethod: 'static_bearer'
+        },
+        shopId: 'adult-shop',
+        productId: 'prod-other',
+        body: { name: 'Should Not Write' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('product_not_found');
+    expect(queries.some(item => /^UPDATE shop_products/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^DELETE\b/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('product write service rejects duplicate code within same shop', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
+        }
+        if (normalized.includes('SELECT id, shop_id, code')) {
+          return {
+            rows: [{
+              id: 'prod-1',
+              shop_id: 'adult-shop',
+              code: 'DB1',
+              name: 'DB Product',
+              description: '',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('AND lower(code) = lower($2)')) {
+          expect(params).toEqual(['adult-shop', 'DB2', 'prod-1']);
+          return { rows: [{ id: 'prod-2' }] };
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.updateProduct({
+        principal: {
+          id: 'admin-1',
+          roles: ['maintainer'],
+          tenantId: 'default',
+          pageId: 'page',
+          authMethod: 'static_bearer'
+        },
+        shopId: 'adult-shop',
+        productId: 'prod-1',
+        body: { code: ' DB2 ', name: 'Updated Product' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('duplicate_product_code');
+    expect(queries.some(item => /^UPDATE shop_products/i.test(item.sql))).toBeFalse();
+  });
+
+  it('product write service uses parameterized shop-scoped UPDATE and audit is fail-safe', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
+        }
+        if (normalized.includes('SELECT id, shop_id, code')) {
+          return {
+            rows: [{
+              id: 'prod-1',
+              shop_id: 'adult-shop',
+              code: 'DB1',
+              name: 'DB Product',
+              description: 'old',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: { priceText: '150k' }
+            }]
+          };
+        }
+        if (normalized.includes('AND lower(code) = lower($2)')) {
+          return { rows: [] };
+        }
+        if (/^UPDATE shop_products/i.test(normalized)) {
+          expect(normalized).toContain('WHERE shop_id = $1 AND id = $2');
+          expect(params.slice(0, 2)).toEqual(['adult-shop', 'prod-1']);
+          return {
+            rows: [{
+              id: 'prod-1',
+              shop_id: 'adult-shop',
+              code: params[2],
+              name: params[3],
+              description: params[4],
+              status: params[5],
+              sort_order: params[6],
+              metadata_json: JSON.parse(params[7]),
+              updated_at: '2026-05-12T05:00:00.000Z'
+            }]
+          };
+        }
+        if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+          const err = new Error('relation "admin_audit_log" does not exist at postgres://secret');
+          err.code = '42P01';
+          throw err;
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    const result = await service.updateProduct({
+      principal: {
+        id: 'admin-1',
+        roles: ['maintainer'],
+        tenantId: 'default',
+        pageId: 'page',
+        authMethod: 'static_bearer'
+      },
+      shopId: 'adult-shop',
+      productId: 'prod-1',
+      body: {
+        code: ' DB1 ',
+        name: ' Updated Product ',
+        price_text: ' 180k ',
+        description: ' new description ',
+        sort_order: '3'
+      }
+    });
+
+    const updateQuery = queries.find(item => /^UPDATE shop_products/i.test(item.sql));
+    expect(result.product.name).toBe('Updated Product');
+    expect(result.product.price_text).toBe('180k');
+    expect(Boolean(updateQuery)).toBeTrue();
+    expect(updateQuery.params[2]).toBe('DB1');
+    expect(updateQuery.params[3]).toBe('Updated Product');
+    expect(queries.some(item => /^DELETE\b/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
   });
 });
 

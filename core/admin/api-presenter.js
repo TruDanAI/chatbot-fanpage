@@ -348,6 +348,7 @@ function presentShopSettings(settings = {}) {
 }
 
 function presentShopProduct(product = {}) {
+  const metadata = product.metadata_json || {};
   return {
     id: product.id || '',
     code: product.code || '',
@@ -355,9 +356,15 @@ function presentShopProduct(product = {}) {
     description: limitText(product.description, 500),
     price: product.price == null ? null : String(product.price),
     currency: product.currency || '',
+    price_text: limitText(product.price_text || metadata.priceText || metadata.priceLabel || metadata.price || '', 120),
     status: product.status || '',
+    enabled: String(product.status || '').toLowerCase() === 'active',
     sort_order: Number(product.sort_order || 0),
-    metadata_json: sanitizeAdminValue(product.metadata_json || {}),
+    tags: Array.isArray(product.tags)
+      ? product.tags.map(item => limitText(item, 40)).filter(Boolean)
+      : (Array.isArray(metadata.tags) ? metadata.tags.map(item => limitText(item, 40)).filter(Boolean) : []),
+    category: limitText(product.category || metadata.category || '', 80),
+    metadata_json: sanitizeAdminValue(metadata || {}),
     updated_at: product.updated_at || ''
   };
 }
@@ -418,12 +425,22 @@ function presentShopDetailApi(model = {}) {
   };
 }
 
+function presentProductWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    product: presentShopProduct(model.product || {})
+  };
+}
+
 module.exports = {
   maskSensitiveText,
   presentAuditApi,
   presentDashboardApi,
   presentInternalNotesApi,
   presentOperations,
+  presentProductWriteApi,
   presentShopDetailApi,
   presentShopsApi,
   presentUserDetailApi

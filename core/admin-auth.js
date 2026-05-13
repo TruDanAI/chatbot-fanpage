@@ -7,6 +7,7 @@ const PERMISSIONS = Object.freeze({
   EXPORT_READ: 'admin.export.read',
   AUDIT_READ: 'admin.audit.read',
   INTERNAL_NOTE_WRITE: 'admin.internal_note.write',
+  PRODUCT_WRITE: 'admin.product.write',
   ORDER_WRITE: 'admin.order.write',
   ADMIN_MANAGE: 'admin.manage'
 });
@@ -27,7 +28,8 @@ const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.LEGACY_STATE_READ,
     PERMISSIONS.EXPORT_READ,
     PERMISSIONS.AUDIT_READ,
-    PERMISSIONS.INTERNAL_NOTE_WRITE
+    PERMISSIONS.INTERNAL_NOTE_WRITE,
+    PERMISSIONS.PRODUCT_WRITE
   ]),
   owner: Object.freeze(Object.values(PERMISSIONS))
 });
@@ -35,6 +37,7 @@ const ROLE_PERMISSIONS = Object.freeze({
 const WRITE_PERMISSIONS = Object.freeze(new Set([
   PERMISSIONS.ORDER_WRITE,
   PERMISSIONS.INTERNAL_NOTE_WRITE,
+  PERMISSIONS.PRODUCT_WRITE,
   PERMISSIONS.ADMIN_MANAGE
 ]));
 

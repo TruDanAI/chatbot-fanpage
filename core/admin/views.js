@@ -163,6 +163,14 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .note-form fieldset label { display: inline-flex; align-items: center; gap: 5px; }
     .note-form textarea { min-height: 92px; border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px; color: #17202a; background: #ffffff; font: inherit; resize: vertical; }
     .note-form button { width: fit-content; min-height: 36px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-weight: 700; padding: 7px 11px; cursor: pointer; }
+    .product-form { display: grid; gap: 8px; margin: 12px 0 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .product-form.compact { padding: 0; margin: 0; border: 0; background: transparent; grid-template-columns: repeat(2, minmax(90px, 1fr)); }
+    .product-form label { display: grid; gap: 4px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+    .product-form input, .product-form textarea, .product-form select { min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
+    .product-form textarea { min-height: 54px; resize: vertical; grid-column: 1 / -1; }
+    .product-form button, .inline-action button { min-height: 32px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; cursor: pointer; }
+    .inline-action { margin: 0 0 6px; }
+    .inline-action.danger button { border-color: var(--danger); background: var(--danger); }
   </style>
 </head>
 <body>
@@ -497,6 +505,51 @@ function renderJsonBlock(value = {}) {
   return `<pre class="empty">${escapeHtml(json)}</pre>`;
 }
 
+function renderProductAddForm(shopId = '') {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/products`;
+  return `<form class="product-form" method="post" action="${escapeHtml(action)}">
+    <label>Code<input name="code" maxlength="80" required></label>
+    <label>Name<input name="name" maxlength="180" required></label>
+    <label>Price text<input name="price_text" maxlength="120"></label>
+    <label>Sort<input name="sort_order" type="number" value="0"></label>
+    <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
+    <label>Category<input name="category" maxlength="80"></label>
+    <label>Tags<input name="tags" maxlength="240"></label>
+    <label>Description<textarea name="description" maxlength="2000"></textarea></label>
+    <button type="submit">Add product</button>
+  </form>`;
+}
+
+function renderProductEditForm(shopId = '', product = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
+  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
+    <label>Code<input name="code" value="${escapeHtml(product.code)}" maxlength="80" required></label>
+    <label>Name<input name="name" value="${escapeHtml(product.name)}" maxlength="180" required></label>
+    <label>Price<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
+    <label>Sort<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
+    <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
+    <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
+    <textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea>
+    <button type="submit">Save</button>
+  </form>`;
+}
+
+function renderProductStatusActions(shopId = '', product = {}) {
+  const nextEnabled = String(product.status || '').toLowerCase() === 'active' ? 'false' : 'true';
+  const label = nextEnabled === 'true' ? 'Enable' : 'Disable';
+  const statusAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/status`;
+  const archiveAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/archive`;
+  return `
+    <form class="inline-action" method="post" action="${escapeHtml(statusAction)}">
+      <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
+      <button type="submit">${escapeHtml(label)}</button>
+    </form>
+    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}">
+      <button type="submit">Archive</button>
+    </form>
+  `;
+}
+
 function renderShopDetailHtml(model = {}) {
   const shop = model.shop || {};
   const assets = model.assets || {};
@@ -540,14 +593,17 @@ function renderShopDetailHtml(model = {}) {
       ${renderJsonBlock(model.settings?.settings_json || {})}
 
       <h2>Products</h2>
-      ${renderTable(['code', 'name', 'status', 'price', 'sort', 'updated'], model.products || [], product => `
+      ${renderProductAddForm(shop.id)}
+      ${renderTable(['code', 'name', 'status', 'price', 'sort', 'updated', 'edit', 'actions'], model.products || [], product => `
         <tr>
           <td><code>${escapeHtml(product.code)}</code></td>
           <td>${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
           <td>${renderStatus(product.status)}</td>
-          <td>${escapeHtml([product.price, product.currency].filter(Boolean).join(' '))}</td>
+          <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
           <td>${escapeHtml(product.sort_order || 0)}</td>
           <td>${escapeHtml(formatDate(product.updated_at))}</td>
+          <td>${renderProductEditForm(shop.id, product)}</td>
+          <td>${renderProductStatusActions(shop.id, product)}</td>
         </tr>
       `)}
 

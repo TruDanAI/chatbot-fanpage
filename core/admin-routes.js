@@ -5,10 +5,17 @@ const {
 } = require('./admin-auth');
 const { createPostgresAuditLogger } = require('./admin/audit');
 const {
+  presentProductWriteApi
+} = require('./admin/api-presenter');
+const {
   INTERNAL_NOTE_ACTION,
   INTERNAL_NOTE_RESOURCE_TYPE,
   createPostgresInternalNoteService
 } = require('./admin/internal-notes');
+const {
+  createPostgresProductWriteService,
+  isMissingProductWriteSchemaError
+} = require('./admin/product-writes');
 const { createAdminLegacyHandlers } = require('./admin/legacy-routes');
 const {
   assertReadOnlySql,
@@ -190,6 +197,62 @@ function presentInternalNoteCreateTextError(err) {
   };
 }
 
+function presentProductWriteError(err) {
+  if (isMissingProductWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    invalid_product_code: ['invalid_product_input', 'Product code is required.', 400],
+    invalid_product_name: ['invalid_product_input', 'Product name is required.', 400],
+    invalid_product_status: ['invalid_product_input', 'Product status is invalid.', 400],
+    duplicate_product_code: ['duplicate_product_code', 'Product code already exists in this shop.', 409],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    product_not_found: ['product_not_found', 'Product was not found.', 404],
+    permission_denied: ['permission_denied', 'Product write permission is required.', 403],
+    database_url_required: ['product_write_unavailable', 'Product writes are unavailable.', 503]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'product_write_failed',
+      message: 'Product write could not be completed.'
+    }
+  };
+}
+
+function presentProductWriteTextError(err) {
+  const response = presentProductWriteError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Product write could not be completed.'
+  };
+}
+
 function registerAdminRoutes(app, {
   storage,
   adminExportToken,
@@ -197,6 +260,7 @@ function registerAdminRoutes(app, {
   getClientIp,
   dashboardReader,
   internalNoteService,
+  productWriteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
   tenantId = process.env.TENANT_ID || 'default',
   pageId = process.env.PAGE_ID || '',
@@ -229,6 +293,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl,
     tenantId,
     pageId
+  });
+  const productWrites = productWriteService || createPostgresProductWriteService({
+    databaseUrl: dashboardDatabaseUrl
   });
   const sessionManager = adminSessionManager || createAdminSessionManager({
     sessionSecret: adminSessionSecret,
@@ -360,6 +427,216 @@ function registerAdminRoutes(app, {
     }
   }
 
+  function buildProductWriteRequestContext(req) {
+    return buildInternalNoteRequestContext(req, getClientIp);
+  }
+
+  async function createProductApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.create',
+      resourceType: 'shop_product',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await productWrites.createProduct({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentProductWriteApi(result));
+    } catch (err) {
+      const response = presentProductWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function updateProductApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.update',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      const result = await productWrites.updateProduct({
+        principal,
+        shopId,
+        productId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentProductWriteApi(result));
+    } catch (err) {
+      const response = presentProductWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function setProductStatusApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.status',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      const body = req.body || {};
+      const enabled = Object.prototype.hasOwnProperty.call(body, 'enabled')
+        ? /^(1|true|yes|on|active|enabled)$/i.test(String(body.enabled || '').trim())
+        : /^(active|enable|enabled)$/i.test(String(body.status || '').trim());
+      const result = await productWrites.setProductEnabled({
+        principal,
+        shopId,
+        productId,
+        enabled,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentProductWriteApi(result));
+    } catch (err) {
+      const response = presentProductWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function archiveProductApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.archive',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      const result = await productWrites.archiveProduct({
+        principal,
+        shopId,
+        productId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentProductWriteApi(result));
+    } catch (err) {
+      const response = presentProductWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function createProductHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.create',
+      resourceType: 'shop_product',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await productWrites.createProduct({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+    } catch (err) {
+      const response = presentProductWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function updateProductHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.update',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      await productWrites.updateProduct({
+        principal,
+        shopId,
+        productId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+    } catch (err) {
+      const response = presentProductWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function setProductStatusHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.status',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      await productWrites.setProductEnabled({
+        principal,
+        shopId,
+        productId,
+        enabled: /^(1|true|yes|on|active|enabled)$/i.test(String(req.body?.enabled || '').trim()),
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+    } catch (err) {
+      const response = presentProductWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function archiveProductHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.archive',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      await productWrites.archiveProduct({
+        principal,
+        shopId,
+        productId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+    } catch (err) {
+      const response = presentProductWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   if (typeof app.use === 'function') {
     app.use('/admin', setAdminNoStoreHeaders);
   }
@@ -371,6 +648,15 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/dashboard/users/:senderId', sendUserDetailApi);
   app.get('/admin/api/shops', sendShopsApi);
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
+  app.post('/admin/api/shops/:shopId/products', createProductApi);
+  if (typeof app.patch === 'function') {
+    app.patch('/admin/api/shops/:shopId/products/:productId', updateProductApi);
+    app.patch('/admin/api/shops/:shopId/products/:productId/status', setProductStatusApi);
+  }
+  app.post('/admin/api/shops/:shopId/products/:productId/status', setProductStatusApi);
+  if (typeof app.delete === 'function') {
+    app.delete('/admin/api/shops/:shopId/products/:productId', archiveProductApi);
+  }
   app.get('/admin/api/audit', sendAuditLogApi);
   app.get('/admin/api/internal-notes', sendInternalNotesApi);
   app.post('/admin/api/internal-notes', createInternalNoteApi);
@@ -379,6 +665,10 @@ function registerAdminRoutes(app, {
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
   app.get('/admin/shops', sendShops);
   app.get('/admin/shops/:shopId', sendShopDetail);
+  app.post('/admin/shops/:shopId/products', createProductHtml);
+  app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
+  app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
+  app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
   app.post('/admin/dashboard/users/:senderId/notes', createInternalNoteHtml);
   app.get('/admin/db/users/:senderId', sendUserDetail);
   app.get('/admin/audit', sendAuditLog);
@@ -401,6 +691,7 @@ module.exports = {
   createAdminReadHandlers,
   createPostgresAuditLogger,
   createPostgresDashboardReader,
+  createPostgresProductWriteService,
   createAdminRouteAuthorizer,
   createAdminSessionHandlers,
   createAdminSessionManager,
