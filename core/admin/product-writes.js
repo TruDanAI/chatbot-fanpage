@@ -377,6 +377,13 @@ function createPostgresProductWriteService({
       await repository.assertUniqueCode(client, { shopId: shop.id, code: input.code });
       const productId = `product_${crypto.randomUUID()}`;
       const row = await repository.insertProduct(client, { shopId: shop.id, productId, input });
+      if (!row?.id) {
+        throw createProductWriteError('product_persist_failed', 'Product could not be persisted.', 500);
+      }
+      const persisted = await repository.getProductForShop(client, shop.id, productId);
+      if (!persisted?.id) {
+        throw createProductWriteError('product_persist_failed', 'Product could not be persisted.', 500);
+      }
       await repository.insertAudit(client, {
         principal,
         action: PRODUCT_WRITE_ACTIONS.CREATE,
