@@ -251,7 +251,10 @@ function createProductWriteRepository() {
       input.sortOrder,
       JSON.stringify(input.metadata || {})
     ]);
-    return result.rows[0] || null;
+    return {
+      row: result.rows[0] || null,
+      rowCount: Number(result.rowCount ?? result.rows.length ?? 0)
+    };
   }
 
   async function updateProduct(client, { shopId, productId, input } = {}) {
@@ -311,13 +314,8 @@ function createProductWriteRepository() {
       userAgent: requestContext.userAgent,
       metadata
     });
-    try {
-      await insertAuditLogEntry(client, entry);
-      return entry;
-    } catch (err) {
-      if (!isMissingMultiShopSchemaError(err)) throw err;
-      return { ...entry, skipped: true, reason: 'audit_schema_not_ready' };
-    }
+    await insertAuditLogEntry(client, entry);
+    return entry;
   }
 
   return {
@@ -340,18 +338,26 @@ function createPostgresProductWriteService({
     if (!databaseUrl) {
       throw createProductWriteError('database_url_required', 'DATABASE_URL is required for product writes.', 503);
     }
-    const PgClient = Client || loadPgClient();
-    const client = new PgClient({ connectionString: databaseUrl });
-    let committed = false;
+    let transactionOpen = false;
+    const client = new (Client || loadPgClient())({ connectionString: databaseUrl });
     await client.connect();
     try {
       await client.query('BEGIN');
+      transactionOpen = true;
       const result = await fn(client);
-      await client.query('COMMIT');
-      committed = true;
+      let commitResult;
+      try {
+        commitResult = await client.query('COMMIT');
+        transactionOpen = false;
+      } catch (err) {
+        throw createProductWriteError('product_commit_failed', 'Product write could not be committed.', 500);
+      }
+      if (String(commitResult?.command || '').toUpperCase() !== 'COMMIT') {
+        throw createProductWriteError('product_commit_failed', 'Product write could not be committed.', 500);
+      }
       return result;
     } catch (err) {
-      if (!committed) {
+      if (transactionOpen) {
         try {
           await client.query('ROLLBACK');
         } catch (_) {}
@@ -376,7 +382,8 @@ function createPostgresProductWriteService({
       const shop = await repository.resolveShop(client, shopId);
       await repository.assertUniqueCode(client, { shopId: shop.id, code: input.code });
       const productId = `product_${crypto.randomUUID()}`;
-      const row = await repository.insertProduct(client, { shopId: shop.id, productId, input });
+      const insertResult = await repository.insertProduct(client, { shopId: shop.id, productId, input });
+      const row = insertResult?.row || insertResult || null;
       if (!row?.id) {
         throw createProductWriteError('product_persist_failed', 'Product could not be persisted.', 500);
       }

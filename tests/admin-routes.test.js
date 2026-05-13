@@ -2322,7 +2322,8 @@ describe('admin dashboard routes', () => {
   it('product write API maps duplicate code and missing schema to safe errors', async () => {
     for (const item of [
       { code: 'duplicate_product_code', status: 409, error: 'duplicate_product_code' },
-      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'product_commit_failed', status: 500, error: 'product_commit_failed' }
     ]) {
       const err = new Error(`raw PostgreSQL ${item.code} relation "shop_products" at postgres://secret`);
       err.code = item.code;
@@ -2984,7 +2985,7 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(queries.some(item => /^UPDATE shop_products/i.test(item.sql))).toBeFalse();
   });
 
-  it('product write service uses parameterized shop-scoped UPDATE and audit is fail-safe', async () => {
+  it('product write service uses parameterized shop-scoped UPDATE and fails closed when audit insert fails', async () => {
     const queries = [];
     class FakeClient {
       async connect() {}
@@ -2992,7 +2993,8 @@ describe('admin dashboard PostgreSQL reader', () => {
       async query(sql, params = []) {
         const normalized = String(sql || '').trim();
         queries.push({ sql: normalized, params });
-        if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized === 'BEGIN' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized === 'COMMIT') return { rows: [], command: 'COMMIT' };
         if (normalized.includes('FROM shops')) {
           return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
         }
@@ -3043,33 +3045,38 @@ describe('admin dashboard PostgreSQL reader', () => {
       Client: FakeClient
     });
 
-    const result = await service.updateProduct({
-      principal: {
-        id: 'admin-1',
-        roles: ['maintainer'],
-        tenantId: 'default',
-        pageId: 'page',
-        authMethod: 'static_bearer'
-      },
-      shopId: 'adult-shop',
-      productId: 'prod-1',
-      body: {
-        code: ' DB1 ',
-        name: ' Updated Product ',
-        price_text: ' 180k ',
-        description: ' new description ',
-        sort_order: '3'
-      }
-    });
+    let err = null;
+    try {
+      await service.updateProduct({
+        principal: {
+          id: 'admin-1',
+          roles: ['maintainer'],
+          tenantId: 'default',
+          pageId: 'page',
+          authMethod: 'static_bearer'
+        },
+        shopId: 'adult-shop',
+        productId: 'prod-1',
+        body: {
+          code: ' DB1 ',
+          name: ' Updated Product ',
+          price_text: ' 180k ',
+          description: ' new description ',
+          sort_order: '3'
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
 
     const updateQuery = queries.find(item => /^UPDATE shop_products/i.test(item.sql));
-    expect(result.product.name).toBe('Updated Product');
-    expect(result.product.price_text).toBe('180k');
+    expect(err && err.code).toBe('42P01');
     expect(Boolean(updateQuery)).toBeTrue();
     expect(updateQuery.params[2]).toBe('DB1');
     expect(updateQuery.params[3]).toBe('Updated Product');
     expect(queries.some(item => /^DELETE\b/i.test(item.sql))).toBeFalse();
-    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
   });
 });
 

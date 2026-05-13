@@ -219,7 +219,8 @@ function presentProductWriteError(err) {
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     product_not_found: ['product_not_found', 'Product was not found.', 404],
     permission_denied: ['permission_denied', 'Product write permission is required.', 403],
-    database_url_required: ['product_write_unavailable', 'Product writes are unavailable.', 503]
+    database_url_required: ['product_write_unavailable', 'Product writes are unavailable.', 503],
+    product_commit_failed: ['product_commit_failed', 'Product write could not be committed.', 500]
   }[code];
   if (safe) {
     return {

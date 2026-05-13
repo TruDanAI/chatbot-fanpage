@@ -46,7 +46,13 @@ function createState() {
   };
 }
 
-function makeClientClass({ state, queries, insertReturnsRow = true } = {}) {
+function makeClientClass({
+  state,
+  queries,
+  insertReturnsRow = true,
+  commitCommand = 'COMMIT',
+  failAuditCode = ''
+} = {}) {
   return class FakeClient {
     constructor() {
       this.inTransaction = false;
@@ -75,10 +81,12 @@ function makeClientClass({ state, queries, insertReturnsRow = true } = {}) {
         return { rows: [] };
       }
       if (normalized === 'COMMIT') {
-        state.products = cloneRows(this.txProducts);
+        if (commitCommand === 'COMMIT') {
+          state.products = cloneRows(this.txProducts);
+        }
         this.inTransaction = false;
         this.txProducts = null;
-        return { rows: [] };
+        return { rows: [], command: commitCommand };
       }
       if (normalized === 'ROLLBACK') {
         this.inTransaction = false;
@@ -156,6 +164,11 @@ function makeClientClass({ state, queries, insertReturnsRow = true } = {}) {
         return { rows: this.products.filter(row => row.shop_id === shopId) };
       }
       if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+        if (failAuditCode) {
+          const err = new Error(`raw PostgreSQL ${failAuditCode} relation "admin_audit_log" at postgres://secret`);
+          err.code = failAuditCode;
+          throw err;
+        }
         state.audits.push({ params });
         return { rows: [] };
       }
@@ -297,5 +310,54 @@ describe('product write persistence', () => {
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
     expect(state.products.some(product => product.code === 'ZB-SMOKE-FAKE')).toBeFalse();
+  });
+
+  it('does not return success when COMMIT reports ROLLBACK', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries, commitCommand: 'ROLLBACK' })
+    });
+
+    let err = null;
+    try {
+      await service.createProduct({
+        principal,
+        shopId: 'adult-shop',
+        body: { code: 'ZB-SMOKE-ROLLBACK', name: 'Smoke Rollback' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('product_commit_failed');
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
+    expect(state.products.some(product => product.code === 'ZB-SMOKE-ROLLBACK')).toBeFalse();
+  });
+
+  it('fails safe and rolls back when audit schema is missing', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries, failAuditCode: '42P01' })
+    });
+
+    let err = null;
+    try {
+      await service.createProduct({
+        principal,
+        shopId: 'adult-shop',
+        body: { code: 'ZB-SMOKE-AUDIT', name: 'Smoke Audit' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('42P01');
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+    expect(state.products.some(product => product.code === 'ZB-SMOKE-AUDIT')).toBeFalse();
   });
 });
