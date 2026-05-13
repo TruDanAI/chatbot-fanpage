@@ -9,6 +9,7 @@ const { pushLeadToSheet, startSheetOutboxWorker } = require('./core/sheets-webho
 const { loadProducts } = require('./core/products');
 const { createRuleEngine } = require('./core/rules');
 const { buildQuickReplies, resolveQuickReplyPayload } = require('./core/quick-replies');
+const { resolveShopConfigForPage } = require('./core/shops/db-shop-config');
 const { getAdminRequestToken, registerAdminRoutes } = require('./core/admin-routes');
 const { createAiClient } = require('./core/ai-client');
 const {
@@ -37,6 +38,7 @@ const {
 } = require('./core/bot-mode');
 
 const ROOT_DIR = __dirname;
+let multiShopDbPool = null;
 
 function normalizeShopId(raw) {
   const id = String(raw ?? 'adult-shop').trim();
@@ -86,6 +88,79 @@ function loadShopRuntime(rootDir) {
   });
 
   return { shopId, shopDir, config: mergedConfig, products };
+}
+
+function getDbAssetImageRuntime({ config, products, rules, sendCarousel }) {
+  const assets = config.__assets || {};
+  const menuImages = Array.isArray(assets.menuImages) ? assets.menuImages : [];
+  const productImagesByCode = assets.productImagesByCode || {};
+
+  function imageItem(asset) {
+    return {
+      file: asset.id || asset.storageKey || asset.publicUrl,
+      url: asset.url
+    };
+  }
+
+  function isGreetingText(text) {
+    const t = rules.normalizeText(text).trim();
+    return /^(?:(?:em|minh|toi)\s+)?(?:xin\s*)?(?:chao|hello|hi|alo|shop\s*oi|shop|em\s*oi|chi\s*oi|anh\s*oi)(?:\s+(?:shop|em|ban))?(?:\s+(?:a|nha|nhe|nhe\s*shop|nha\s*shop))?[.!?\s]*$/.test(t);
+  }
+
+  function isHotProductsText(text) {
+    const t = rules.normalizeText(text);
+    return /(?:ban\s*chay|\bhot\b|nhieu\s*nguoi\s*(?:hoi|mua)|duoc\s*hoi\s*nhieu|mau\s*nao\s*(?:duoc|ok|hot)|top|xu\s*huong)/.test(t);
+  }
+
+  function getMenuImageUrls() {
+    return menuImages.map(imageItem).filter(item => item.url);
+  }
+
+  function buildRequestedImageUrls(userText) {
+    const requestedCodes = rules.extractRequestedProductCodes(userText);
+    const images = [];
+    for (const code of requestedCodes) {
+      const key = String(code || '').toUpperCase();
+      const productImages = Array.isArray(productImagesByCode[key]) ? productImagesByCode[key] : [];
+      images.push(...productImages.map(imageItem));
+    }
+    return images.filter(item => item.url).slice(0, 6);
+  }
+
+  async function sendHotCarousel(senderId) {
+    const configuredCodes = Array.isArray(config.hotCarouselProductCodes) ? config.hotCarouselProductCodes : [];
+    const wantedCodes = configuredCodes.length ? configuredCodes : products.map(product => product.code);
+    const byCode = new Map(products.map(product => [String(product.code || '').toUpperCase(), product]));
+    const elements = [];
+    for (const code of wantedCodes) {
+      const product = byCode.get(String(code || '').toUpperCase());
+      if (!product) continue;
+      const image = (productImagesByCode[String(product.code || '').toUpperCase()] || [])[0];
+      if (!image?.url) continue;
+      elements.push({
+        title: `${product.code} - ${product.price}`.slice(0, 80),
+        subtitle: String(product.description || product.name || 'Mẫu đang được hỏi nhiều bên shop').slice(0, 80),
+        image_url: image.url,
+        buttons: [{
+          type: 'postback',
+          title: 'Tư vấn mã này',
+          payload: `Tư vấn ${product.code}`
+        }]
+      });
+      if (elements.length >= 10) break;
+    }
+    if (!elements.length) return false;
+    await sendCarousel(senderId, elements);
+    return true;
+  }
+
+  return {
+    buildRequestedImageUrls,
+    getMenuImageUrls,
+    isGreetingText,
+    isHotProductsText,
+    sendHotCarousel
+  };
 }
 
 let shopRuntime;
@@ -207,6 +282,29 @@ const PUBLIC_BASE_URL =
   (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
   process.env.RENDER_EXTERNAL_URL ||
   '';
+const MULTI_SHOP_DB_CONFIG_ENABLED = envBoolean('MULTI_SHOP_DB_CONFIG_ENABLED', false);
+const FILE_CONFIG_PAGE_IDS = envList('FB_PAGE_ID')
+  .concat(envList('PAGE_ID'))
+  .map(String)
+  .filter(Boolean);
+
+function getMultiShopDbPool() {
+  if (multiShopDbPool) return multiShopDbPool;
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    const err = new Error('DATABASE_URL is required for DB shop config.');
+    err.code = 'missing_database_url';
+    throw err;
+  }
+  const { Pool } = require('pg');
+  multiShopDbPool = new Pool({ connectionString: databaseUrl });
+  return multiShopDbPool;
+}
+
+function isKnownFileConfigPage(pageId) {
+  const normalized = String(pageId || '').trim();
+  return Boolean(normalized && FILE_CONFIG_PAGE_IDS.includes(normalized));
+}
 
 const required = { FB_VERIFY_TOKEN, FB_PAGE_TOKEN };
 if (REQUIRE_FB_APP_SECRET) {
@@ -357,6 +455,71 @@ const {
 });
 registerMediaRoutes(app);
 
+function buildDbShopRuntime(resolved) {
+  const dbConfig = applyBotModeConfig(resolved.config);
+  const dbProducts = resolved.products || [];
+  const dbRules = createRuleEngine({
+    products: dbProducts,
+    config: dbConfig,
+    contextStore: {
+      getLastProductCode: userId => storage.getLastProductCode(userId),
+      setLastProductCode: (userId, code) => storage.setLastProductCode(userId, code),
+      getOrderDraft: userId => storage.getOrderDraft(userId),
+      mergeOrderDraft: (userId, details) => storage.mergeOrderDraft(userId, details),
+      getSessionState: userId => storage.getSessionState(userId),
+      setSessionState: (userId, state) => storage.setSessionState(userId, state),
+      clearOrderDraft: userId => storage.clearOrderDraft(userId)
+    }
+  });
+  const dbImages = getDbAssetImageRuntime({
+    config: dbConfig,
+    products: dbProducts,
+    rules: dbRules,
+    sendCarousel
+  });
+
+  return {
+    shopConfig: dbConfig,
+    useGemini: USE_GEMINI && isAiFallbackEnabled(dbConfig),
+    buildDeterministicReply: dbRules.buildDeterministicReply,
+    buildFallbackReply: dbRules.buildFallbackReply,
+    extractRequestedProductCodes: dbRules.extractRequestedProductCodes,
+    looksLikePhone: dbRules.looksLikePhone,
+    shouldSilenceAfterCompleteOrder: dbRules.shouldSilenceAfterCompleteOrder,
+    wantsHuman: dbRules.wantsHuman,
+    normalizeText: dbRules.normalizeText,
+    render: dbRules.render,
+    deriveSessionState: dbRules.deriveSessionState,
+    STATES: dbRules.STATES,
+    getMenuImageUrls: dbImages.getMenuImageUrls,
+    buildRequestedImageUrls: dbImages.buildRequestedImageUrls,
+    isGreetingText: dbImages.isGreetingText,
+    isHotProductsText: dbImages.isHotProductsText,
+    sendHotCarousel: dbImages.sendHotCarousel
+  };
+}
+
+async function resolveDbShopRuntimeForPage({ pageId } = {}) {
+  const normalizedPageId = String(pageId || '').trim();
+  const result = await resolveShopConfigForPage({
+    pageId: normalizedPageId,
+    tenantId: process.env.TENANT_ID || 'default',
+    db: getMultiShopDbPool()
+  });
+
+  if (!result.found) {
+    if (result.reason === 'missing_page_id') return { failClosed: true, reason: result.reason };
+    if (isKnownFileConfigPage(normalizedPageId)) return { reason: result.reason };
+    return { failClosed: true, reason: result.reason };
+  }
+
+  if (!result.products.length) return { failClosed: true, reason: 'db_products_empty' };
+  const modeName = String(result.config?.botMode?.name || '').trim();
+  if (modeName === 'disabled') return { failClosed: true, reason: 'db_bot_mode_disabled' };
+  if (modeName !== 'menu_code_handoff') return { failClosed: true, reason: 'db_bot_mode_unsupported' };
+  return buildDbShopRuntime(result);
+}
+
 const {
   scanAbandonedCartReminders,
   scanEngagedFollowUpReminders,
@@ -431,7 +594,8 @@ const { registerWebhookRoutes } = createWebhook({
   recordConversationTurn,
   trackEvent,
   maybeResetTimedOutSession,
-  redactSensitiveText
+  redactSensitiveText,
+  resolveRuntimeForPage: MULTI_SHOP_DB_CONFIG_ENABLED ? resolveDbShopRuntimeForPage : undefined
 });
 registerWebhookRoutes(app);
 
@@ -477,6 +641,7 @@ function shutdown(signal) {
 
   server.close(() => {
     Promise.resolve(storage.close?.())
+      .then(() => multiShopDbPool ? multiShopDbPool.end() : undefined)
       .catch(err => console.error('❌ Lỗi đóng storage:', err.message))
       .finally(() => {
         console.log('✅ Server đã dừng gọn.');

@@ -54,7 +54,8 @@ function createWebhook({
   recordConversationTurn,
   trackEvent,
   maybeResetTimedOutSession,
-  redactSensitiveText
+  redactSensitiveText,
+  resolveRuntimeForPage
 }) {
   function verifySignature(req) {
     if (!fbAppSecret) return true;
@@ -102,37 +103,140 @@ function createWebhook({
     return /(?:khong\s*hieu|tra\s*loi\s*gi|noi\s*gi|bot|tu\s*van\s*te|hoi\s*mai|lau\s*the|buc\s*minh|kho\s*chiu|lua\s*dao|chan\s*the|mat\s*thoi\s*gian)/.test(t);
   }
 
-  function shouldTrackEngagedFollowUp(text, payload = '') {
+  function shouldTrackEngagedFollowUp(text, payload = '', extractCodes = extractRequestedProductCodes) {
     const normalized = normalizeText(text);
     if (!normalized) return false;
     if (String(payload || '').trim()) return true;
-    if (extractRequestedProductCodes(text).length) return true;
+    if (extractCodes(text).length) return true;
     return /(?:ma|mau|gia|tu van|goi y|bao nhieu|ship|dia chi|chot|dat|mua|order|combo|hang|san pham|menu)/.test(normalized);
   }
 
-  const effectiveUseGemini = useGemini && isAiFallbackEnabled(shopConfig);
-  const leadCaptureEnabled = isLeadCaptureEnabled(shopConfig);
-  const orderFlowEnabled = isOrderFlowEnabled(shopConfig);
-  const productCodeLookupEnabled = isProductCodeLookupEnabled(shopConfig);
-  const menuCodeHandoffMode = isMenuCodeHandoffMode(shopConfig);
-  const menuCodeHandoffHandler = menuCodeHandoffMode
-    ? createMenuCodeHandoffHandler({
-        storage,
-        shopConfig,
-        handoffMs,
-        productCodeLookupEnabled,
-        buildDeterministicReply,
-        extractRequestedProductCodes,
-        normalizeText,
-        sendMessage,
-        sendImage,
-        showTyping,
-        isGreetingText,
-        getMenuImageUrls,
-        buildRequestedImageUrls,
-        redactSensitiveText
-      })
-    : null;
+  const defaultRuntime = {
+    storage,
+    shopConfig,
+    useGemini,
+    resolveQuickReplyPayload,
+    buildQuickReplies,
+    buildDeterministicReply,
+    buildFallbackReply,
+    buildLeadDetails,
+    buildConfirmedSheetLead,
+    extractRequestedProductCodes,
+    captureHandoffOrderUpdate,
+    notifyStaffForReadyOrder,
+    looksLikePhone,
+    shouldSilenceAfterCompleteOrder,
+    wantsHuman,
+    normalizeText,
+    render,
+    deriveSessionState,
+    STATES,
+    callGemini,
+    getGeminiErrorInfo,
+    shouldUseFallbackReply,
+    isProbablyIncompleteReply,
+    sendMessage,
+    sendQuickReplies,
+    sendImage,
+    showTyping,
+    sendHotCarousel,
+    isGreetingText,
+    isHotProductsText,
+    getMenuImageUrls,
+    buildRequestedImageUrls,
+    pushLeadToSheet,
+    sendTelegramAlert,
+    sendTelegramOperationalAlert,
+    resetFallbackAttention,
+    trackFallbackAttention,
+    recordConversationTurn,
+    trackEvent,
+    maybeResetTimedOutSession,
+    redactSensitiveText
+  };
+
+  function createRuntimeMenuCodeHandoffHandler(runtime) {
+    const productCodeLookupEnabled = isProductCodeLookupEnabled(runtime.shopConfig);
+    return createMenuCodeHandoffHandler({
+      storage: runtime.storage,
+      shopConfig: runtime.shopConfig,
+      handoffMs,
+      productCodeLookupEnabled,
+      buildDeterministicReply: runtime.buildDeterministicReply,
+      extractRequestedProductCodes: runtime.extractRequestedProductCodes,
+      normalizeText: runtime.normalizeText,
+      sendMessage: runtime.sendMessage,
+      sendImage: runtime.sendImage,
+      showTyping: runtime.showTyping,
+      isGreetingText: runtime.isGreetingText,
+      getMenuImageUrls: runtime.getMenuImageUrls,
+      buildRequestedImageUrls: runtime.buildRequestedImageUrls,
+      redactSensitiveText: runtime.redactSensitiveText
+    });
+  }
+
+  function materializeRuntime(overrides = {}) {
+    const runtime = { ...defaultRuntime, ...overrides };
+    runtime.effectiveUseGemini = runtime.useGemini && isAiFallbackEnabled(runtime.shopConfig);
+    runtime.leadCaptureEnabled = isLeadCaptureEnabled(runtime.shopConfig);
+    runtime.orderFlowEnabled = isOrderFlowEnabled(runtime.shopConfig);
+    runtime.productCodeLookupEnabled = isProductCodeLookupEnabled(runtime.shopConfig);
+    runtime.menuCodeHandoffMode = isMenuCodeHandoffMode(runtime.shopConfig);
+    runtime.menuCodeHandoffHandler = runtime.menuCodeHandoffMode
+      ? (runtime.menuCodeHandoffHandler || createRuntimeMenuCodeHandoffHandler(runtime))
+      : null;
+    return runtime;
+  }
+
+  const staticRuntime = materializeRuntime();
+
+  function safeLogReason(reason) {
+    const value = String(reason || 'unknown').trim().toLowerCase();
+    return value.replace(/[^a-z0-9_.:-]/g, '_').slice(0, 80) || 'unknown';
+  }
+
+  function safePageLabel(pageId) {
+    const value = String(pageId || '').trim();
+    if (!value) return 'missing';
+    return value.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 80);
+  }
+
+  function getEventPageId(event, options = {}) {
+    return String(
+      options.pageId
+      || event.recipient?.id
+      || event.page_id
+      || event.pageId
+      || ''
+    ).trim();
+  }
+
+  async function resolveEventRuntime(event, options = {}) {
+    const pageId = getEventPageId(event, options);
+    if (typeof resolveRuntimeForPage !== 'function') return staticRuntime;
+
+    try {
+      const resolved = await resolveRuntimeForPage({
+        pageId,
+        event,
+        fallbackRuntime: staticRuntime
+      });
+      if (!resolved) return staticRuntime;
+      if (resolved.failClosed) {
+        console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_id=${safePageLabel(pageId)}`);
+        return { failClosed: true };
+      }
+      if (resolved.shopConfig) return materializeRuntime(resolved);
+      if (resolved.reason) {
+        console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(resolved.reason)} page_id=${safePageLabel(pageId)}`);
+      }
+      return staticRuntime;
+    } catch (err) {
+      const reason = err && (err.code || err.reason) ? (err.code || err.reason) : 'resolver_error';
+      console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(reason)} page_id=${safePageLabel(pageId)}`);
+      return staticRuntime;
+    }
+  }
 
   function registerWebhookRoutes(app) {
     app.get('/webhook', (req, res) => {
@@ -162,7 +266,7 @@ function createWebhook({
       for (const entry of body.entry || []) {
         for (const event of entry.messaging || []) {
           const inferredBaseUrl = inferBaseUrlFromRequest(req);
-          handleEvent(event, inferredBaseUrl).catch(err => {
+          handleEvent(event, inferredBaseUrl, { pageId: entry.id }).catch(err => {
             console.error('❌ handleEvent:', err.response?.data || err.message);
           });
         }
@@ -170,7 +274,7 @@ function createWebhook({
     });
   }
 
-  async function handleEvent(event, baseUrlOverride = '') {
+  async function handleEvent(event, baseUrlOverride = '', options = {}) {
     const senderId = event.sender?.id;
     if (!senderId) return;
 
@@ -190,6 +294,56 @@ function createWebhook({
     const mid = event.message?.mid;
     if (mid && storage.seenMid(mid)) return;
     if (mid) storage.markMid(mid);
+
+    const runtime = await resolveEventRuntime(event, options);
+    if (runtime.failClosed) return;
+
+    const {
+      shopConfig,
+      effectiveUseGemini,
+      leadCaptureEnabled,
+      orderFlowEnabled,
+      menuCodeHandoffMode,
+      menuCodeHandoffHandler,
+      resolveQuickReplyPayload,
+      buildQuickReplies,
+      buildDeterministicReply,
+      buildFallbackReply,
+      buildLeadDetails,
+      buildConfirmedSheetLead,
+      extractRequestedProductCodes,
+      captureHandoffOrderUpdate,
+      notifyStaffForReadyOrder,
+      looksLikePhone,
+      shouldSilenceAfterCompleteOrder,
+      wantsHuman,
+      normalizeText,
+      render,
+      deriveSessionState,
+      STATES,
+      callGemini,
+      getGeminiErrorInfo,
+      shouldUseFallbackReply,
+      isProbablyIncompleteReply,
+      sendMessage,
+      sendQuickReplies,
+      sendImage,
+      showTyping,
+      sendHotCarousel,
+      isGreetingText,
+      isHotProductsText,
+      getMenuImageUrls,
+      buildRequestedImageUrls,
+      pushLeadToSheet,
+      sendTelegramAlert,
+      sendTelegramOperationalAlert,
+      resetFallbackAttention,
+      trackFallbackAttention,
+      recordConversationTurn,
+      trackEvent,
+      maybeResetTimedOutSession,
+      redactSensitiveText
+    } = runtime;
 
     const adsReferralEvent = menuCodeHandoffHandler?.isAdsReferralEvent(event) === true;
 
@@ -232,7 +386,7 @@ function createWebhook({
     }
 
     maybeResetTimedOutSession(senderId, userText);
-    if (typeof storage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload)) {
+    if (typeof storage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload, extractRequestedProductCodes)) {
       storage.setEngagedFollowUp(senderId, {
         at: new Date().toISOString(),
         note: userText

@@ -90,23 +90,26 @@ function buildAdultRuntimeConfig() {
   });
 }
 
-function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`) {
+function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`, pageId = '') {
   return {
     sender: { id: senderId },
+    ...(pageId ? { recipient: { id: pageId } } : {}),
     message: { mid, text }
   };
 }
 
-function makeReferralEvent(senderId = 'sender_1', source = 'ADS') {
+function makeReferralEvent(senderId = 'sender_1', source = 'ADS', pageId = '') {
   return {
     sender: { id: senderId },
+    ...(pageId ? { recipient: { id: pageId } } : {}),
     referral: { source, ad_id: 'ad_test', ref: 'ref_test' }
   };
 }
 
-function makeMessageWithReferral(text, senderId = 'sender_1', source = 'ADS', mid = `mid_${Math.random()}`) {
+function makeMessageWithReferral(text, senderId = 'sender_1', source = 'ADS', mid = `mid_${Math.random()}`, pageId = '') {
   return {
     sender: { id: senderId },
+    ...(pageId ? { recipient: { id: pageId } } : {}),
     message: {
       mid,
       text,
@@ -213,12 +216,13 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
       eventCalls += 1;
     },
     maybeResetTimedOutSession: () => {},
-    redactSensitiveText: text => text
+    redactSensitiveText: text => text,
+    resolveRuntimeForPage: options.resolveRuntimeForPage
   });
 
   return {
-    handleText: (text, senderId = 'sender_1', mid) => webhook.handleEvent(makeEvent(text, senderId, mid), 'https://example.test'),
-    handleReferral: (senderId = 'sender_1', source = 'ADS') => webhook.handleEvent(makeReferralEvent(senderId, source), 'https://example.test'),
+    handleText: (text, senderId = 'sender_1', mid, pageId = '') => webhook.handleEvent(makeEvent(text, senderId, mid, pageId), 'https://example.test'),
+    handleReferral: (senderId = 'sender_1', source = 'ADS', pageId = '') => webhook.handleEvent(makeReferralEvent(senderId, source, pageId), 'https://example.test'),
     handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid) =>
       webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid), 'https://example.test'),
     sent,
@@ -236,7 +240,120 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   };
 }
 
+function buildDbRuntimeForWebhook(fallbackRuntime, overrides = {}) {
+  const dbProducts = overrides.products || [{
+    code: 'MÃ99',
+    price: '999k',
+    description: 'DB only product',
+    size: '',
+    weight: '',
+    gift: '',
+    preorder: false,
+    imageFile: ''
+  }];
+  const dbConfig = applyBotModeConfig({
+    ...shopConfig,
+    shopName: 'DB Shop',
+    botMode: {
+      ...(shopConfig.botMode || {}),
+      name: 'menu_code_handoff',
+      aiFallbackEnabled: false,
+      orderFlowEnabled: false,
+      leadCaptureEnabled: false,
+      productCodeLookupEnabled: true,
+      handoffMessage: 'DB handoff message'
+    },
+    ...(overrides.config || {})
+  });
+  const dbRules = createRuleEngine({
+    products: dbProducts,
+    config: dbConfig,
+    contextStore: fallbackRuntime.storage
+  });
+
+  return {
+    shopConfig: dbConfig,
+    useGemini: false,
+    buildDeterministicReply: dbRules.buildDeterministicReply,
+    buildFallbackReply: dbRules.buildFallbackReply,
+    extractRequestedProductCodes: dbRules.extractRequestedProductCodes,
+    looksLikePhone: dbRules.looksLikePhone,
+    shouldSilenceAfterCompleteOrder: dbRules.shouldSilenceAfterCompleteOrder,
+    wantsHuman: dbRules.wantsHuman,
+    normalizeText: dbRules.normalizeText,
+    render: dbRules.render,
+    deriveSessionState: dbRules.deriveSessionState,
+    STATES: dbRules.STATES,
+    getMenuImageUrls: () => [{ file: 'db-menu.png', url: 'https://cdn.example.test/db-menu.png' }],
+    buildRequestedImageUrls: () => [{ file: 'db-product.png', url: 'https://cdn.example.test/db-product.png' }],
+    isGreetingText: fallbackRuntime.isGreetingText,
+    isHotProductsText: fallbackRuntime.isHotProductsText,
+    sendHotCarousel: async () => false
+  };
+}
+
 describe('webhook: menu_code_handoff mode', () => {
+  it('uses file config path unchanged when no runtime resolver is provided', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('chào shop', 'flag_off_file_path', 'm_flag_off', 'page_file');
+
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].url).toContain('menu2.png');
+  });
+
+  it('uses DB runtime config when resolver returns a page config', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async ({ pageId, fallbackRuntime }) => {
+        expect(pageId).toBe('page_db');
+        return buildDbRuntimeForWebhook(fallbackRuntime);
+      }
+    });
+
+    await h.handleText('cho xem MÃ99', 'db_runtime_user', 'm_db_runtime', 'page_db');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('db-product.png'))).toBeTrue();
+    expect(textMessages[0]).toContain('999k');
+    expect(textMessages[1]).toBe('DB handoff message');
+    expect(JSON.stringify(h.sent).includes('680k')).toBeFalse();
+  });
+
+  it('fails closed on unresolved DB page without sending file shop content', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'page_not_found' })
+    });
+
+    await h.handleText('chào shop', 'db_missing_page', 'm_db_missing', 'unknown_page');
+
+    expect(h.sent.length).toBe(0);
+  });
+
+  it('falls back safely on DB resolver errors without logging secrets', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        resolveRuntimeForPage: async () => {
+          throw new Error('postgres://user:secret@example.test/db');
+        }
+      });
+
+      await h.handleText('chào shop', 'db_error_fallback', 'm_db_error', 'page_file');
+
+      expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+      expect(warnings.join('\n').includes('secret')).toBeFalse();
+      expect(warnings.join('\n')).toContain('resolver_error');
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   it('greeting sends price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
