@@ -30,6 +30,35 @@ function createMockStorage() {
 }
 
 describe('reminder service: engaged follow-up worker', () => {
+  it('keeps engaged follow-up disabled by default', async () => {
+    const storage = createMockStorage();
+    storage.state.candidates = [{
+      userId: 'u_default_off',
+      idleMs: 2 * 60 * 60 * 1000 + 1000,
+      lastProductCode: 'MÃ8'
+    }];
+    let sendCount = 0;
+    const service = createReminderService({
+      storage,
+      shopConfig: {},
+      buildAbandonedCartReminderText: () => '',
+      buildQuickReplies: () => [{ title: 'Xem mẫu hot', payload: 'HOT_PRODUCTS' }],
+      sendQuickReplies: async () => {
+        sendCount += 1;
+      },
+      deriveSessionState: () => 'PRODUCT_SELECTED',
+      STATES: { CONFIRMED: 'CONFIRMED' },
+      trackEvent: () => {}
+    });
+
+    const count = await service.scanEngagedFollowUpReminders({
+      idleMs: 2 * 60 * 60 * 1000
+    });
+    expect(count).toBe(0);
+    expect(sendCount).toBe(0);
+    expect(storage.state.sent.length).toBe(0);
+  });
+
   it('sends engaged follow-up once for eligible candidate', async () => {
     const storage = createMockStorage();
     storage.state.candidates = [{

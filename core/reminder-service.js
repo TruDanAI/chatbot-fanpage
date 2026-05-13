@@ -14,7 +14,7 @@ function createReminderService({
     reminderMs = 20 * 60 * 1000,
     scanMs = 60 * 1000,
     maxAgeMs = 23 * 60 * 60 * 1000,
-    engagedFollowUpEnabled = true,
+    engagedFollowUpEnabled = false,
     engagedFollowUpMs = 2 * 60 * 60 * 1000,
     engagedFollowUpScanMs = 60 * 1000,
     engagedFollowUpMaxAgeMs = 3 * 24 * 60 * 60 * 1000
@@ -145,6 +145,8 @@ function createReminderService({
   }
 
   async function scanEngagedFollowUpReminders(options = {}) {
+    const enabled = options.enabled == null ? engagedFollowUpEnabled : Boolean(options.enabled);
+    if (!enabled) return 0;
     if (engagedFollowUpReminderRunning) return 0;
     engagedFollowUpReminderRunning = true;
     let sent = 0;
