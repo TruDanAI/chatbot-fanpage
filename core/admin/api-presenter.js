@@ -22,6 +22,29 @@ function compactObject(value = {}) {
   );
 }
 
+const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|authorization|cookie|credential|api[_-]?key|access[_-]?key|private[_-]?key|customer|phone|address|email)/i;
+
+function sanitizeAdminValue(value, key = '', depth = 0) {
+  if (SENSITIVE_KEY_PATTERN.test(String(key || ''))) return '[redacted]';
+  if (value == null) return value;
+  if (depth > 6) return '[truncated]';
+  if (typeof value === 'string') return limitText(value, 500);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 80).map(item => sanitizeAdminValue(item, key, depth + 1));
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 100)
+        .filter(([childKey]) => !SENSITIVE_KEY_PATTERN.test(String(childKey || '')))
+        .map(([childKey, childValue]) => [
+          childKey,
+          sanitizeAdminValue(childValue, childKey, depth + 1)
+        ])
+    );
+  }
+  return limitText(value, 500);
+}
+
 function presentFilters(filters = {}) {
   return {
     ...filters,
@@ -286,11 +309,122 @@ function presentInternalNotesApi(model = {}) {
   };
 }
 
+function presentShopListItem(shop = {}) {
+  return {
+    id: shop.id || '',
+    slug: shop.slug || '',
+    name: limitText(shop.name, 120),
+    status: shop.status || '',
+    page_count: Number(shop.page_count || 0),
+    active_page_count: Number(shop.active_page_count || 0),
+    product_count: Number(shop.product_count || 0),
+    asset_count: Number(shop.asset_count || 0),
+    bot_mode: shop.bot_mode || '',
+    updated_at: shop.updated_at || ''
+  };
+}
+
+function presentShopPage(page = {}) {
+  return {
+    id: page.id || '',
+    page_id: page.page_id || '',
+    page_name: limitText(page.page_name, 120),
+    status: page.status || '',
+    created_at: page.created_at || '',
+    updated_at: page.updated_at || ''
+  };
+}
+
+function presentShopSettings(settings = {}) {
+  return {
+    bot_mode: settings.bot_mode || '',
+    handoff_enabled: Boolean(settings.handoff_enabled),
+    handoff_message: limitText(settings.handoff_message, 500),
+    menu_intro_text: limitText(settings.menu_intro_text, 500),
+    fallback_text: limitText(settings.fallback_text, 500),
+    settings_json: sanitizeAdminValue(settings.settings_json || {}),
+    updated_at: settings.updated_at || ''
+  };
+}
+
+function presentShopProduct(product = {}) {
+  return {
+    id: product.id || '',
+    code: product.code || '',
+    name: limitText(product.name, 120),
+    description: limitText(product.description, 500),
+    price: product.price == null ? null : String(product.price),
+    currency: product.currency || '',
+    status: product.status || '',
+    sort_order: Number(product.sort_order || 0),
+    metadata_json: sanitizeAdminValue(product.metadata_json || {}),
+    updated_at: product.updated_at || ''
+  };
+}
+
+function presentShopAsset(asset = {}) {
+  return {
+    id: asset.id || '',
+    product_id: asset.product_id || '',
+    product_code: asset.product_code || '',
+    asset_type: asset.asset_type || '',
+    storage_provider: asset.storage_provider || '',
+    public_url: asset.public_url || '',
+    content_type: asset.content_type || '',
+    size_bytes: asset.size_bytes == null ? null : Number(asset.size_bytes),
+    status: asset.status || '',
+    sort_order: Number(asset.sort_order || 0),
+    updated_at: asset.updated_at || ''
+  };
+}
+
+function presentShopAssetsSummary(summary = {}) {
+  return Object.fromEntries(
+    Object.entries(summary).map(([key, value]) => [key, Number(value || 0)])
+  );
+}
+
+function presentShopsApi(model = {}) {
+  return {
+    schemaReady: model.schemaReady !== false,
+    shops: (model.shops || []).map(presentShopListItem),
+    ...(model.message ? { message: limitText(model.message, 160) } : {})
+  };
+}
+
+function presentShopDetailApi(model = {}) {
+  const shop = model.shop ? {
+    id: model.shop.id || '',
+    slug: model.shop.slug || '',
+    name: limitText(model.shop.name, 120),
+    status: model.shop.status || '',
+    default_locale: model.shop.default_locale || '',
+    timezone: model.shop.timezone || '',
+    created_at: model.shop.created_at || '',
+    updated_at: model.shop.updated_at || ''
+  } : null;
+
+  return {
+    schemaReady: model.schemaReady !== false,
+    shop,
+    pages: (model.pages || []).map(presentShopPage),
+    settings: model.settings ? presentShopSettings(model.settings) : null,
+    products: (model.products || []).map(presentShopProduct),
+    assets: {
+      summary: presentShopAssetsSummary(model.assets?.summary || {}),
+      rows: (model.assets?.rows || []).map(presentShopAsset)
+    },
+    ...(model.message ? { message: limitText(model.message, 160) } : {})
+  };
+}
+
 module.exports = {
   maskSensitiveText,
   presentAuditApi,
   presentDashboardApi,
   presentInternalNotesApi,
   presentOperations,
+  presentShopDetailApi,
+  presentShopsApi,
   presentUserDetailApi
 };

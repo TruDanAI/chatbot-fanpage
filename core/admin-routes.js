@@ -283,6 +283,10 @@ function registerAdminRoutes(app, {
     sendDashboard,
     sendDashboardApi,
     sendInternalNotesApi,
+    sendShopDetail,
+    sendShopDetailApi,
+    sendShops,
+    sendShopsApi,
     sendUserDetail,
     sendUserDetailApi
   } = createAdminReadHandlers({
@@ -365,12 +369,16 @@ function registerAdminRoutes(app, {
   app.post('/admin/logout', submitLogout);
   app.get('/admin/api/dashboard', sendDashboardApi);
   app.get('/admin/api/dashboard/users/:senderId', sendUserDetailApi);
+  app.get('/admin/api/shops', sendShopsApi);
+  app.get('/admin/api/shops/:shopId', sendShopDetailApi);
   app.get('/admin/api/audit', sendAuditLogApi);
   app.get('/admin/api/internal-notes', sendInternalNotesApi);
   app.post('/admin/api/internal-notes', createInternalNoteApi);
   app.get('/admin/dashboard', sendDashboard);
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
+  app.get('/admin/shops', sendShops);
+  app.get('/admin/shops/:shopId', sendShopDetail);
   app.post('/admin/dashboard/users/:senderId/notes', createInternalNoteHtml);
   app.get('/admin/db/users/:senderId', sendUserDetail);
   app.get('/admin/audit', sendAuditLog);

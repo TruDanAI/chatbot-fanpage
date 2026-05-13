@@ -158,8 +158,19 @@ function createPostgresDashboardReader({
     return withClient(client => repository.getAuditLog(client, filters));
   }
 
+  async function getShops() {
+    return withClient(client => repository.getShops(client));
+  }
+
+  async function getShopDetail(shopId) {
+    const normalizedShopId = String(shopId || '').trim().slice(0, 160);
+    return withClient(client => repository.getShopDetail(client, normalizedShopId));
+  }
+
   return {
     getOverview,
+    getShopDetail,
+    getShops,
     getUserDetail,
     getAuditLog
   };

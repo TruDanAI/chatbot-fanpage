@@ -470,6 +470,105 @@ function renderAuditHtml(model) {
   return renderLayout('Admin Audit Log', body);
 }
 
+function renderShopsHtml(model = {}) {
+  const shops = model.shops || [];
+  const body = `
+    <p><a href="/admin/dashboard">Back to dashboard</a></p>
+    ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
+    <h2>Shops</h2>
+    ${renderTable(['shop', 'status', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
+      <tr>
+        <td><a href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(shop.name || shop.slug || shop.id)}</a><br><span class="meta"><code>${escapeHtml(shop.id)}</code> ${escapeHtml(shop.slug)}</span></td>
+        <td>${renderStatus(shop.status)}</td>
+        <td>${escapeHtml(shop.active_page_count || 0)} / ${escapeHtml(shop.page_count || 0)}</td>
+        <td>${escapeHtml(shop.product_count || 0)}</td>
+        <td>${escapeHtml(shop.asset_count || 0)}</td>
+        <td>${escapeHtml(shop.bot_mode || '')}</td>
+        <td>${escapeHtml(formatDate(shop.updated_at))}</td>
+      </tr>
+    `)}
+  `;
+  return renderLayout('Admin Shops', body);
+}
+
+function renderJsonBlock(value = {}) {
+  const json = JSON.stringify(value || {}, null, 2);
+  if (!json || json === '{}') return '<div class="empty">Không có dữ liệu.</div>';
+  return `<pre class="empty">${escapeHtml(json)}</pre>`;
+}
+
+function renderShopDetailHtml(model = {}) {
+  const shop = model.shop || {};
+  const assets = model.assets || {};
+  const summary = assets.summary || {};
+  const body = `
+    <p><a href="/admin/shops">Back to shops</a></p>
+    ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
+    ${!shop.id && model.schemaReady !== false ? '<div class="empty">Không tìm thấy shop.</div>' : ''}
+    ${shop.id ? `
+      <p class="meta">Shop <code>${escapeHtml(shop.id)}</code> | slug <code>${escapeHtml(shop.slug)}</code> | updated ${escapeHtml(formatDate(shop.updated_at))}</p>
+
+      <h2>Metadata</h2>
+      <table><tbody>
+        <tr><th>Name</th><td>${escapeHtml(shop.name)}</td></tr>
+        <tr><th>Status</th><td>${renderStatus(shop.status)}</td></tr>
+        <tr><th>Locale</th><td>${escapeHtml(shop.default_locale)}</td></tr>
+        <tr><th>Timezone</th><td>${escapeHtml(shop.timezone)}</td></tr>
+        <tr><th>Created</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
+      </tbody></table>
+
+      <h2>Page Mappings</h2>
+      ${renderTable(['page id', 'name', 'status', 'updated'], model.pages || [], page => `
+        <tr>
+          <td><code>${escapeHtml(page.page_id)}</code></td>
+          <td>${escapeHtml(page.page_name)}</td>
+          <td>${renderStatus(page.status)}</td>
+          <td>${escapeHtml(formatDate(page.updated_at))}</td>
+        </tr>
+      `)}
+
+      <h2>Settings</h2>
+      <table><tbody>
+        <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
+        <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
+        <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
+        <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
+        <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+        <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
+      </tbody></table>
+      <h2>Settings JSON</h2>
+      ${renderJsonBlock(model.settings?.settings_json || {})}
+
+      <h2>Products</h2>
+      ${renderTable(['code', 'name', 'status', 'price', 'sort', 'updated'], model.products || [], product => `
+        <tr>
+          <td><code>${escapeHtml(product.code)}</code></td>
+          <td>${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
+          <td>${renderStatus(product.status)}</td>
+          <td>${escapeHtml([product.price, product.currency].filter(Boolean).join(' '))}</td>
+          <td>${escapeHtml(product.sort_order || 0)}</td>
+          <td>${escapeHtml(formatDate(product.updated_at))}</td>
+        </tr>
+      `)}
+
+      <h2>Assets</h2>
+      ${renderCounts(summary)}
+      ${renderTable(['type', 'product', 'provider', 'url', 'status', 'size', 'updated'], assets.rows || [], asset => `
+        <tr>
+          <td>${escapeHtml(asset.asset_type)}</td>
+          <td>${escapeHtml(asset.product_code || asset.product_id || '')}</td>
+          <td>${escapeHtml(asset.storage_provider)}</td>
+          <td>${asset.public_url ? `<a href="${escapeHtml(asset.public_url)}" rel="noreferrer">${escapeHtml(limitText(asset.public_url, 90))}</a>` : ''}</td>
+          <td>${renderStatus(asset.status)}</td>
+          <td>${escapeHtml(asset.size_bytes ?? '')}</td>
+          <td>${escapeHtml(formatDate(asset.updated_at))}</td>
+        </tr>
+      `)}
+    ` : ''}
+  `;
+  return renderLayout('Admin Shop Detail', body);
+}
+
 function renderUserDetailHtml(model) {
   const itemsByOrder = new Map();
   for (const item of model.orderItems) {
@@ -544,5 +643,7 @@ module.exports = {
   renderAuditHtml,
   renderDashboardHtml,
   renderLoginHtml,
+  renderShopDetailHtml,
+  renderShopsHtml,
   renderUserDetailHtml
 };

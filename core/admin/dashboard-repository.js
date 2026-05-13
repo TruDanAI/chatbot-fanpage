@@ -36,6 +36,10 @@ function isMissingAuditSchemaError(err) {
   return err && ['42P01', '42703'].includes(String(err.code || ''));
 }
 
+function isMissingMultiShopSchemaError(err) {
+  return err && ['42P01', '42703'].includes(String(err.code || ''));
+}
+
 function createPageMeta({ page = 1, limit = 25, offset = 0, total = 0 } = {}) {
   const safeTotal = Number(total || 0);
   const safeLimit = Number(limit || 1);
@@ -58,6 +62,181 @@ function createDashboardRepository({
   pageId = '',
   limits = {}
 } = {}) {
+  function createEmptyShopsModel(message = 'Multi-shop schema is not ready.') {
+    return {
+      schemaReady: false,
+      shops: [],
+      message
+    };
+  }
+
+  function createEmptyShopDetailModel(message = 'Multi-shop schema is not ready.') {
+    return {
+      schemaReady: false,
+      shop: null,
+      pages: [],
+      settings: null,
+      products: [],
+      assets: {
+        summary: {},
+        rows: []
+      },
+      message
+    };
+  }
+
+  async function getShops(client) {
+    try {
+      const result = await client.query(`
+        SELECT
+          s.id,
+          s.slug,
+          s.name,
+          s.status,
+          COALESCE(pages.page_count, 0)::int AS page_count,
+          COALESCE(pages.active_page_count, 0)::int AS active_page_count,
+          COALESCE(products.product_count, 0)::int AS product_count,
+          COALESCE(assets.asset_count, 0)::int AS asset_count,
+          COALESCE(ss.bot_mode, '') AS bot_mode,
+          s.updated_at
+        FROM shops s
+        LEFT JOIN shop_settings ss ON ss.shop_id = s.id
+        LEFT JOIN (
+          SELECT shop_id,
+                 COUNT(*)::int AS page_count,
+                 COUNT(*) FILTER (WHERE status = 'active')::int AS active_page_count
+          FROM shop_pages
+          GROUP BY shop_id
+        ) pages ON pages.shop_id = s.id
+        LEFT JOIN (
+          SELECT shop_id, COUNT(*)::int AS product_count
+          FROM shop_products
+          GROUP BY shop_id
+        ) products ON products.shop_id = s.id
+        LEFT JOIN (
+          SELECT shop_id, COUNT(*)::int AS asset_count
+          FROM shop_assets
+          GROUP BY shop_id
+        ) assets ON assets.shop_id = s.id
+        ORDER BY s.updated_at DESC, s.id ASC
+      `, []);
+      return {
+        schemaReady: true,
+        shops: result.rows
+      };
+    } catch (err) {
+      if (!isMissingMultiShopSchemaError(err)) throw err;
+      return createEmptyShopsModel();
+    }
+  }
+
+  async function getShopDetail(client, shopId) {
+    const normalizedShopId = String(shopId || '').trim().slice(0, 160);
+    if (!normalizedShopId) {
+      return {
+        schemaReady: true,
+        shop: null,
+        pages: [],
+        settings: null,
+        products: [],
+        assets: { summary: {}, rows: [] }
+      };
+    }
+
+    try {
+      const shopResult = await client.query(`
+        SELECT id, slug, name, status, default_locale, timezone, created_at, updated_at
+        FROM shops
+        WHERE id = $1 OR slug = $1
+        ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
+        LIMIT 1
+      `, [normalizedShopId]);
+      const shop = shopResult.rows[0] || null;
+      if (!shop) {
+        return {
+          schemaReady: true,
+          shop: null,
+          pages: [],
+          settings: null,
+          products: [],
+          assets: { summary: {}, rows: [] }
+        };
+      }
+
+      const params = [shop.id];
+      const [pagesResult, settingsResult, productsResult, assetSummaryResult, assetsResult] = await Promise.all([
+        client.query(`
+          SELECT id, page_id, page_name, status, created_at, updated_at
+          FROM shop_pages
+          WHERE shop_id = $1
+          ORDER BY status ASC, updated_at DESC, id ASC
+        `, params),
+        client.query(`
+          SELECT bot_mode, handoff_enabled, handoff_message, menu_intro_text,
+                 fallback_text, settings_json, updated_at
+          FROM shop_settings
+          WHERE shop_id = $1
+          LIMIT 1
+        `, params),
+        client.query(`
+          SELECT id, code, name, description, price, currency, status,
+                 sort_order, metadata_json, updated_at
+          FROM shop_products
+          WHERE shop_id = $1
+          ORDER BY sort_order ASC, code ASC, id ASC
+        `, params),
+        client.query(`
+          SELECT asset_type,
+                 COUNT(*)::int AS total,
+                 COUNT(*) FILTER (WHERE status = 'active')::int AS active
+          FROM shop_assets
+          WHERE shop_id = $1
+          GROUP BY asset_type
+          ORDER BY asset_type ASC
+        `, params),
+        client.query(`
+          SELECT a.id, a.product_id, p.code AS product_code, a.asset_type,
+                 a.storage_provider, a.public_url, a.content_type, a.size_bytes,
+                 a.status, a.sort_order, a.updated_at
+          FROM shop_assets a
+          LEFT JOIN shop_products p ON p.id = a.product_id
+          WHERE a.shop_id = $1
+          ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
+        `, params)
+      ]);
+
+      const summary = {
+        total: 0,
+        active: 0,
+        product_image: 0,
+        menu_image: 0,
+        shop_image: 0
+      };
+      for (const row of assetSummaryResult.rows) {
+        const type = String(row.asset_type || '');
+        const total = Number(row.total || 0);
+        summary.total += total;
+        summary.active += Number(row.active || 0);
+        if (Object.prototype.hasOwnProperty.call(summary, type)) summary[type] = total;
+      }
+
+      return {
+        schemaReady: true,
+        shop,
+        pages: pagesResult.rows,
+        settings: settingsResult.rows[0] || null,
+        products: productsResult.rows,
+        assets: {
+          summary,
+          rows: assetsResult.rows
+        }
+      };
+    } catch (err) {
+      if (!isMissingMultiShopSchemaError(err)) throw err;
+      return createEmptyShopDetailModel();
+    }
+  }
+
   async function getOverview(client, filters = {}) {
     const params = [tenantId, pageId];
     const pageLimit = Number(filters.limit || limits.overviewRows || 25);
@@ -397,11 +576,14 @@ function createDashboardRepository({
 
   return {
     getAuditLog,
+    getShopDetail,
+    getShops,
     getOverview,
     getUserDetail
   };
 }
 
 module.exports = {
-  createDashboardRepository
+  createDashboardRepository,
+  isMissingMultiShopSchemaError
 };

@@ -328,6 +328,104 @@ function createDashboardReaderStub() {
         },
         limits: { auditRows: Number(filters.limit || 50) }
       };
+    },
+    async getShops() {
+      calls += 1;
+      return {
+        schemaReady: true,
+        shops: [{
+          id: 'adult-shop',
+          slug: 'adult-shop',
+          name: 'Adult Shop',
+          status: 'active',
+          page_count: 2,
+          active_page_count: 1,
+          product_count: 2,
+          asset_count: 3,
+          bot_mode: 'menu_code_handoff',
+          updated_at: '2026-05-12T00:00:00.000Z',
+          page_access_token: 'do-not-return'
+        }]
+      };
+    },
+    async getShopDetail(shopId) {
+      calls += 1;
+      return {
+        schemaReady: true,
+        shop: {
+          id: shopId,
+          slug: 'adult-shop',
+          name: 'Adult Shop',
+          status: 'active',
+          default_locale: 'vi-VN',
+          timezone: 'Asia/Bangkok',
+          created_at: '2026-05-11T00:00:00.000Z',
+          updated_at: '2026-05-12T00:00:00.000Z',
+          secret_note: 'do-not-return'
+        },
+        pages: [{
+          id: 'adult-page',
+          page_id: 'page_1',
+          page_name: 'Adult Page',
+          status: 'active',
+          created_at: '2026-05-11T00:00:00.000Z',
+          updated_at: '2026-05-12T00:00:00.000Z',
+          page_access_token: 'do-not-return'
+        }],
+        settings: {
+          bot_mode: 'menu_code_handoff',
+          handoff_enabled: true,
+          handoff_message: 'handoff',
+          menu_intro_text: 'menu',
+          fallback_text: 'fallback',
+          settings_json: {
+            minAge: 18,
+            accessToken: 'do-not-return',
+            nested: {
+              api_secret: 'do-not-return'
+            }
+          },
+          updated_at: '2026-05-12T00:00:00.000Z'
+        },
+        products: [{
+          id: 'prod-1',
+          code: 'DB1',
+          name: 'DB Product',
+          description: 'safe product',
+          price: '150000.00',
+          currency: 'VND',
+          status: 'active',
+          sort_order: 1,
+          metadata_json: {
+            size: 'M',
+            customerPhone: '0987654321'
+          },
+          updated_at: '2026-05-12T00:00:00.000Z'
+        }],
+        assets: {
+          summary: {
+            total: 2,
+            active: 2,
+            product_image: 1,
+            menu_image: 1,
+            shop_image: 0
+          },
+          rows: [{
+            id: 'asset-1',
+            product_id: 'prod-1',
+            product_code: 'DB1',
+            asset_type: 'product_image',
+            storage_provider: 'public_url',
+            storage_key: 'do-not-return',
+            public_url: 'https://cdn.example.test/db1.jpg',
+            content_type: 'image/jpeg',
+            size_bytes: 1234,
+            status: 'active',
+            sort_order: 1,
+            updated_at: '2026-05-12T00:00:00.000Z'
+          }]
+        }
+      };
     }
   };
 }
@@ -1964,6 +2062,128 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('12 Tran Phu')).toBeFalse();
   });
 
+  it('shops API trả shop list read-only bằng field an toàn', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.schemaReady).toBeTrue();
+    expect(body.shops[0]).toEqual({
+      id: 'adult-shop',
+      slug: 'adult-shop',
+      name: 'Adult Shop',
+      status: 'active',
+      page_count: 2,
+      active_page_count: 1,
+      product_count: 2,
+      asset_count: 3,
+      bot_mode: 'menu_code_handoff',
+      updated_at: '2026-05-12T00:00:00.000Z'
+    });
+    expect(bodyText.includes('page_access_token')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+  });
+
+  it('shop detail API trả products/assets bằng field an toàn', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.schemaReady).toBeTrue();
+    expect(body.shop.id).toBe('adult-shop');
+    expect(body.pages[0].page_id).toBe('page_1');
+    expect(body.settings.bot_mode).toBe('menu_code_handoff');
+    expect(body.settings.settings_json.minAge).toBe(18);
+    expect(body.products[0].code).toBe('DB1');
+    expect(body.products[0].metadata_json.size).toBe('M');
+    expect(body.assets.summary.product_image).toBe(1);
+    expect(body.assets.rows[0].public_url).toBe('https://cdn.example.test/db1.jpg');
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('page_access_token')).toBeFalse();
+    expect(bodyText.includes('secret_note')).toBeFalse();
+    expect(bodyText.includes('storage_key')).toBeFalse();
+    expect(bodyText.includes('accessToken')).toBeFalse();
+    expect(bodyText.includes('api_secret')).toBeFalse();
+    expect(bodyText.includes('customerPhone')).toBeFalse();
+    expect(bodyText.includes('0987654321')).toBeFalse();
+  });
+
+  it('shops API trả schemaReady=false khi thiếu multi-shop schema', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    reader.getShops = async () => ({
+      schemaReady: false,
+      shops: [],
+      message: 'Multi-shop schema is not ready.'
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.schemaReady).toBeFalse();
+    expect(body.shops).toEqual([]);
+    expect(JSON.stringify(body).includes('relation')).toBeFalse();
+    expect(JSON.stringify(body).includes('postgres://')).toBeFalse();
+  });
+
+  it('shops routes dùng dashboard read permission và từ chối role không có quyền', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminPrincipalRoles: ['unknown-role']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(reader.calls).toBe(0);
+  });
+
   it('dashboard dùng RBAC và ghi audit success khi audit logger được bật', async () => {
     const app = createApp();
     const reader = createDashboardReaderStub();
@@ -2207,6 +2427,8 @@ describe('admin dashboard PostgreSQL reader', () => {
 
     await reader.getOverview();
     await reader.getUserDetail('sender_1');
+    await reader.getShops();
+    await reader.getShopDetail('adult-shop');
 
     if (!queries.length) throw new Error('expected dashboard reader to query database');
     for (const { sql } of queries) {
@@ -2370,6 +2592,71 @@ describe('admin dashboard PostgreSQL reader', () => {
 
     expect(model.schemaReady).toBeFalse();
     expect(model.rows).toEqual([]);
+  });
+
+  it('reader shops trả schemaReady=false khi thiếu multi-shop schema', async () => {
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query() {
+        const err = new Error('relation "shops" does not exist at postgres://secret');
+        err.code = '42P01';
+        throw err;
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    const list = await reader.getShops();
+    const detail = await reader.getShopDetail('adult-shop');
+
+    expect(list.schemaReady).toBeFalse();
+    expect(list.shops).toEqual([]);
+    expect(detail.schemaReady).toBeFalse();
+    expect(detail.products).toEqual([]);
+    expect(JSON.stringify(list).includes('postgres://secret')).toBeFalse();
+    expect(JSON.stringify(detail).includes('relation')).toBeFalse();
+  });
+
+  it('reader shops dùng SELECT read-only và parameterized detail lookup', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        if (sql.includes('FROM shops') && sql.includes('WHERE id = $1 OR slug = $1')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop', name: 'Adult Shop', status: 'active' }] };
+        }
+        if (sql.includes('asset_type') && sql.includes('COUNT(*)')) {
+          return { rows: [{ asset_type: 'product_image', total: 1, active: 1 }] };
+        }
+        return { rows: [] };
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    await reader.getShops();
+    await reader.getShopDetail('adult-shop');
+
+    const detailLookup = queries.find(item => item.sql.includes('WHERE id = $1 OR slug = $1'));
+    expect(Boolean(detailLookup)).toBeTrue();
+    expect(detailLookup.params).toEqual(['adult-shop']);
+    for (const { sql } of queries) {
+      expect(sql.trim()).toMatch(/^SELECT/i);
+      if (/\b(INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP|MERGE|COPY|GRANT|REVOKE|CALL|DO|VACUUM|ANALYZE)\b/i.test(sql)) {
+        throw new Error(`unexpected write SQL: ${sql}`);
+      }
+    }
   });
 });
 

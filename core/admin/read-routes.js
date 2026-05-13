@@ -6,6 +6,8 @@ const {
   presentAuditApi,
   presentDashboardApi,
   presentInternalNotesApi,
+  presentShopDetailApi,
+  presentShopsApi,
   presentUserDetailApi
 } = require('./api-presenter');
 const {
@@ -17,6 +19,8 @@ const { normalizeDashboardFilters } = require('./reader');
 const {
   renderAuditHtml,
   renderDashboardHtml,
+  renderShopDetailHtml,
+  renderShopsHtml,
   renderUserDetailHtml
 } = require('./views');
 
@@ -289,6 +293,136 @@ function createAdminReadHandlers({
     }
   }
 
+  async function sendShops(req, res) {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'shops'
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getShops();
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shops',
+        outcome: 'success',
+        metadata: { schemaReady: model.schemaReady !== false }
+      });
+      return res.type('html').send(renderShopsHtml(presentShopsApi(model)));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shops',
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      return res.status(err.statusCode || 500).send('Không đọc được shops.');
+    }
+  }
+
+  async function sendShopDetail(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getShopDetail(shopId);
+      const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop',
+        resourceId: shopId,
+        outcome: statusCode === 404 ? 'error' : 'success',
+        metadata: { schemaReady: model.schemaReady !== false, statusCode }
+      });
+      return res.status(statusCode).type('html').send(renderShopDetailHtml(presentShopDetailApi(model)));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop',
+        resourceId: shopId,
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      return res.status(err.statusCode || 500).send('Không đọc được shop detail.');
+    }
+  }
+
+  async function sendShopsApi(req, res) {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'shops_api'
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getShops();
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shops_api',
+        outcome: 'success',
+        metadata: { schemaReady: model.schemaReady !== false }
+      });
+      return res.json(presentShopsApi(model));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shops_api',
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      return res.status(err.statusCode || 500).json({ error: 'shops_read_failed' });
+    }
+  }
+
+  async function sendShopDetailApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'shop_api',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getShopDetail(shopId);
+      const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop_api',
+        resourceId: shopId,
+        outcome: statusCode === 404 ? 'error' : 'success',
+        metadata: { schemaReady: model.schemaReady !== false, statusCode }
+      });
+      return res.status(statusCode).json(presentShopDetailApi(model));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop_api',
+        resourceId: shopId,
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      return res.status(err.statusCode || 500).json({ error: 'shop_detail_read_failed' });
+    }
+  }
+
   async function sendUserDetailApi(req, res) {
     const senderId = String(req.params.senderId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -446,6 +580,10 @@ function createAdminReadHandlers({
     sendDashboard,
     sendDashboardApi,
     sendInternalNotesApi,
+    sendShopDetail,
+    sendShopDetailApi,
+    sendShops,
+    sendShopsApi,
     sendUserDetail,
     sendUserDetailApi
   };
