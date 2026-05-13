@@ -532,6 +532,19 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getConversationTurnCalls()).toBe(0);
     expect(h.getEventCalls()).toBe(0);
   });
+
+  it('keeps human-handoff requests out of minimal mode before product code', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'minimal_human_request', 1);
+
+    await h.handleText('gặp nhân viên tư vấn', 'minimal_human_request', 'm_minimal_human');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage.inHandoff('minimal_human_request')).toBeFalse();
+    expect(h.storage._customers.length).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+    expect(h.getGeminiCalls()).toBe(0);
+  });
 });
 
 describe('webhook: default full mode', () => {
@@ -573,5 +586,27 @@ describe('webhook: default full mode', () => {
 
     expect(h.getHandoffCaptureCalls()).toBe(1);
     expect(h.sent.length).toBe(0);
+  });
+
+  it('still handles human-handoff requests in full mode', async () => {
+    const fullConfig = {
+      shopName: 'shop',
+      policies: shopConfig.policies,
+      intents: {},
+      templates: {},
+      recommendations: {}
+    };
+    const h = createWebhookHarness(fullConfig, {
+      buildLeadDetails: () => ({})
+    });
+
+    await h.handleText('gặp nhân viên tư vấn', 'full_human_request', 'm_full_human');
+
+    expect(h.storage.inHandoff('full_human_request')).toBeTrue();
+    expect(h.sent.length).toBe(1);
+    expect(h.sent[0].text).toContain('nhân viên');
+    expect(h.storage._customers[0].type).toBe('handoff_request');
+    expect(h.getTelegramOperationalAlertCalls()).toBe(1);
+    expect(h.getGeminiCalls()).toBe(0);
   });
 });

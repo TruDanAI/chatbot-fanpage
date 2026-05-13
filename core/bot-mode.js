@@ -1,13 +1,9 @@
 const MENU_CODE_HANDOFF = 'menu_code_handoff';
-
-const MENU_CODE_HANDOFF_MESSAGE = [
-  'E gửi anh xem qua sp, anh ưng mã nào em tư vấn ạ',
-  'Bên em nhận hàng thanh toán, che tên sản phẩm trước khi gửi đi.',
-  'Freeship + tặng gel',
-  'Có kèm mã vận đơn để anh theo dõi hành trình của đơn hàng anh nhé. Bên em giao bằng đơn vị Giao Hàng Tiết Kiệm.'
-].join('\n');
-
-const MENU_CODE_MENU_PRICE_REPLY = 'Dạ sản phẩm bên em từ 150k tuỳ mã ạ. Em gửi mình xem qua menu, ưng mã nào nhắn em tư vấn kỹ hơn nhé.';
+const {
+  MENU_CODE_HANDOFF_MESSAGE,
+  MENU_CODE_MENU_PRICE_REPLY,
+  getMenuCodeHandoffMessage
+} = require('./modes/menu-code-handoff');
 
 const MENU_CODE_HANDOFF_DISABLED_INTENTS = [
   'AGE_POLICY',
@@ -66,11 +62,6 @@ function getModeOptions(config = {}) {
 
 function isMenuCodeHandoffMode(config = {}) {
   return getBotModeName(config) === MENU_CODE_HANDOFF;
-}
-
-function getMenuCodeHandoffMessage(config = {}) {
-  const mode = getModeOptions(config);
-  return String(mode.handoffMessage || config.menuCodeHandoffMessage || MENU_CODE_HANDOFF_MESSAGE);
 }
 
 function isAiFallbackEnabled(config = {}) {
