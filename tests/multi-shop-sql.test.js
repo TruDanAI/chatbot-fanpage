@@ -5,6 +5,7 @@ const {
   chooseVerificationDatabaseUrl,
   createVerificationSchemaName,
   isPostgresUrl,
+  RAILWAY_DATABASE_URL_SOURCE,
   sanitizeMessage
 } = require('../scripts/verify-multi-shop-sql');
 
@@ -96,37 +97,99 @@ describe('multi-shop SQL proposal', () => {
 });
 
 describe('multi-shop SQL verifier safety', () => {
-  it('skips safely when only DATABASE_URL is set', () => {
+  it('rejects DATABASE_URL outside a known Railway staging environment', () => {
+    const url = 'postgres://prod:secret@example.test/prod';
     const result = chooseVerificationDatabaseUrl({
-      DATABASE_URL: 'postgres://prod:secret@example.test/prod'
+      DATABASE_URL: url
     });
 
     expect(result.ok).toBeFalse();
-    expect(result.skipped).toBeTrue();
-    expect(result.reason).toBe('missing_explicit_database_url');
-    expect(result.message.includes('postgres://prod:secret@example.test/prod')).toBeFalse();
-    expect(result.message).toContain('DATABASE_URL is intentionally ignored');
+    expect(result.skipped).toBeFalse();
+    expect(result.reason).toBe('database_url_requires_railway_staging');
+    expect(result.message.includes(url)).toBeFalse();
+    expect(result.message).toContain('RAILWAY_ENVIRONMENT');
+    expect(result.message).toContain('staging');
   });
 
-  it('prefers CHATBOT_TEST_DATABASE_URL over staging', () => {
+  it('rejects DATABASE_URL in Railway production without printing the URL', () => {
+    const url = 'postgres://prod:secret@example.test/prod';
+    const result = chooseVerificationDatabaseUrl({
+      DATABASE_URL: url,
+      RAILWAY_ENVIRONMENT: 'production'
+    });
+
+    expect(result.ok).toBeFalse();
+    expect(result.skipped).toBeFalse();
+    expect(result.reason).toBe('database_url_railway_production');
+    expect(result.message.includes(url)).toBeFalse();
+  });
+
+  it('allows DATABASE_URL only in Railway staging', () => {
+    const url = 'postgres://stage-user:stage-pass@example.test/stagedb';
+    const result = chooseVerificationDatabaseUrl({
+      DATABASE_URL: url,
+      RAILWAY_ENVIRONMENT_NAME: 'staging'
+    });
+
+    expect(result.ok).toBeTrue();
+    expect(result.envName).toBe('DATABASE_URL');
+    expect(result.sourceName).toBe(RAILWAY_DATABASE_URL_SOURCE);
+    expect(result.value).toBe(url);
+  });
+
+  it('rejects invalid Railway staging DATABASE_URL without printing the URL', () => {
+    const url = 'not-a-postgres-url-with-secret';
+    const result = chooseVerificationDatabaseUrl({
+      DATABASE_URL: url,
+      RAILWAY_ENVIRONMENT: 'staging'
+    });
+
+    expect(result.ok).toBeFalse();
+    expect(result.skipped).toBeFalse();
+    expect(result.reason).toBe('invalid_railway_staging_database_url');
+    expect(result.message.includes(url)).toBeFalse();
+  });
+
+  it('prefers CHATBOT_TEST_DATABASE_URL over staging and DATABASE_URL', () => {
     const result = chooseVerificationDatabaseUrl({
       CHATBOT_TEST_DATABASE_URL: 'postgres://test-user:test-pass@example.test/testdb',
-      CHATBOT_STAGING_DATABASE_URL: 'postgres://stage-user:stage-pass@example.test/stagedb'
+      CHATBOT_STAGING_DATABASE_URL: 'postgres://stage-user:stage-pass@example.test/stagedb',
+      DATABASE_URL: 'postgres://database-user:database-pass@example.test/database',
+      RAILWAY_ENVIRONMENT: 'staging'
     });
 
     expect(result.ok).toBeTrue();
     expect(result.envName).toBe('CHATBOT_TEST_DATABASE_URL');
+    expect(result.sourceName).toBe('CHATBOT_TEST_DATABASE_URL');
     expect(result.value).toBe('postgres://test-user:test-pass@example.test/testdb');
   });
 
-  it('allows CHATBOT_STAGING_DATABASE_URL when the test URL is absent', () => {
+  it('prefers CHATBOT_STAGING_DATABASE_URL over DATABASE_URL when the test URL is absent', () => {
     const result = chooseVerificationDatabaseUrl({
-      CHATBOT_STAGING_DATABASE_URL: 'postgresql://stage-user:stage-pass@example.test/stagedb'
+      CHATBOT_STAGING_DATABASE_URL: 'postgresql://stage-user:stage-pass@example.test/stagedb',
+      DATABASE_URL: 'postgres://database-user:database-pass@example.test/database',
+      RAILWAY_ENVIRONMENT_NAME: 'staging'
     });
 
     expect(result.ok).toBeTrue();
     expect(result.envName).toBe('CHATBOT_STAGING_DATABASE_URL');
+    expect(result.sourceName).toBe('CHATBOT_STAGING_DATABASE_URL');
     expect(result.value).toBe('postgresql://stage-user:stage-pass@example.test/stagedb');
+  });
+
+  it('falls back to Railway staging DATABASE_URL when the staging override is unusable', () => {
+    const databaseUrl = 'postgres://database-user:database-pass@example.test/database';
+    const invalidStagingUrl = 'railway-reference-that-is-not-a-url';
+    const result = chooseVerificationDatabaseUrl({
+      CHATBOT_STAGING_DATABASE_URL: invalidStagingUrl,
+      DATABASE_URL: databaseUrl,
+      RAILWAY_ENVIRONMENT: 'staging'
+    });
+
+    expect(result.ok).toBeTrue();
+    expect(result.envName).toBe('DATABASE_URL');
+    expect(result.sourceName).toBe(RAILWAY_DATABASE_URL_SOURCE);
+    expect(result.value).toBe(databaseUrl);
   });
 
   it('rejects an explicit URL that equals DATABASE_URL without printing the URL', () => {

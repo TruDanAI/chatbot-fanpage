@@ -6,6 +6,11 @@ const EXPLICIT_DATABASE_URL_ENVS = Object.freeze([
   'CHATBOT_TEST_DATABASE_URL',
   'CHATBOT_STAGING_DATABASE_URL'
 ]);
+const RAILWAY_ENVIRONMENT_ENVS = Object.freeze([
+  'RAILWAY_ENVIRONMENT',
+  'RAILWAY_ENVIRONMENT_NAME'
+]);
+const RAILWAY_STAGING_DATABASE_URL_SOURCE = 'DATABASE_URL_RAILWAY_STAGING';
 
 const PROPOSAL_SQL_PATH = path.join(__dirname, '..', 'db', 'multi-shop-proposal.sql');
 
@@ -129,6 +134,63 @@ function isPostgresUrl(value) {
   }
 }
 
+function getRailwayEnvironmentNames(env = process.env) {
+  return RAILWAY_ENVIRONMENT_ENVS
+    .map(name => normalizeEnvValue(env[name]).toLowerCase())
+    .filter(Boolean);
+}
+
+function isRailwayProductionEnvironment(env = process.env) {
+  return getRailwayEnvironmentNames(env).includes('production');
+}
+
+function isRailwayStagingEnvironment(env = process.env) {
+  return getRailwayEnvironmentNames(env).includes('staging') && !isRailwayProductionEnvironment(env);
+}
+
+function chooseRailwayStagingDatabaseUrl(env, databaseUrl) {
+  if (isRailwayProductionEnvironment(env)) {
+    return {
+      ok: false,
+      skipped: false,
+      reason: 'database_url_railway_production',
+      envName: 'DATABASE_URL',
+      sourceName: 'DATABASE_URL_REJECTED_PRODUCTION',
+      message: 'DATABASE_URL is not allowed in the Railway production environment for multi-shop SQL verification.'
+    };
+  }
+
+  if (!isRailwayStagingEnvironment(env)) {
+    return {
+      ok: false,
+      skipped: false,
+      reason: 'database_url_requires_railway_staging',
+      envName: 'DATABASE_URL',
+      sourceName: 'DATABASE_URL_REJECTED_NON_STAGING',
+      message: 'DATABASE_URL is allowed only when RAILWAY_ENVIRONMENT or RAILWAY_ENVIRONMENT_NAME is staging. The URL value was not printed.'
+    };
+  }
+
+  if (!isPostgresUrl(databaseUrl)) {
+    return {
+      ok: false,
+      skipped: false,
+      reason: 'invalid_railway_staging_database_url',
+      envName: 'DATABASE_URL',
+      sourceName: RAILWAY_STAGING_DATABASE_URL_SOURCE,
+      message: 'DATABASE_URL must be a valid postgres:// or postgresql:// URL in Railway staging. The URL value was not printed.'
+    };
+  }
+
+  return {
+    ok: true,
+    skipped: false,
+    envName: 'DATABASE_URL',
+    sourceName: RAILWAY_STAGING_DATABASE_URL_SOURCE,
+    value: databaseUrl
+  };
+}
+
 function chooseVerificationDatabaseUrl(env = process.env) {
   const databaseUrl = normalizeEnvValue(env.DATABASE_URL);
   const explicit = EXPLICIT_DATABASE_URL_ENVS
@@ -136,30 +198,46 @@ function chooseVerificationDatabaseUrl(env = process.env) {
     .find(item => item.value);
 
   if (!explicit) {
-    return {
-      ok: false,
-      skipped: true,
-      reason: 'missing_explicit_database_url',
-      message: 'Skipped multi-shop SQL verification: set CHATBOT_TEST_DATABASE_URL or CHATBOT_STAGING_DATABASE_URL to an explicit non-production PostgreSQL database. DATABASE_URL is intentionally ignored.'
-    };
+    if (!databaseUrl) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'missing_database_url',
+        message: 'Skipped multi-shop SQL verification: set CHATBOT_TEST_DATABASE_URL, CHATBOT_STAGING_DATABASE_URL, or run inside the Railway staging environment with DATABASE_URL.'
+      };
+    }
+
+    return chooseRailwayStagingDatabaseUrl(env, databaseUrl);
   }
 
   if (databaseUrl && explicit.value === databaseUrl) {
+    const railwayStagingDatabaseUrl = chooseRailwayStagingDatabaseUrl(env, databaseUrl);
+    if (explicit.name === 'CHATBOT_STAGING_DATABASE_URL' && railwayStagingDatabaseUrl.ok) {
+      return railwayStagingDatabaseUrl;
+    }
+
     return {
       ok: false,
       skipped: false,
       reason: 'explicit_url_matches_database_url',
       envName: explicit.name,
+      sourceName: explicit.name,
       message: `${explicit.name} must not equal DATABASE_URL. Refusing to verify against a potentially production database.`
     };
   }
 
   if (!isPostgresUrl(explicit.value)) {
+    const railwayStagingDatabaseUrl = chooseRailwayStagingDatabaseUrl(env, databaseUrl);
+    if (explicit.name === 'CHATBOT_STAGING_DATABASE_URL' && databaseUrl && railwayStagingDatabaseUrl.ok) {
+      return railwayStagingDatabaseUrl;
+    }
+
     return {
       ok: false,
       skipped: false,
       reason: 'invalid_explicit_database_url',
       envName: explicit.name,
+      sourceName: explicit.name,
       message: `${explicit.name} must be a valid postgres:// or postgresql:// URL. The URL value was not printed.`
     };
   }
@@ -168,6 +246,7 @@ function chooseVerificationDatabaseUrl(env = process.env) {
     ok: true,
     skipped: false,
     envName: explicit.name,
+    sourceName: explicit.name,
     value: explicit.value
   };
 }
@@ -390,7 +469,8 @@ async function main({ env = process.env, stdout = console.log, stderr = console.
     return selected.skipped ? 0 : 1;
   }
 
-  stdout(`Using ${selected.envName} for multi-shop SQL verification. DATABASE_URL is ignored and the URL will not be printed.`);
+  stdout(`using_database_url_source=${selected.sourceName}`);
+  stdout('The database URL will not be printed.');
   stdout('Applying db/multi-shop-proposal.sql twice inside a temporary isolated schema.');
   try {
     const result = await verifyMultiShopProposal({ databaseUrl: selected.value });
@@ -410,9 +490,13 @@ if (require.main === module) {
 
 module.exports = {
   EXPLICIT_DATABASE_URL_ENVS,
+  RAILWAY_DATABASE_URL_SOURCE: RAILWAY_STAGING_DATABASE_URL_SOURCE,
   chooseVerificationDatabaseUrl,
   createVerificationSchemaName,
+  getRailwayEnvironmentNames,
   isPostgresUrl,
+  isRailwayProductionEnvironment,
+  isRailwayStagingEnvironment,
   main,
   quoteIdentifier,
   sanitizeMessage,
