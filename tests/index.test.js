@@ -315,6 +315,37 @@ describe('index/storage: nhắc giỏ bỏ dở', () => {
   });
 });
 
+describe('index/storage: nhắc mời chào engaged', () => {
+  it('lọc candidate engaged sau 2 giờ và chặn sau khi đã gửi', () => {
+    const now = Date.parse('2026-05-08T12:00:00.000Z');
+    const userId = 'idx_engaged_followup_candidate';
+    storage.setSessionState(userId, 'PRODUCT_SELECTED');
+    storage.setEngagedFollowUp(userId, {
+      at: new Date(now - (2 * 60 * 60 * 1000 + 3 * 60 * 1000)).toISOString(),
+      note: 'đang xem mã 8'
+    });
+
+    const candidate = storage.listEngagedFollowUpCandidates({
+      now,
+      idleMs: 2 * 60 * 60 * 1000,
+      maxAgeMs: 3 * 24 * 60 * 60 * 1000
+    }).find(item => item.userId === userId);
+    expect(Boolean(candidate)).toBeTrue();
+    expect(candidate.note).toContain('mã 8');
+
+    storage.markEngagedFollowUpReminderSent(userId, {
+      at: '2026-05-08T12:01:00.000Z',
+      idleMs: candidate.idleMs
+    });
+    const afterSent = storage.listEngagedFollowUpCandidates({
+      now,
+      idleMs: 1,
+      maxAgeMs: 3 * 24 * 60 * 60 * 1000
+    }).find(item => item.userId === userId);
+    expect(Boolean(afterSent)).toBeFalse();
+  });
+});
+
 describe('index: Telegram hiển thị tên Facebook', () => {
   it('format User bằng tên Facebook và vẫn giữ ID để tra soát', () => {
     const lines = buildTelegramUserLines('123456789', {

@@ -165,6 +165,10 @@ function positiveNumber(value, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function trimText(value) {
+  return String(value == null ? '' : value).trim();
+}
+
 return {
   getDataDir() {
     return DATA_DIR;
@@ -434,6 +438,100 @@ return {
     state.context[userId].orderDraft = next;
     scheduleSave();
     return cloneOrderDraft(next);
+  },
+
+  setEngagedFollowUp(userId, details = {}) {
+    if (!userId) return {};
+    if (!state.context[userId]) state.context[userId] = {};
+    const current = state.context[userId];
+    const at = String(details.at || new Date().toISOString());
+    const note = String(details.note || '').slice(0, 300);
+    const next = {
+      ...current,
+      engagedFollowUpAt: at
+    };
+    if (note) next.engagedFollowUpLastNote = note;
+    delete next.engagedFollowUpReminderSentAt;
+    delete next.engagedFollowUpReminderIdleMs;
+    delete next.engagedFollowUpReminderFailedAt;
+    delete next.engagedFollowUpReminderFailedStatus;
+    delete next.engagedFollowUpReminderFailedError;
+    state.context[userId] = next;
+    scheduleSave();
+    return { ...next };
+  },
+
+  listEngagedFollowUpCandidates(options = {}) {
+    const nowMs = parseTimeMs(options.now == null ? Date.now() : options.now);
+    if (!Number.isFinite(nowMs)) return [];
+    const idleMs = positiveNumber(options.idleMs, 2 * 60 * 60 * 1000);
+    const maxAgeMs = positiveNumber(options.maxAgeMs, 3 * 24 * 60 * 60 * 1000);
+    const limit = Math.max(1, Math.floor(positiveNumber(options.limit, 50)));
+    const result = [];
+    let handoffChanged = false;
+
+    for (const [userId, context] of Object.entries(state.context || {})) {
+      if (result.length >= limit) break;
+      if (!context) continue;
+      if (trimText(context.sessionState).toUpperCase() === 'CONFIRMED') continue;
+      if (context.engagedFollowUpReminderSentAt || context.engagedFollowUpReminderFailedAt) continue;
+
+      const handoffUntil = Number(state.handoff?.[userId] || 0);
+      if (handoffUntil && nowMs <= handoffUntil) continue;
+      if (handoffUntil && nowMs > handoffUntil) {
+        delete state.handoff[userId];
+        handoffChanged = true;
+      }
+
+      const engagedAtMs = parseTimeMs(context.engagedFollowUpAt || context.lastUserAt);
+      if (!Number.isFinite(engagedAtMs)) continue;
+      const idleForMs = nowMs - engagedAtMs;
+      if (idleForMs < idleMs || idleForMs > maxAgeMs) continue;
+
+      result.push({
+        userId,
+        engagedAt: context.engagedFollowUpAt || '',
+        idleMs: idleForMs,
+        sessionState: context.sessionState || '',
+        lastProductCode: context.lastProductCode || '',
+        note: context.engagedFollowUpLastNote || ''
+      });
+    }
+
+    if (handoffChanged) scheduleSave();
+    return result;
+  },
+
+  markEngagedFollowUpReminderSent(userId, details = {}) {
+    if (!userId || !state.context[userId]) return {};
+    const current = state.context[userId];
+    const next = {
+      ...current,
+      engagedFollowUpReminderSentAt: String(details.at || new Date().toISOString())
+    };
+    const idleMs = Number(details.idleMs);
+    if (Number.isFinite(idleMs) && idleMs >= 0) next.engagedFollowUpReminderIdleMs = idleMs;
+    delete next.engagedFollowUpReminderFailedAt;
+    delete next.engagedFollowUpReminderFailedStatus;
+    delete next.engagedFollowUpReminderFailedError;
+    state.context[userId] = next;
+    scheduleSave();
+    return { ...next };
+  },
+
+  markEngagedFollowUpReminderFailed(userId, details = {}) {
+    if (!userId || !state.context[userId]) return {};
+    const current = state.context[userId];
+    const next = {
+      ...current,
+      engagedFollowUpReminderFailedAt: String(details.at || new Date().toISOString())
+    };
+    const status = Number(details.status);
+    if (Number.isFinite(status)) next.engagedFollowUpReminderFailedStatus = status;
+    if (details.error) next.engagedFollowUpReminderFailedError = String(details.error).slice(0, 300);
+    state.context[userId] = next;
+    scheduleSave();
+    return { ...next };
   },
 
   seenMid(mid) {

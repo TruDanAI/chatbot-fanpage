@@ -209,6 +209,48 @@ function runStorageAdapterContract({ name, createAdapter }) {
       expect(storage.listAbandonedCartReminderCandidates({ now, idleMs: 1, maxAgeMs: 23 * 60 * 60 * 1000 })).toEqual([]);
     });
 
+    it('lists and marks engaged follow-up reminder candidates', async () => {
+      const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-engaged-followup') });
+      const now = Date.parse('2026-05-08T10:00:00.000Z');
+      const userId = 'contract_engaged_followup';
+      storage.setSessionState(userId, 'PRODUCT_SELECTED');
+      storage.setEngagedFollowUp(userId, {
+        at: new Date(now - (2 * 60 * 60 * 1000 + 5 * 60 * 1000)).toISOString(),
+        note: 'mã 8'
+      });
+
+      const candidate = storage.listEngagedFollowUpCandidates({
+        now,
+        idleMs: 2 * 60 * 60 * 1000,
+        maxAgeMs: 3 * 24 * 60 * 60 * 1000
+      }).find(item => item.userId === userId);
+
+      expect(Boolean(candidate)).toBeTrue();
+      expect(candidate.note).toBe('mã 8');
+
+      storage.markEngagedFollowUpReminderSent(userId, {
+        at: '2026-05-08T10:01:00.000Z',
+        idleMs: candidate.idleMs
+      });
+      expect(storage.listEngagedFollowUpCandidates({ now, idleMs: 1, maxAgeMs: 3 * 24 * 60 * 60 * 1000 })).toEqual([]);
+
+      storage.setEngagedFollowUp(userId, {
+        at: new Date(now - (2 * 60 * 60 * 1000 + 5 * 60 * 1000)).toISOString(),
+        note: 'mã 10'
+      });
+      storage.markEngagedFollowUpReminderFailed(userId, {
+        at: '2026-05-08T10:02:00.000Z',
+        status: 400,
+        error: 'recipient unavailable'.repeat(30)
+      });
+      const blocked = storage.listEngagedFollowUpCandidates({
+        now,
+        idleMs: 2 * 60 * 60 * 1000,
+        maxAgeMs: 3 * 24 * 60 * 60 * 1000
+      }).find(item => item.userId === userId);
+      expect(Boolean(blocked)).toBeFalse();
+    });
+
     it('deduplicates message ids', async () => {
       const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-mids') });
 
