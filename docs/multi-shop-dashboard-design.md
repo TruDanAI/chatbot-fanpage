@@ -1,6 +1,8 @@
 # Multi-Shop Dashboard Design
 
-Status: Phase A design only.
+Status: Multi-shop MVP has passed staging on
+`feature/multi-shop-dashboard`. See `docs/multi-shop-rollout.md` for the
+current staging record and production rollout sequence.
 
 This document proposes the architecture for managing multiple Messenger shops
 from the admin dashboard without requiring a code commit, push, or redeploy for
@@ -226,6 +228,20 @@ Every write action needs confirmation, RBAC checks, audit logging, and tests.
 
 ## Rollout Phases
 
+The original phase plan below has advanced through staging for the MVP:
+
+- Staging has `MULTI_SHOP_DB_CONFIG_ENABLED=true`.
+- Multi-shop schema and admin audit schema are applied in staging.
+- `adult-shop` is seeded in staging.
+- Runtime DB config, admin shops read-only routes, and product CRUD passed
+  staging smoke.
+- Product write transaction handling now fails closed when PostgreSQL reports
+  an aborted transaction or `COMMIT` does not report command `COMMIT`.
+- Production remains untouched for this branch.
+
+Use `docs/multi-shop-rollout.md` as the current rollout runbook before any
+production work.
+
 ### Phase A: Design Only
 
 - Create this architecture document.
@@ -275,6 +291,10 @@ Every write action needs confirmation, RBAC checks, audit logging, and tests.
 - Apply the additive schema only after explicit production DB approval.
 - Seed production shop config only after separate approval.
 - Deploy runtime/dashboard changes only after explicit deploy approval.
+- Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production env
+  approval.
+- Run authenticated admin/product smokes only after separate approval because
+  they write audit rows and product smoke writes business data.
 - Keep file-config fallback available until production rollback confidence is
   high.
 

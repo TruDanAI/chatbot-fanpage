@@ -21,6 +21,12 @@ Mục tiêu sản phẩm:
   GET+POST API/tests, production schema đã apply, production POST note-create
   smoke đã pass, post-create GET read smoke đã pass, và User Detail UI smoke
   đã pass.
+- Multi-shop MVP trên branch feature/multi-shop-dashboard đã pass staging:
+  MULTI_SHOP_DB_CONFIG_ENABLED=true, multi-shop schema applied, admin audit
+  schema applied, adult-shop seeded, runtime DB config/admin shops read-only/
+  product CRUD smoke passed, audit delta +5, original 13 products unchanged,
+  smoke product archived. Latest multi-shop fix commit:
+  e98ad73 Fail product writes on aborted transactions. Production chưa đụng.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -1085,6 +1091,23 @@ Tính năng admin hiện có:
     isolated schema; proposal apply 2 lần, table/columns/indexes/constraints
     verified, schema dropped, 0 internal_notes_verify_% schemas còn lại
   - chưa có edit/delete/hide/order-notes UI
+- Multi-shop MVP staging status:
+  - branch feature/multi-shop-dashboard
+  - latest commit e98ad73 Fail product writes on aborted transactions
+  - MULTI_SHOP_DB_CONFIG_ENABLED=true trên staging
+  - db/multi-shop-proposal.sql applied staging
+  - db/admin-auth-rbac-audit-proposal.sql applied staging
+  - adult-shop seeded staging
+  - runtime DB config, admin shops read-only, product CRUD passed staging
+  - product CRUD smoke: create ZB-SMOKE-001, visible, update, disable, enable,
+    archive
+  - audit rows working; audit delta +5
+  - original 13 non-smoke products unchanged
+  - no duplicate active smoke code
+  - staging initially lacked admin_audit_log, causing audit insert failure,
+    aborted transaction, COMMIT reporting ROLLBACK, and fake 201; fixed by
+    applying audit schema and guarding COMMIT command with product_commit_failed
+  - production not deployed, env not changed, DB not written, smoke not run
 
 File quan trọng:
 - core/admin-auth.js
@@ -1100,8 +1123,11 @@ File quan trọng:
 - core/admin/views.js
 - db/admin-auth-rbac-audit-proposal.sql
 - db/internal-notes-proposal.sql
+- db/multi-shop-proposal.sql
 - docs/admin-auth-rbac-audit-runbook.md
 - docs/admin-identity-provisioning.md
+- docs/multi-shop-dashboard-design.md
+- docs/multi-shop-rollout.md
 - docs/phase-4-internal-notes-design.md
 - docs/saas-roadmap.md
 - docs/next-session-prompt.md
@@ -1127,6 +1153,9 @@ Việc bắt buộc làm đầu phiên mới:
    - docs/phase-4-internal-notes-design.md
    - docs/admin-auth-rbac-audit-runbook.md
    - docs/admin-identity-provisioning.md
+   - docs/multi-shop-dashboard-design.md
+   - docs/multi-shop-rollout.md
+   - db/multi-shop-proposal.sql
    - db/internal-notes-proposal.sql
    - core/admin/internal-notes.js
    - tests/admin-internal-notes.test.js
@@ -1139,7 +1168,14 @@ Hướng tốt nhất cho phiên tới:
 Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes v1 backend/API/UI đã complete: design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, create service, read/list model, GET+POST API deployed, production internal_notes schema applied, production POST note-create smoke passed creating exactly 1 smoke note, post-create GET read smoke passed với schemaReady=true/notes.length=1/pagination present/auditDelta=+1 success, và User Detail UI smoke passed với HTTP 200, smoke note visible, form visibility đúng theo role, internal_notes 1 -> 1, admin_audit_log 61 -> 62, auditDelta=+1 success. Latest known counts: internal_notes=1; admin_audit_log=62, success=40, denied=22, error=0. Smoke note vẫn tồn tại và chưa bị hidden/deleted. User Detail UI/list/form exists; chưa có edit/delete/hide/order-notes UI.
 
 Next recommended task:
-- Add configurable minimal shop mode `menu_code_handoff`.
+- Prepare the multi-shop MVP production rollout plan from
+  docs/multi-shop-rollout.md, but do not execute production steps without
+  fresh backup and separate approvals.
+- Production rollout order: backup first, apply multi-shop schema, apply/verify
+  admin audit schema, seed adult-shop, verify counts, deploy runtime, enable
+  MULTI_SHOP_DB_CONFIG_ENABLED, smoke healthz, smoke admin shops after approval,
+  smoke product CRUD with test product after explicit production DB write
+  approval, archive cleanup, verify audit delta count-only.
 - Any further production internal-notes smoke or write still needs separate
   approval because GET writes audit rows and POST writes business data.
 - Tiếp tục chỉ dùng explicit non-production URL như CHATBOT_TEST_DATABASE_URL

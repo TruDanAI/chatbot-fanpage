@@ -265,6 +265,36 @@ Last verified baseline from May 12, 2026:
 Treat this baseline as a snapshot only. Every future session must re-check git,
 Railway deployment, `/healthz`, and backup status before production work.
 
+## Current multi-shop MVP staging baseline
+
+Status as of branch `feature/multi-shop-dashboard` at commit
+`e98ad73 Fail product writes on aborted transactions`:
+
+- Multi-shop runtime DB config has passed staging with
+  `MULTI_SHOP_DB_CONFIG_ENABLED=true`.
+- `db/multi-shop-proposal.sql` has been applied to staging.
+- `db/admin-auth-rbac-audit-proposal.sql` has been applied to staging.
+- `adult-shop` has been seeded in staging PostgreSQL.
+- Admin shops read-only routes have passed staging.
+- Product CRUD has passed staging using `ZB-SMOKE-001`: create, verify
+  visible, update, disable, enable, and archive.
+- Product audit rows are working in staging; the CRUD smoke produced
+  `auditDelta=+5`.
+- The original 13 non-smoke products were unchanged, and the smoke product was
+  archived with no duplicate active smoke code.
+- The staging-only audit schema gap was fixed. Staging initially lacked
+  `admin_audit_log`, which caused audit insert failure, an aborted PostgreSQL
+  transaction, and `COMMIT` reporting rollback while the API returned a fake
+  `201`. Product writes now fail closed with `product_commit_failed` unless
+  `COMMIT` reports command `COMMIT`.
+- Local checks before the commit passed: `node --check`, `npm test`
+  (`422 passed`), `npm audit --omit=dev` (`0 vulnerabilities`), and
+  `git diff --check`.
+- Production has not been deployed, changed, written, or smoked for this
+  multi-shop branch.
+
+Production rollout for this MVP must follow `docs/multi-shop-rollout.md`.
+
 ## Product goal
 
 Build a private SaaS-style operations web app for the owner to run one or more
@@ -581,6 +611,11 @@ Avoid initially:
 
 ### Phase 5: multi-tenant SaaS foundation
 
+Status: multi-shop MVP is staging-verified on
+`feature/multi-shop-dashboard`; production rollout is pending backup,
+approval, schema apply, seed, deploy, env enable, and approved smoke. The
+current rollout record is `docs/multi-shop-rollout.md`.
+
 Goal: support multiple pages/shops cleanly.
 
 Schema direction:
@@ -605,6 +640,28 @@ Required env direction:
 ```
 
 Do not add these env keys until code actually consumes them.
+
+Current production rollout order for the multi-shop MVP:
+
+1. Create and verify a fresh production PostgreSQL backup outside the repo.
+2. Apply the multi-shop schema.
+3. Apply or verify the admin audit schema.
+4. Seed `adult-shop`.
+5. Verify count-only table state.
+6. Deploy the reviewed runtime/dashboard commit.
+7. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true`.
+8. Smoke `/healthz`.
+9. Smoke admin shops reads after approval.
+10. Smoke product CRUD with a test product after explicit production DB write
+    approval, then archive cleanup.
+
+Open multi-shop work after MVP safety:
+
+- Asset upload and asset management UI.
+- Better dashboard UX for shop/product operations.
+- Real multi-tenant admin auth separation.
+- Pagination/search expansion for larger catalogs.
+- Metrics and analytics for multi-shop operations.
 
 ### Phase 6: dedicated frontend
 
