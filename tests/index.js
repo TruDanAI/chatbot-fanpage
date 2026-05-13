@@ -15,6 +15,7 @@ require('./migration-plan.test');
 require('./admin-auth.test');
 require('./admin-internal-notes.test');
 require('./internal-notes-sql-verifier.test');
+require('./multi-shop-sql.test');
 require('./admin-routes.test');
 require('./index.test');
 
