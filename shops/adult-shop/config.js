@@ -9,7 +9,7 @@ module.exports = {
     aiFallbackEnabled: false,
     orderFlowEnabled: false,
     leadCaptureEnabled: false,
-    followUpEnabled: false,
+    followUpEnabled: true,
     recommendationEnabled: false,
     productCodeLookupEnabled: true,
     menuSendingEnabled: true,
@@ -19,6 +19,11 @@ module.exports = {
       'Freeship + tặng gel',
       'Có kèm mã vận đơn để anh theo dõi hành trình của đơn hàng anh nhé. Bên em giao bằng đơn vị Giao Hàng Tiết Kiệm.'
     ].join('\n')
+  },
+
+  followUp: {
+    engagedReminderText:
+      'Mình ơi, nếu cần em tư vấn nhanh theo nhu cầu hoặc tầm giá thì nhắn em 1 tin nha. Em gửi lại menu và gợi ý mẫu hợp với mình liền ạ.'
   },
 
   policies: {

@@ -196,6 +196,10 @@ const ABANDONED_CART_REMINDER_ENABLED = String(process.env.ABANDONED_CART_REMIND
 const ABANDONED_CART_REMINDER_MS = envPositiveNumber('ABANDONED_CART_REMINDER_MS', 20 * 60 * 1000);
 const ABANDONED_CART_REMINDER_SCAN_MS = envPositiveNumber('ABANDONED_CART_REMINDER_SCAN_MS', 60 * 1000);
 const ABANDONED_CART_REMINDER_MAX_AGE_MS = envPositiveNumber('ABANDONED_CART_REMINDER_MAX_AGE_MS', 23 * 60 * 60 * 1000);
+const ENGAGED_FOLLOWUP_REMINDER_ENABLED = String(process.env.ENGAGED_FOLLOWUP_REMINDER_ENABLED || 'true').toLowerCase() !== 'false';
+const ENGAGED_FOLLOWUP_REMINDER_MS = envPositiveNumber('ENGAGED_FOLLOWUP_REMINDER_MS', 2 * 60 * 60 * 1000);
+const ENGAGED_FOLLOWUP_REMINDER_SCAN_MS = envPositiveNumber('ENGAGED_FOLLOWUP_REMINDER_SCAN_MS', 60 * 1000);
+const ENGAGED_FOLLOWUP_REMINDER_MAX_AGE_MS = envPositiveNumber('ENGAGED_FOLLOWUP_REMINDER_MAX_AGE_MS', 3 * 24 * 60 * 60 * 1000);
 const FB_PROFILE_CACHE_TTL_MS = envPositiveNumber('FB_PROFILE_CACHE_TTL_MS', 7 * 24 * 60 * 60 * 1000);
 const GEMINI_HISTORY_LIMIT = 20;
 const PUBLIC_BASE_URL =
@@ -355,8 +359,11 @@ registerMediaRoutes(app);
 
 const {
   scanAbandonedCartReminders,
+  scanEngagedFollowUpReminders,
   startAbandonedCartReminderWorker,
-  stopAbandonedCartReminderWorker
+  stopAbandonedCartReminderWorker,
+  startEngagedFollowUpReminderWorker,
+  stopEngagedFollowUpReminderWorker
 } = createReminderService({
   storage,
   shopConfig,
@@ -370,7 +377,11 @@ const {
     enabled: ABANDONED_CART_REMINDER_ENABLED && isFollowUpEnabled(shopConfig),
     reminderMs: ABANDONED_CART_REMINDER_MS,
     scanMs: ABANDONED_CART_REMINDER_SCAN_MS,
-    maxAgeMs: ABANDONED_CART_REMINDER_MAX_AGE_MS
+    maxAgeMs: ABANDONED_CART_REMINDER_MAX_AGE_MS,
+    engagedFollowUpEnabled: ENGAGED_FOLLOWUP_REMINDER_ENABLED && isFollowUpEnabled(shopConfig),
+    engagedFollowUpMs: ENGAGED_FOLLOWUP_REMINDER_MS,
+    engagedFollowUpScanMs: ENGAGED_FOLLOWUP_REMINDER_SCAN_MS,
+    engagedFollowUpMaxAgeMs: ENGAGED_FOLLOWUP_REMINDER_MAX_AGE_MS
   }
 });
 
@@ -460,6 +471,7 @@ let server = null;
 function shutdown(signal) {
   console.log(`🛑 Nhận ${signal}, đang dừng server...`);
   stopAbandonedCartReminderWorker();
+  stopEngagedFollowUpReminderWorker();
   stopImageService();
   if (!server) process.exit(0);
 
@@ -483,6 +495,7 @@ async function startServer() {
     await checkPageToken();
     startSheetOutboxWorker();
     startAbandonedCartReminderWorker();
+    startEngagedFollowUpReminderWorker();
   });
 }
 
@@ -512,5 +525,7 @@ module.exports = {
   redactSensitiveText,
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,
-  startAbandonedCartReminderWorker
+  scanEngagedFollowUpReminders,
+  startAbandonedCartReminderWorker,
+  startEngagedFollowUpReminderWorker
 };

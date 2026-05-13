@@ -102,6 +102,14 @@ function createWebhook({
     return /(?:khong\s*hieu|tra\s*loi\s*gi|noi\s*gi|bot|tu\s*van\s*te|hoi\s*mai|lau\s*the|buc\s*minh|kho\s*chiu|lua\s*dao|chan\s*the|mat\s*thoi\s*gian)/.test(t);
   }
 
+  function shouldTrackEngagedFollowUp(text, payload = '') {
+    const normalized = normalizeText(text);
+    if (!normalized) return false;
+    if (String(payload || '').trim()) return true;
+    if (extractRequestedProductCodes(text).length) return true;
+    return /(?:ma|mau|gia|tu van|goi y|bao nhieu|ship|dia chi|chot|dat|mua|order|combo|hang|san pham|menu)/.test(normalized);
+  }
+
   const effectiveUseGemini = useGemini && isAiFallbackEnabled(shopConfig);
   const leadCaptureEnabled = isLeadCaptureEnabled(shopConfig);
   const orderFlowEnabled = isOrderFlowEnabled(shopConfig);
@@ -224,6 +232,12 @@ function createWebhook({
     }
 
     maybeResetTimedOutSession(senderId, userText);
+    if (typeof storage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload)) {
+      storage.setEngagedFollowUp(senderId, {
+        at: new Date().toISOString(),
+        note: userText
+      });
+    }
 
     // Khách yêu cầu gặp nhân viên → tạm dừng bot, ghi log
     if (wantsHuman(userText)) {

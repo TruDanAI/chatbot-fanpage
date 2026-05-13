@@ -74,6 +74,28 @@ function positiveNumber(value, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function followUpMetaFromContext(context = {}) {
+  const meta = {};
+  if (trimText(context.engagedFollowUpAt)) meta.engagedFollowUpAt = trimText(context.engagedFollowUpAt);
+  if (trimText(context.engagedFollowUpLastNote)) meta.engagedFollowUpLastNote = trimText(context.engagedFollowUpLastNote);
+  if (trimText(context.engagedFollowUpReminderSentAt)) {
+    meta.engagedFollowUpReminderSentAt = trimText(context.engagedFollowUpReminderSentAt);
+  }
+  if (Number.isFinite(Number(context.engagedFollowUpReminderIdleMs))) {
+    meta.engagedFollowUpReminderIdleMs = Number(context.engagedFollowUpReminderIdleMs);
+  }
+  if (trimText(context.engagedFollowUpReminderFailedAt)) {
+    meta.engagedFollowUpReminderFailedAt = trimText(context.engagedFollowUpReminderFailedAt);
+  }
+  if (Number.isFinite(Number(context.engagedFollowUpReminderFailedStatus))) {
+    meta.engagedFollowUpReminderFailedStatus = Number(context.engagedFollowUpReminderFailedStatus);
+  }
+  if (trimText(context.engagedFollowUpReminderFailedError)) {
+    meta.engagedFollowUpReminderFailedError = trimText(context.engagedFollowUpReminderFailedError).slice(0, 300);
+  }
+  return meta;
+}
+
 function role(value) {
   const normalized = trimText(value) || 'system';
   return ['user', 'model', 'bot', 'system'].includes(normalized) ? normalized : 'system';
@@ -243,7 +265,7 @@ function createPostgresStorageAdapter(options = {}) {
     const conversations = await client.query(
       `
         SELECT sender_id, session_state, last_product_code, last_user_at,
-               handoff_until, timed_out_at, abandoned_order_draft
+               handoff_until, timed_out_at, abandoned_order_draft, meta
         FROM conversations
         WHERE tenant_id = $1 AND page_id = $2
       `,
@@ -259,6 +281,28 @@ function createPostgresStorageAdapter(options = {}) {
         timedOutAt: parseTimestamp(row.timed_out_at) || '',
         abandonedOrderDraft: normalizeJsonObject(row.abandoned_order_draft)
       };
+      const meta = normalizeJsonObject(row.meta);
+      if (parseTimestamp(meta.engagedFollowUpAt)) {
+        state.context[senderId].engagedFollowUpAt = parseTimestamp(meta.engagedFollowUpAt);
+      }
+      if (trimText(meta.engagedFollowUpLastNote)) {
+        state.context[senderId].engagedFollowUpLastNote = trimText(meta.engagedFollowUpLastNote);
+      }
+      if (parseTimestamp(meta.engagedFollowUpReminderSentAt)) {
+        state.context[senderId].engagedFollowUpReminderSentAt = parseTimestamp(meta.engagedFollowUpReminderSentAt);
+      }
+      if (Number.isFinite(Number(meta.engagedFollowUpReminderIdleMs))) {
+        state.context[senderId].engagedFollowUpReminderIdleMs = Number(meta.engagedFollowUpReminderIdleMs);
+      }
+      if (parseTimestamp(meta.engagedFollowUpReminderFailedAt)) {
+        state.context[senderId].engagedFollowUpReminderFailedAt = parseTimestamp(meta.engagedFollowUpReminderFailedAt);
+      }
+      if (Number.isFinite(Number(meta.engagedFollowUpReminderFailedStatus))) {
+        state.context[senderId].engagedFollowUpReminderFailedStatus = Number(meta.engagedFollowUpReminderFailedStatus);
+      }
+      if (trimText(meta.engagedFollowUpReminderFailedError)) {
+        state.context[senderId].engagedFollowUpReminderFailedError = trimText(meta.engagedFollowUpReminderFailedError).slice(0, 300);
+      }
       const handoffMs = parseTimeMs(row.handoff_until);
       if (Number.isFinite(handoffMs) && handoffMs > Date.now()) state.handoff[senderId] = handoffMs;
     });
@@ -381,7 +425,7 @@ function createPostgresStorageAdapter(options = {}) {
           last_user_at, handoff_until, timed_out_at, abandoned_order_draft,
           meta, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, '{}'::jsonb, now(), now())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, now(), now())
         ON CONFLICT (tenant_id, page_id, sender_id)
         DO UPDATE SET
           session_state = EXCLUDED.session_state,
@@ -390,6 +434,7 @@ function createPostgresStorageAdapter(options = {}) {
           handoff_until = EXCLUDED.handoff_until,
           timed_out_at = EXCLUDED.timed_out_at,
           abandoned_order_draft = EXCLUDED.abandoned_order_draft,
+          meta = EXCLUDED.meta,
           updated_at = now()
       `,
       [
@@ -401,7 +446,8 @@ function createPostgresStorageAdapter(options = {}) {
         parseTimestamp(context.lastUserAt),
         handoffUntil,
         parseTimestamp(context.timedOutAt),
-        JSON.stringify(normalizeJsonObject(context.abandonedOrderDraft))
+        JSON.stringify(normalizeJsonObject(context.abandonedOrderDraft)),
+        JSON.stringify(followUpMetaFromContext(context))
       ]
     ));
   }
@@ -921,6 +967,100 @@ function createPostgresStorageAdapter(options = {}) {
       state.context[userId].orderDraft = next;
       void persistOrder(userId);
       return cloneOrderDraft(next);
+    },
+
+    setEngagedFollowUp(userId, details = {}) {
+      assertReady();
+      if (!userId) return {};
+      if (!state.context[userId]) state.context[userId] = {};
+      const current = state.context[userId];
+      const next = {
+        ...current,
+        engagedFollowUpAt: String(details.at || new Date().toISOString())
+      };
+      const note = trimText(details.note).slice(0, 300);
+      if (note) next.engagedFollowUpLastNote = note;
+      delete next.engagedFollowUpReminderSentAt;
+      delete next.engagedFollowUpReminderIdleMs;
+      delete next.engagedFollowUpReminderFailedAt;
+      delete next.engagedFollowUpReminderFailedStatus;
+      delete next.engagedFollowUpReminderFailedError;
+      state.context[userId] = next;
+      void upsertConversation(userId);
+      return { ...next };
+    },
+
+    listEngagedFollowUpCandidates(options = {}) {
+      assertReady();
+      const nowMs = parseTimeMs(options.now == null ? Date.now() : options.now);
+      if (!Number.isFinite(nowMs)) return [];
+      const idleMs = positiveNumber(options.idleMs, 2 * 60 * 60 * 1000);
+      const maxAgeMs = positiveNumber(options.maxAgeMs, 3 * 24 * 60 * 60 * 1000);
+      const limit = Math.max(1, Math.floor(positiveNumber(options.limit, 50)));
+      const result = [];
+
+      for (const [userId, context] of Object.entries(state.context || {})) {
+        if (result.length >= limit) break;
+        if (!context) continue;
+        if (trimText(context.sessionState).toUpperCase() === 'CONFIRMED') continue;
+        if (context.engagedFollowUpReminderSentAt || context.engagedFollowUpReminderFailedAt) continue;
+
+        const handoffUntil = Number(state.handoff?.[userId] || 0);
+        if (handoffUntil && nowMs <= handoffUntil) continue;
+        if (handoffUntil && nowMs > handoffUntil) {
+          delete state.handoff[userId];
+          void upsertConversation(userId);
+        }
+
+        const engagedAtMs = parseTimeMs(context.engagedFollowUpAt || context.lastUserAt);
+        if (!Number.isFinite(engagedAtMs)) continue;
+        const idleForMs = nowMs - engagedAtMs;
+        if (idleForMs < idleMs || idleForMs > maxAgeMs) continue;
+
+        result.push({
+          userId,
+          engagedAt: context.engagedFollowUpAt || '',
+          idleMs: idleForMs,
+          sessionState: context.sessionState || '',
+          lastProductCode: context.lastProductCode || '',
+          note: context.engagedFollowUpLastNote || ''
+        });
+      }
+      return result;
+    },
+
+    markEngagedFollowUpReminderSent(userId, details = {}) {
+      assertReady();
+      if (!userId || !state.context[userId]) return {};
+      const current = state.context[userId];
+      const next = {
+        ...current,
+        engagedFollowUpReminderSentAt: String(details.at || new Date().toISOString())
+      };
+      const idleMs = Number(details.idleMs);
+      if (Number.isFinite(idleMs) && idleMs >= 0) next.engagedFollowUpReminderIdleMs = idleMs;
+      delete next.engagedFollowUpReminderFailedAt;
+      delete next.engagedFollowUpReminderFailedStatus;
+      delete next.engagedFollowUpReminderFailedError;
+      state.context[userId] = next;
+      void upsertConversation(userId);
+      return { ...next };
+    },
+
+    markEngagedFollowUpReminderFailed(userId, details = {}) {
+      assertReady();
+      if (!userId || !state.context[userId]) return {};
+      const current = state.context[userId];
+      const next = {
+        ...current,
+        engagedFollowUpReminderFailedAt: String(details.at || new Date().toISOString())
+      };
+      const status = Number(details.status);
+      if (Number.isFinite(status)) next.engagedFollowUpReminderFailedStatus = status;
+      if (details.error) next.engagedFollowUpReminderFailedError = String(details.error).slice(0, 300);
+      state.context[userId] = next;
+      void upsertConversation(userId);
+      return { ...next };
     },
 
     seenMid(mid) {
