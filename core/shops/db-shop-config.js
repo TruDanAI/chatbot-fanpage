@@ -24,6 +24,13 @@ function boolValue(value, fallback = false) {
   return /^(1|true|yes|on)$/i.test(String(value).trim());
 }
 
+const BOT_MODES = new Set(['menu_code_handoff', 'menu_only', 'handoff_only', 'disabled']);
+
+function botModeValue(value, fallback = 'disabled') {
+  const normalized = trimText(value).toLowerCase();
+  return BOT_MODES.has(normalized) ? normalized : fallback;
+}
+
 function numberValue(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
@@ -109,10 +116,11 @@ function groupAssets(assets = []) {
 function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [], assets = [], tenantId = '' } = {}) {
   const settingsJson = jsonObject(settings.settings_json);
   const botModeJson = jsonObject(settingsJson.botMode || settingsJson.bot_mode);
-  const botModeName = trimText(settings.bot_mode || botModeJson.name || 'disabled');
+  const botModeName = botModeValue(settings.bot_mode || botModeJson.name, 'disabled');
   const fallbackReply = trimText(settings.fallback_text || settingsJson.fallbackReply);
   const handoffMessage = trimText(settings.handoff_message || botModeJson.handoffMessage);
   const menuIntroText = trimText(settings.menu_intro_text || settingsJson.menuIntroText);
+  const handoffEnabled = boolValue(settings.handoff_enabled, boolValue(botModeJson.handoffEnabled, false));
   const groupedAssets = groupAssets(assets);
 
   return {
@@ -120,7 +128,7 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
     minAge: numberValue(settingsJson.minAge) || 18,
     botMode: {
       name: botModeName,
-      handoffEnabled: boolValue(settings.handoff_enabled, boolValue(botModeJson.handoffEnabled, false)),
+      handoffEnabled,
       aiFallbackEnabled: boolValue(botModeJson.aiFallbackEnabled, false),
       orderFlowEnabled: boolValue(botModeJson.orderFlowEnabled, false),
       leadCaptureEnabled: boolValue(botModeJson.leadCaptureEnabled, false),
@@ -141,6 +149,13 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
       ...jsonObject(settingsJson.policies)
     },
     recommendations: jsonObject(settingsJson.recommendations),
+    chatBehaviorSettings: {
+      botMode: botModeName,
+      handoffEnabled,
+      handoffMessage,
+      menuIntroText,
+      fallbackText: fallbackReply
+    },
     hotCarouselProductCodes: jsonArray(settingsJson.hotCarouselProductCodes),
     keywordProducts: {},
     keywordTriggers: {},

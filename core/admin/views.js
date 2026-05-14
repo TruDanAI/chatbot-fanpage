@@ -180,6 +180,16 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .product-form button, .inline-action button { min-height: 32px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; cursor: pointer; }
     .product-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
     .product-form .required { color: var(--danger); }
+    .settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 14px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .settings-form label { display: grid; gap: 5px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+    .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
+    .settings-form textarea { min-height: 82px; resize: vertical; }
+    .settings-form .wide { grid-column: 1 / -1; }
+    .settings-form .checkbox-label { display: inline-flex; align-items: center; gap: 8px; text-transform: none; font-size: 13px; }
+    .settings-form .checkbox-label input { width: 16px; height: 16px; }
+    .settings-form .help { color: var(--muted); font-size: 12px; font-weight: 400; text-transform: none; }
+    .settings-form button { width: fit-content; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 7px 11px; cursor: pointer; }
+    .settings-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
     .product-name { min-width: 190px; }
     .product-actions { display: grid; gap: 6px; min-width: 86px; }
     .product-actions .meta { max-width: 180px; }
@@ -595,6 +605,47 @@ function renderProductStatusActions(shopId = '', product = {}) {
   `;
 }
 
+function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/settings`;
+  const botMode = String(settings?.bot_mode || 'disabled');
+  const modeOptions = [
+    ['menu_code_handoff', 'Menu code handoff'],
+    ['menu_only', 'Menu only'],
+    ['handoff_only', 'Handoff only'],
+    ['disabled', 'Disabled']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+
+  return `<form class="settings-form" method="post" action="${escapeHtml(action)}">
+    <label>Bot mode
+      <select name="bot_mode">${modeOptions}</select>
+      <span class="help">Controls which safe runtime behavior mode this shop uses.</span>
+    </label>
+    <label class="checkbox-label">
+      <input type="hidden" name="handoff_enabled" value="false">
+      <input type="checkbox" name="handoff_enabled" value="true"${settings?.handoff_enabled ? ' checked' : ''}>
+      Enable handoff
+    </label>
+    <label class="wide">Handoff message
+      <textarea name="handoff_message" maxlength="1000">${escapeHtml(settings?.handoff_message || '')}</textarea>
+      <span class="help">Sent when the bot hands a customer to staff.</span>
+    </label>
+    <label class="wide">Menu intro text
+      <textarea name="menu_intro_text" maxlength="1000">${escapeHtml(settings?.menu_intro_text || '')}</textarea>
+      <span class="help">Shown before menu or product-list content.</span>
+    </label>
+    <label class="wide">Fallback text
+      <textarea name="fallback_text" maxlength="1000">${escapeHtml(settings?.fallback_text || '')}</textarea>
+      <span class="help">Used when the bot cannot confidently answer.</span>
+    </label>
+    <div class="form-actions">
+      <button type="submit">Save settings</button>
+      <span class="meta">Text is trimmed on save. No image or rule-engine changes here.</span>
+    </div>
+  </form>`;
+}
+
 function renderShopDetailHtml(model = {}) {
   const shop = model.shop || {};
   const assets = model.assets || {};
@@ -625,7 +676,9 @@ function renderShopDetailHtml(model = {}) {
         </tr>
       `)}
 
-      <h2>Settings</h2>
+      ${renderProductFlash(model.productFlash || {})}
+      <h2>Chat Behavior Settings</h2>
+      ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
       <table><tbody>
         <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
         <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
@@ -638,7 +691,6 @@ function renderShopDetailHtml(model = {}) {
       ${renderJsonBlock(model.settings?.settings_json || {})}
 
       <section class="product-section">
-        ${renderProductFlash(model.productFlash || {})}
         <div class="product-toolbar">
           <h2>Products</h2>
           <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>

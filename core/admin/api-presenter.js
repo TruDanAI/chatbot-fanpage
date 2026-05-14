@@ -434,6 +434,24 @@ function presentProductWriteApi(model = {}) {
   };
 }
 
+function presentShopSettingsWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    settings: presentShopSettings(model.settings || {})
+  };
+}
+
+function presentShopSettingsReadApi(model = {}) {
+  return {
+    schemaReady: model.schemaReady !== false,
+    shop_id: model.shop?.id || model.shopId || '',
+    settings: model.settings ? presentShopSettings(model.settings) : null,
+    ...(model.message ? { message: limitText(model.message, 160) } : {})
+  };
+}
+
 module.exports = {
   maskSensitiveText,
   presentAuditApi,
@@ -441,6 +459,8 @@ module.exports = {
   presentInternalNotesApi,
   presentOperations,
   presentProductWriteApi,
+  presentShopSettingsReadApi,
+  presentShopSettingsWriteApi,
   presentShopDetailApi,
   presentShopsApi,
   presentUserDetailApi

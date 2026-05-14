@@ -15,6 +15,7 @@ const { createDashboardRepository } = require('../core/admin/dashboard-repositor
 const { PERMISSIONS } = require('../core/admin-auth');
 const { createPostgresInternalNoteService } = require('../core/admin/internal-notes');
 const { createPostgresProductWriteService } = require('../core/admin/product-writes');
+const { createPostgresShopSettingsWriteService } = require('../core/admin/shop-settings-writes');
 
 function createApp() {
   const routes = {};
@@ -559,6 +560,36 @@ function createProductWriteServiceStub({ failWith, createdProduct, updatedProduc
       return {
         shopId: input.shopId,
         product: archivedProduct || { ...baseProduct, status: 'archived', enabled: false }
+      };
+    }
+  };
+}
+
+function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async updateSettings(input = {}) {
+      calls.push({ method: 'updateSettings', input });
+      if (failWith) throw failWith;
+      const body = input.body || {};
+      return {
+        shopId: input.shopId,
+        settings: updatedSettings || {
+          shop_id: input.shopId,
+          bot_mode: String(body.bot_mode || 'disabled').trim(),
+          handoff_enabled: Array.isArray(body.handoff_enabled)
+            ? body.handoff_enabled.some(item => /^(1|true|yes|on|enabled|active)$/i.test(String(item || '').trim()))
+            : /^(1|true|yes|on|enabled|active)$/i.test(String(body.handoff_enabled || '').trim()),
+          handoff_message: String(body.handoff_message || '').trim(),
+          menu_intro_text: String(body.menu_intro_text || '').trim(),
+          fallback_text: String(body.fallback_text || '').trim(),
+          settings_json: {
+            accessToken: 'do-not-return',
+            nested: { api_secret: 'do-not-return' }
+          },
+          updated_at: '2026-05-12T06:00:00.000Z'
+        }
       };
     }
   };
@@ -2249,6 +2280,65 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Archive this product? It will be hidden from active use, not deleted.');
   });
 
+  it('shop detail HTML renders chat behavior settings edit form', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      query: { productMessage: 'settings-updated' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Chat Behavior Settings');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/settings"');
+    expect(res.body).toContain('name="bot_mode"');
+    expect(res.body).toContain('value="menu_code_handoff" selected');
+    expect(res.body).toContain('name="handoff_enabled"');
+    expect(res.body).toContain('name="handoff_message"');
+    expect(res.body).toContain('name="menu_intro_text"');
+    expect(res.body).toContain('name="fallback_text"');
+    expect(res.body).toContain('Save settings');
+    expect(res.body).toContain('Chat behavior settings updated.');
+    expect(res.body.includes('do-not-return')).toBeFalse();
+  });
+
+  it('shop settings API reads current sanitized settings', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId/settings'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.schemaReady).toBeTrue();
+    expect(body.shop_id).toBe('adult-shop');
+    expect(body.settings.bot_mode).toBe('menu_code_handoff');
+    expect(body.settings.settings_json.minAge).toBe(18);
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('accessToken')).toBeFalse();
+    expect(bodyText.includes('api_secret')).toBeFalse();
+  });
+
   it('shop detail HTML filters products by code/name and status without exposing secrets', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -2436,6 +2526,110 @@ describe('admin dashboard routes', () => {
       expect(bodyText.includes('relation')).toBeFalse();
       expect(bodyText.includes('postgres://secret')).toBeFalse();
     }
+  });
+
+  it('shop settings update API trims input and returns sanitized settings', async () => {
+    const app = createApp();
+    const settingsWrites = createShopSettingsWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopSettingsWriteService: settingsWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['PATCH /admin/api/shops/:shopId/settings'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        bot_mode: ' menu_only ',
+        handoff_enabled: 'true',
+        handoff_message: ' Staff will reply ',
+        menu_intro_text: ' Menu intro ',
+        fallback_text: ' Fallback ',
+        token: 'do-not-return'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.settings.bot_mode).toBe('menu_only');
+    expect(body.settings.handoff_enabled).toBeTrue();
+    expect(body.settings.handoff_message).toBe('Staff will reply');
+    expect(body.settings.settings_json.accessToken).toBe(undefined);
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('api_secret')).toBeFalse();
+    expect(settingsWrites.calls[0].method).toBe('updateSettings');
+    expect(settingsWrites.calls[0].input.shopId).toBe('adult-shop');
+  });
+
+  it('shop settings update API maps invalid bot mode and missing schema to safe errors', async () => {
+    for (const item of [
+      { code: 'invalid_bot_mode', status: 400, error: 'invalid_bot_mode' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'settings_commit_failed', status: 500, error: 'settings_commit_failed' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shop_settings" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopSettingsWriteService: createShopSettingsWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['PATCH /admin/api/shops/:shopId/settings'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { bot_mode: 'invalid' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('shop settings HTML update redirects with success banner key', async () => {
+    const app = createApp();
+    const settingsWrites = createShopSettingsWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopSettingsWriteService: settingsWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/settings'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        bot_mode: 'disabled',
+        handoff_enabled: ['false'],
+        handoff_message: '',
+        menu_intro_text: '',
+        fallback_text: ''
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/adult-shop?productMessage=settings-updated');
+    expect(settingsWrites.calls[0].input.body.handoff_enabled).toEqual(['false']);
   });
 
   it('shops API trả schemaReady=false khi thiếu multi-shop schema', async () => {
@@ -3160,6 +3354,232 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(updateQuery.params[2]).toBe('DB1');
     expect(updateQuery.params[3]).toBe('Updated Product');
     expect(queries.some(item => /^DELETE\b/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+  });
+
+  it('shop settings write service validates bot mode before UPDATE', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
+        }
+        if (normalized.includes('FROM shop_settings')) {
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: 'handoff',
+              menu_intro_text: 'menu',
+              fallback_text: 'fallback',
+              settings_json: {}
+            }]
+          };
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresShopSettingsWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.updateSettings({
+        principal: {
+          id: 'admin-1',
+          roles: ['maintainer'],
+          tenantId: 'default',
+          pageId: 'page',
+          authMethod: 'static_bearer'
+        },
+        shopId: 'adult-shop',
+        body: { bot_mode: 'invalid_mode' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('invalid_bot_mode');
+    expect(queries.some(item => /^UPDATE shop_settings/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_settings/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('shop settings write service updates settings, writes audit, and commits atomically', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN') return { rows: [] };
+        if (normalized === 'COMMIT') return { rows: [], command: 'COMMIT' };
+        if (normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
+        }
+        if (normalized.includes('FROM shop_settings')) {
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: 'old',
+              menu_intro_text: 'old menu',
+              fallback_text: 'old fallback',
+              settings_json: { minAge: 18 }
+            }]
+          };
+        }
+        if (/^INSERT INTO shop_settings/i.test(normalized)) {
+          expect(normalized).toContain('ON CONFLICT (shop_id) DO UPDATE');
+          expect(params.slice(0, 6)).toEqual([
+            'adult-shop',
+            'menu_only',
+            false,
+            'Staff will reply',
+            'Menu intro',
+            'Fallback'
+          ]);
+          return {
+            rows: [{
+              shop_id: params[0],
+              bot_mode: params[1],
+              handoff_enabled: params[2],
+              handoff_message: params[3],
+              menu_intro_text: params[4],
+              fallback_text: params[5],
+              settings_json: JSON.parse(params[6]),
+              updated_at: '2026-05-12T06:00:00.000Z'
+            }]
+          };
+        }
+        if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+          const metadata = JSON.parse(params[12]);
+          expect(params[5]).toBe('admin.shop_settings.update');
+          expect(params[6]).toBe('shop_settings');
+          expect(params[7]).toBe('adult-shop');
+          expect(metadata.shop_id).toBe('adult-shop');
+          expect(metadata.bot_mode).toBe('menu_only');
+          expect(metadata.handoff_message).toBe(undefined);
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresShopSettingsWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    const result = await service.updateSettings({
+      principal: {
+        id: 'admin-1',
+        roles: ['maintainer'],
+        tenantId: 'default',
+        pageId: 'page',
+        authMethod: 'static_bearer'
+      },
+      shopId: 'adult-shop',
+      body: {
+        bot_mode: ' menu_only ',
+        handoff_enabled: 'false',
+        handoff_message: ' Staff will reply ',
+        menu_intro_text: ' Menu intro ',
+        fallback_text: ' Fallback '
+      }
+    });
+
+    expect(result.settings.bot_mode).toBe('menu_only');
+    expect(result.settings.handoff_enabled).toBeFalse();
+    expect(result.settings.handoff_message).toBe('Staff will reply');
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeFalse();
+  });
+
+  it('shop settings write service fails closed when audit insert fails', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized === 'COMMIT') return { rows: [], command: 'COMMIT' };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'adult-shop', slug: 'adult-shop' }] };
+        }
+        if (normalized.includes('FROM shop_settings')) {
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: 'old',
+              menu_intro_text: 'old menu',
+              fallback_text: 'old fallback',
+              settings_json: {}
+            }]
+          };
+        }
+        if (/^INSERT INTO shop_settings/i.test(normalized)) {
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              bot_mode: params[1],
+              handoff_enabled: params[2],
+              handoff_message: params[3],
+              menu_intro_text: params[4],
+              fallback_text: params[5],
+              settings_json: {},
+              updated_at: '2026-05-12T06:00:00.000Z'
+            }]
+          };
+        }
+        if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+          const err = new Error('relation "admin_audit_log" does not exist at postgres://secret');
+          err.code = '42P01';
+          throw err;
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresShopSettingsWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.updateSettings({
+        principal: {
+          id: 'admin-1',
+          roles: ['maintainer'],
+          tenantId: 'default',
+          pageId: 'page',
+          authMethod: 'static_bearer'
+        },
+        shopId: 'adult-shop',
+        body: { bot_mode: 'disabled' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('42P01');
+    expect(queries.some(item => /^INSERT INTO shop_settings/i.test(item.sql))).toBeTrue();
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
   });

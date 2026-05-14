@@ -143,7 +143,17 @@ describe('db shop config resolver', () => {
     expect(result.page.page_id).toBe('page_adult');
     expect(result.config.shopName).toBe('Adult Shop');
     expect(result.config.botMode.name).toBe('menu_code_handoff');
+    expect(result.config.botMode.handoffEnabled).toBeTrue();
     expect(result.config.botMode.handoffMessage).toBe('DB handoff message');
+    expect(result.config.botMode.menuIntroText).toBe('DB menu intro');
+    expect(result.config.fallbackReply).toBe('DB fallback');
+    expect(result.config.chatBehaviorSettings).toEqual({
+      botMode: 'menu_code_handoff',
+      handoffEnabled: true,
+      handoffMessage: 'DB handoff message',
+      menuIntroText: 'DB menu intro',
+      fallbackText: 'DB fallback'
+    });
     expect(result.config.botMode.productCodeLookupEnabled).toBeTrue();
     expect(result.config.policies.privacy).toBe('DB privacy');
     expect(result.products.map(product => product.code)).toEqual(['DB1']);
@@ -163,5 +173,36 @@ describe('db shop config resolver', () => {
 
     expect(result.found).toBeFalse();
     expect(result.reason).toBe('page_not_found');
+  });
+
+  it('normalizes missing or invalid chat behavior settings to safe fallbacks', async () => {
+    const seed = makeSeed();
+    seed.mappings[0] = {
+      ...seed.mappings[0],
+      bot_mode: 'invalid_mode',
+      handoff_enabled: null,
+      handoff_message: '',
+      menu_intro_text: '',
+      fallback_text: '',
+      settings_json: {}
+    };
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeTrue();
+    expect(result.config.botMode.name).toBe('disabled');
+    expect(result.config.botMode.handoffEnabled).toBeFalse();
+    expect(result.config.fallbackReply).toBe(undefined);
+    expect(result.config.chatBehaviorSettings).toEqual({
+      botMode: 'disabled',
+      handoffEnabled: false,
+      handoffMessage: '',
+      menuIntroText: '',
+      fallbackText: ''
+    });
   });
 });

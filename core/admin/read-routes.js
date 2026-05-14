@@ -7,6 +7,7 @@ const {
   presentDashboardApi,
   presentInternalNotesApi,
   presentShopDetailApi,
+  presentShopSettingsReadApi,
   presentShopsApi,
   presentUserDetailApi
 } = require('./api-presenter');
@@ -31,7 +32,8 @@ const PRODUCT_FLASH_MESSAGES = {
   updated: { type: 'success', text: 'Product updated.' },
   enabled: { type: 'success', text: 'Product enabled.' },
   disabled: { type: 'success', text: 'Product disabled.' },
-  archived: { type: 'success', text: 'Product archived. No product was deleted.' }
+  archived: { type: 'success', text: 'Product archived. No product was deleted.' },
+  'settings-updated': { type: 'success', text: 'Chat behavior settings updated.' }
 };
 
 function createAdminReadHandlers({
@@ -474,6 +476,41 @@ function createAdminReadHandlers({
     }
   }
 
+  async function sendShopSettingsApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'shop_settings_api',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getShopDetail(shopId);
+      const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop_settings_api',
+        resourceId: shopId,
+        outcome: statusCode === 404 ? 'error' : 'success',
+        metadata: { schemaReady: model.schemaReady !== false, statusCode }
+      });
+      return res.status(statusCode).json(presentShopSettingsReadApi(model));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop_settings_api',
+        resourceId: shopId,
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      return res.status(err.statusCode || 500).json({ error: 'shop_settings_read_failed' });
+    }
+  }
+
   async function sendUserDetailApi(req, res) {
     const senderId = String(req.params.senderId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -633,6 +670,7 @@ function createAdminReadHandlers({
     sendInternalNotesApi,
     sendShopDetail,
     sendShopDetailApi,
+    sendShopSettingsApi,
     sendShops,
     sendShopsApi,
     sendUserDetail,
