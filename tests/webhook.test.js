@@ -123,6 +123,18 @@ function markReturningCustomer(storage, senderId, daysAgo = 1) {
   storage.setLastUserAt(senderId, at);
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitFor(predicate, message = 'condition was not met') {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await delay(5);
+  }
+  throw new Error(message);
+}
+
 function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) {
   const storage = options.storage || makeStorage();
   const rules = createRuleEngine({ products, config, contextStore: storage });
@@ -226,6 +238,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid) =>
       webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid), 'https://example.test'),
     handleRawEvent: (event, options = {}) => webhook.handleEvent(event, 'https://example.test', options),
+    registerWebhookRoutes: webhook.registerWebhookRoutes,
     sent,
     storage,
     getGeminiCalls: () => geminiCalls,
@@ -775,6 +788,77 @@ describe('webhook: menu_code_handoff mode', () => {
 
     expect(h.sent.length).toBe(3);
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
+  it('registered webhook route processes referral and message sequentially for one sender', async () => {
+    let activeResolvers = 0;
+    let maxActiveResolvers = 0;
+    const resolverOrder = [];
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async ({ event }) => {
+        const label = event.message?.text || 'referral';
+        activeResolvers += 1;
+        maxActiveResolvers = Math.max(maxActiveResolvers, activeResolvers);
+        resolverOrder.push(`start:${label}`);
+        await delay(10);
+        resolverOrder.push(`end:${label}`);
+        activeResolvers -= 1;
+        return null;
+      }
+    });
+    const senderId = 'route_ads_sibling_returning';
+    markReturningCustomer(h.storage, senderId, 5);
+
+    let postHandler = null;
+    const app = {
+      get() {},
+      post(_path, limiter, handler) {
+        postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+      }
+    };
+    h.registerWebhookRoutes(app);
+
+    let responseStatus = 0;
+    postHandler({
+      body: {
+        object: 'page',
+        entry: [{
+          id: 'page_route',
+          messaging: [
+            makeReferralEvent(senderId, 'ADS'),
+            makeEvent('bên kia rẻ hơn shop', senderId, 'm_route_ads_sibling')
+          ]
+        }]
+      },
+      protocol: 'https',
+      get(name) {
+        const headers = {
+          host: 'example.test',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-host': 'example.test'
+        };
+        return headers[String(name || '').toLowerCase()] || '';
+      }
+    }, {
+      sendStatus(code) {
+        responseStatus = code;
+      }
+    });
+
+    expect(responseStatus).toBe(200);
+    await waitFor(() => h.sent.length === 3, 'webhook route did not finish background event handling');
+
+    expect(maxActiveResolvers).toBe(1);
+    expect(resolverOrder).toEqual([
+      'start:referral',
+      'end:referral',
+      'start:bên kia rẻ hơn shop',
+      'end:bên kia rẻ hơn shop'
+    ]);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 

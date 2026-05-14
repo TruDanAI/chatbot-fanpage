@@ -378,17 +378,25 @@ function createWebhook({
         }
       }
 
-      for (const { event, pageId } of requestEvents) {
-        handleEvent(event, inferredBaseUrl, {
-          pageId,
-          requestMessageSenders,
-          requestAdsReferralSenders,
-          requestImageDedupe
-        }).catch(err => {
-          console.error('❌ handleEvent:', err.response?.data || err.message);
-        });
-      }
+      void processWebhookRequestEvents(requestEvents, inferredBaseUrl, {
+        requestMessageSenders,
+        requestAdsReferralSenders,
+        requestImageDedupe
+      });
     });
+  }
+
+  async function processWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions) {
+    for (const { event, pageId } of requestEvents) {
+      try {
+        await handleEvent(event, inferredBaseUrl, {
+          ...requestOptions,
+          pageId
+        });
+      } catch (err) {
+        console.error('❌ handleEvent:', err.response?.data || err.message);
+      }
+    }
   }
 
   async function handleEvent(event, baseUrlOverride = '', options = {}) {
