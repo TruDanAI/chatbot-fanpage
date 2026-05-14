@@ -94,6 +94,24 @@ function isProductCodeLookupEnabled(config = {}) {
   return mode.productCodeLookupEnabled !== false;
 }
 
+function isMenuSendingEnabled(config = {}) {
+  if (!isMenuCodeHandoffMode(config)) return true;
+  const mode = getModeOptions(config);
+  return mode.menuSendingEnabled !== false;
+}
+
+function isPostProductHandoffEnabled(config = {}) {
+  if (!isMenuCodeHandoffMode(config)) return true;
+  const mode = getModeOptions(config);
+  return mode.postProductHandoffEnabled !== false;
+}
+
+function isFallbackEnabled(config = {}) {
+  if (!isMenuCodeHandoffMode(config)) return true;
+  const mode = getModeOptions(config);
+  return mode.fallbackEnabled !== false;
+}
+
 function applyBotModeConfig(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return config;
 
@@ -131,9 +149,12 @@ module.exports = {
   getBotModeName,
   getMenuCodeHandoffMessage,
   isAiFallbackEnabled,
+  isFallbackEnabled,
   isFollowUpEnabled,
   isLeadCaptureEnabled,
+  isMenuSendingEnabled,
   isMenuCodeHandoffMode,
   isOrderFlowEnabled,
+  isPostProductHandoffEnabled,
   isProductCodeLookupEnabled
 };

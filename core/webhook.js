@@ -1,9 +1,12 @@
 const crypto = require('crypto');
 const {
   isAiFallbackEnabled,
+  isFallbackEnabled,
   isLeadCaptureEnabled,
+  isMenuSendingEnabled,
   isMenuCodeHandoffMode,
   isOrderFlowEnabled,
+  isPostProductHandoffEnabled,
   isProductCodeLookupEnabled
 } = require('./bot-mode');
 const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
@@ -157,11 +160,15 @@ function createWebhook({
 
   function createRuntimeMenuCodeHandoffHandler(runtime) {
     const productCodeLookupEnabled = isProductCodeLookupEnabled(runtime.shopConfig);
+    const menuSendingEnabled = isMenuSendingEnabled(runtime.shopConfig);
+    const postProductHandoffEnabled = isPostProductHandoffEnabled(runtime.shopConfig);
     return createMenuCodeHandoffHandler({
       storage: runtime.storage,
       shopConfig: runtime.shopConfig,
       handoffMs,
       productCodeLookupEnabled,
+      menuSendingEnabled,
+      postProductHandoffEnabled,
       buildDeterministicReply: runtime.buildDeterministicReply,
       extractRequestedProductCodes: runtime.extractRequestedProductCodes,
       normalizeText: runtime.normalizeText,
@@ -180,6 +187,7 @@ function createWebhook({
     runtime.effectiveUseGemini = runtime.useGemini && isAiFallbackEnabled(runtime.shopConfig);
     runtime.leadCaptureEnabled = isLeadCaptureEnabled(runtime.shopConfig);
     runtime.orderFlowEnabled = isOrderFlowEnabled(runtime.shopConfig);
+    runtime.fallbackEnabled = isFallbackEnabled(runtime.shopConfig);
     runtime.productCodeLookupEnabled = isProductCodeLookupEnabled(runtime.shopConfig);
     runtime.menuCodeHandoffMode = isMenuCodeHandoffMode(runtime.shopConfig);
     runtime.menuCodeHandoffHandler = runtime.menuCodeHandoffMode
@@ -303,6 +311,7 @@ function createWebhook({
       effectiveUseGemini,
       leadCaptureEnabled,
       orderFlowEnabled,
+      fallbackEnabled,
       menuCodeHandoffMode,
       menuCodeHandoffHandler,
       resolveQuickReplyPayload,
@@ -567,6 +576,11 @@ function createWebhook({
         trackEvent(senderId, 'deterministic_reply', userText, { stateBefore: stateBeforeReply });
         console.log('⚡ Trả lời rule-based, không gọi Gemini');
       } else if (!effectiveUseGemini) {
+        if (!fallbackEnabled) {
+          trackEvent(senderId, 'fallback_suppressed', userText, { reason: 'gemini_disabled' });
+          console.log('🧩 fallback disabled, không gửi fallback rule-based');
+          return;
+        }
         reply = buildFallbackReply(userText, senderId);
         usedFallbackReply = true;
         trackEvent(senderId, 'fallback_used', userText, { reason: 'gemini_disabled' });
@@ -578,6 +592,10 @@ function createWebhook({
       }
       if (isProbablyIncompleteReply(reply, userText)) {
         console.warn(`⚠️  Gemini trả lời có vẻ bị cụt, dùng fallback. Reply gốc: ${redactSensitiveText(reply).replace(/\n/g, ' ')}`);
+        if (!fallbackEnabled) {
+          trackEvent(senderId, 'fallback_suppressed', userText, { reason: 'incomplete_reply' });
+          return;
+        }
         reply = buildFallbackReply(userText, senderId);
         usedFallbackReply = true;
         trackEvent(senderId, 'fallback_used', userText, { reason: 'incomplete_reply' });
@@ -629,6 +647,13 @@ function createWebhook({
       if (shouldUseFallbackReply(err)) {
         try {
           await imagePromise;
+          if (!fallbackEnabled) {
+            trackEvent(senderId, 'fallback_suppressed', userText, {
+              reason: 'gemini_error',
+              status: geminiInfo.status || geminiInfo.code || geminiInfo.httpStatus || ''
+            });
+            return;
+          }
           const fallback = buildFallbackReply(userText, senderId);
           trackEvent(senderId, 'fallback_used', userText, {
             reason: 'gemini_error',

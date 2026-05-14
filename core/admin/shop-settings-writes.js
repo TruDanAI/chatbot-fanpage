@@ -5,6 +5,7 @@ const {
 } = require('../admin-auth');
 const { insertAuditLogEntry } = require('./audit');
 const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
+const { mergeRuleToggleInput, normalizeRuleToggles } = require('../rule-toggles');
 
 const SHOP_SETTINGS_WRITE_ACTIONS = Object.freeze({
   UPDATE: 'admin.shop_settings.update'
@@ -73,6 +74,12 @@ function assertTextLength(field, value) {
 
 function normalizeSettingsInput(existing = {}, body = {}) {
   const has = key => Object.prototype.hasOwnProperty.call(body, key);
+  const existingSettingsJson = jsonObject(existing.settings_json);
+  const existingRuleToggles = {
+    ...jsonObject(jsonObject(existingSettingsJson.botMode)),
+    ...jsonObject(existingSettingsJson.ruleToggles)
+  };
+  const ruleToggles = mergeRuleToggleInput(existingRuleToggles, body);
   const botMode = has('bot_mode')
     ? normalizeBotMode(body.bot_mode)
     : normalizeBotMode(existing.bot_mode);
@@ -98,7 +105,10 @@ function normalizeSettingsInput(existing = {}, body = {}) {
     handoff_message: handoffMessage,
     menu_intro_text: menuIntroText,
     fallback_text: fallbackText,
-    settings_json: jsonObject(existing.settings_json)
+    settings_json: {
+      ...existingSettingsJson,
+      ruleToggles
+    }
   };
 }
 
@@ -161,6 +171,7 @@ function createShopSettingsWriteRepository() {
           handoff_message = EXCLUDED.handoff_message,
           menu_intro_text = EXCLUDED.menu_intro_text,
           fallback_text = EXCLUDED.fallback_text,
+          settings_json = EXCLUDED.settings_json,
           updated_at = now()
       RETURNING shop_id, bot_mode, handoff_enabled, handoff_message, menu_intro_text,
                 fallback_text, settings_json, updated_at
@@ -275,7 +286,8 @@ function createPostgresShopSettingsWriteService({
             handoff_message_length: input.handoff_message.length,
             menu_intro_text_length: input.menu_intro_text.length,
             fallback_text_length: input.fallback_text.length
-          }
+          },
+          rule_toggles: normalizeRuleToggles(input.settings_json.ruleToggles)
         },
         requestContext
       });

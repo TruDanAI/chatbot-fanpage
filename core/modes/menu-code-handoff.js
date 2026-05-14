@@ -23,6 +23,8 @@ function createMenuCodeHandoffHandler({
   shopConfig,
   handoffMs,
   productCodeLookupEnabled,
+  menuSendingEnabled = true,
+  postProductHandoffEnabled = true,
   buildDeterministicReply,
   extractRequestedProductCodes = () => [],
   normalizeText,
@@ -134,15 +136,17 @@ function createMenuCodeHandoffHandler({
           buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride)
         );
         await sendMessage(senderId, reply);
-        await sendMessage(senderId, getMenuCodeHandoffMessage(shopConfig));
-        storage.setHandoff(senderId, Date.now() + handoffMs);
-        console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
+        if (postProductHandoffEnabled) {
+          await sendMessage(senderId, getMenuCodeHandoffMessage(shopConfig));
+          storage.setHandoff(senderId, Date.now() + handoffMs);
+          console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
+        }
         markLastUserAt(senderId);
         return;
       }
     }
 
-    if (adsReferral || firstTouch || isMenuQuestion(userText)) {
+    if (menuSendingEnabled && (adsReferral || firstTouch || isMenuQuestion(userText))) {
       showTyping(senderId);
       await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
       console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);

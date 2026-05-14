@@ -55,6 +55,14 @@ function makeSeed() {
           followUpEnabled: true,
           productCodeLookupEnabled: true
         },
+        ruleToggles: {
+          productCodeLookupEnabled: true,
+          menuSendingEnabled: false,
+          postProductHandoffEnabled: true,
+          fallbackEnabled: true,
+          leadCaptureEnabled: false,
+          unknownToggle: true
+        },
         policies: {
           privacy: 'DB privacy',
           payment: 'DB COD'
@@ -155,6 +163,18 @@ describe('db shop config resolver', () => {
       fallbackText: 'DB fallback'
     });
     expect(result.config.botMode.productCodeLookupEnabled).toBeTrue();
+    expect(result.config.botMode.menuSendingEnabled).toBeFalse();
+    expect(result.config.botMode.postProductHandoffEnabled).toBeTrue();
+    expect(result.config.botMode.fallbackEnabled).toBeTrue();
+    expect(result.config.botMode.leadCaptureEnabled).toBeFalse();
+    expect(result.config.ruleToggles).toEqual({
+      productCodeLookupEnabled: true,
+      menuSendingEnabled: false,
+      postProductHandoffEnabled: true,
+      fallbackEnabled: true,
+      leadCaptureEnabled: false
+    });
+    expect(result.config.ruleToggles.unknownToggle).toBe(undefined);
     expect(result.config.policies.privacy).toBe('DB privacy');
     expect(result.products.map(product => product.code)).toEqual(['DB1']);
     expect(result.products[0].price).toBe('150k');
@@ -204,5 +224,45 @@ describe('db shop config resolver', () => {
       menuIntroText: '',
       fallbackText: ''
     });
+    expect(result.config.ruleToggles).toEqual({
+      productCodeLookupEnabled: true,
+      menuSendingEnabled: true,
+      postProductHandoffEnabled: true,
+      fallbackEnabled: true,
+      leadCaptureEnabled: false
+    });
+  });
+
+  it('falls back invalid rule toggle values to safe defaults and ignores unknown toggles', async () => {
+    const seed = makeSeed();
+    seed.mappings[0] = {
+      ...seed.mappings[0],
+      settings_json: {
+        ruleToggles: {
+          productCodeLookupEnabled: 'maybe',
+          menuSendingEnabled: '',
+          postProductHandoffEnabled: 'invalid',
+          fallbackEnabled: 'no',
+          leadCaptureEnabled: 'yes',
+          rawSecretToggle: true
+        }
+      }
+    };
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeTrue();
+    expect(result.config.ruleToggles).toEqual({
+      productCodeLookupEnabled: true,
+      menuSendingEnabled: true,
+      postProductHandoffEnabled: true,
+      fallbackEnabled: false,
+      leadCaptureEnabled: true
+    });
+    expect(result.config.ruleToggles.rawSecretToggle).toBe(undefined);
   });
 });

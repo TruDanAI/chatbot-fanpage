@@ -1,3 +1,5 @@
+const { normalizeRuleToggles } = require('../rule-toggles');
+
 function escapeHtml(value = '') {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -185,6 +187,9 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
     .settings-form textarea { min-height: 82px; resize: vertical; }
     .settings-form .wide { grid-column: 1 / -1; }
+    .settings-form fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 0; }
+    .settings-form legend { color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+    .settings-checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 12px; margin-top: 6px; }
     .settings-form .checkbox-label { display: inline-flex; align-items: center; gap: 8px; text-transform: none; font-size: 13px; }
     .settings-form .checkbox-label input { width: 16px; height: 16px; }
     .settings-form .help { color: var(--muted); font-size: 12px; font-weight: 400; text-transform: none; }
@@ -608,6 +613,11 @@ function renderProductStatusActions(shopId = '', product = {}) {
 function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/settings`;
   const botMode = String(settings?.bot_mode || 'disabled');
+  const settingsJson = settings?.settings_json || {};
+  const ruleToggles = normalizeRuleToggles({
+    ...(settingsJson.botMode || {}),
+    ...(settingsJson.ruleToggles || {})
+  });
   const modeOptions = [
     ['menu_code_handoff', 'Menu code handoff'],
     ['menu_only', 'Menu only'],
@@ -615,6 +625,21 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
     ['disabled', 'Disabled']
   ]
     .map(([value, label]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const toggleRows = [
+    ['productCodeLookupEnabled', 'Product code lookup'],
+    ['menuSendingEnabled', 'Menu/product list sending'],
+    ['postProductHandoffEnabled', 'Handoff after product code reply'],
+    ['fallbackEnabled', 'Fallback text'],
+    ['leadCaptureEnabled', 'Lead capture']
+  ]
+    .map(([name, label]) => `
+      <label class="checkbox-label">
+        <input type="hidden" name="${escapeHtml(name)}" value="false">
+        <input type="checkbox" name="${escapeHtml(name)}" value="true"${ruleToggles[name] ? ' checked' : ''}>
+        ${escapeHtml(label)}
+      </label>
+    `)
     .join('');
 
   return `<form class="settings-form" method="post" action="${escapeHtml(action)}">
@@ -627,6 +652,11 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
       <input type="checkbox" name="handoff_enabled" value="true"${settings?.handoff_enabled ? ' checked' : ''}>
       Enable handoff
     </label>
+    <fieldset class="wide">
+      <legend>Rule toggles</legend>
+      <div class="settings-checkbox-grid">${toggleRows}</div>
+      <span class="help">Per-shop runtime switches stored in settings_json.ruleToggles.</span>
+    </fieldset>
     <label class="wide">Handoff message
       <textarea name="handoff_message" maxlength="1000">${escapeHtml(settings?.handoff_message || '')}</textarea>
       <span class="help">Sent when the bot hands a customer to staff.</span>
@@ -685,6 +715,10 @@ function renderShopDetailHtml(model = {}) {
         <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
         <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
         <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+        <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
+          ...(model.settings?.settings_json?.botMode || {}),
+          ...(model.settings?.settings_json?.ruleToggles || {})
+        })))}</td></tr>
         <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
       </tbody></table>
       <h2>Settings JSON</h2>

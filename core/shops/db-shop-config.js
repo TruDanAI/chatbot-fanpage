@@ -1,3 +1,5 @@
+const { normalizeRuleToggles } = require('../rule-toggles');
+
 function text(value) {
   return value == null ? '' : String(value);
 }
@@ -121,6 +123,10 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
   const handoffMessage = trimText(settings.handoff_message || botModeJson.handoffMessage);
   const menuIntroText = trimText(settings.menu_intro_text || settingsJson.menuIntroText);
   const handoffEnabled = boolValue(settings.handoff_enabled, boolValue(botModeJson.handoffEnabled, false));
+  const ruleToggles = normalizeRuleToggles({
+    ...botModeJson,
+    ...jsonObject(settingsJson.ruleToggles)
+  });
   const groupedAssets = groupAssets(assets);
 
   return {
@@ -131,14 +137,17 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
       handoffEnabled,
       aiFallbackEnabled: boolValue(botModeJson.aiFallbackEnabled, false),
       orderFlowEnabled: boolValue(botModeJson.orderFlowEnabled, false),
-      leadCaptureEnabled: boolValue(botModeJson.leadCaptureEnabled, false),
+      leadCaptureEnabled: ruleToggles.leadCaptureEnabled,
       followUpEnabled: boolValue(botModeJson.followUpEnabled, true),
       recommendationEnabled: boolValue(botModeJson.recommendationEnabled, false),
-      productCodeLookupEnabled: boolValue(botModeJson.productCodeLookupEnabled, true),
-      menuSendingEnabled: boolValue(botModeJson.menuSendingEnabled, true),
+      productCodeLookupEnabled: ruleToggles.productCodeLookupEnabled,
+      menuSendingEnabled: ruleToggles.menuSendingEnabled,
+      postProductHandoffEnabled: ruleToggles.postProductHandoffEnabled,
+      fallbackEnabled: ruleToggles.fallbackEnabled,
       ...(handoffMessage ? { handoffMessage } : {}),
       ...(menuIntroText ? { menuIntroText } : {})
     },
+    ruleToggles,
     followUp: jsonObject(settingsJson.followUp),
     policies: {
       freeShipping: true,

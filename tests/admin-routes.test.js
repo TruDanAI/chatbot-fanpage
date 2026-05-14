@@ -15,7 +15,10 @@ const { createDashboardRepository } = require('../core/admin/dashboard-repositor
 const { PERMISSIONS } = require('../core/admin-auth');
 const { createPostgresInternalNoteService } = require('../core/admin/internal-notes');
 const { createPostgresProductWriteService } = require('../core/admin/product-writes');
-const { createPostgresShopSettingsWriteService } = require('../core/admin/shop-settings-writes');
+const {
+  createPostgresShopSettingsWriteService,
+  normalizeSettingsInput
+} = require('../core/admin/shop-settings-writes');
 
 function createApp() {
   const routes = {};
@@ -388,6 +391,13 @@ function createDashboardReaderStub() {
           fallback_text: 'fallback',
           settings_json: {
             minAge: 18,
+            ruleToggles: {
+              productCodeLookupEnabled: true,
+              menuSendingEnabled: false,
+              postProductHandoffEnabled: true,
+              fallbackEnabled: true,
+              leadCaptureEnabled: false
+            },
             accessToken: 'do-not-return',
             nested: {
               api_secret: 'do-not-return'
@@ -585,6 +595,13 @@ function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) 
           menu_intro_text: String(body.menu_intro_text || '').trim(),
           fallback_text: String(body.fallback_text || '').trim(),
           settings_json: {
+            ruleToggles: {
+              productCodeLookupEnabled: body.productCodeLookupEnabled === 'false' ? false : true,
+              menuSendingEnabled: body.menuSendingEnabled === 'false' ? false : true,
+              postProductHandoffEnabled: body.postProductHandoffEnabled === 'false' ? false : true,
+              fallbackEnabled: body.fallbackEnabled === 'false' ? false : true,
+              leadCaptureEnabled: body.leadCaptureEnabled === 'true'
+            },
             accessToken: 'do-not-return',
             nested: { api_secret: 'do-not-return' }
           },
@@ -2306,6 +2323,12 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('name="handoff_message"');
     expect(res.body).toContain('name="menu_intro_text"');
     expect(res.body).toContain('name="fallback_text"');
+    expect(res.body).toContain('Rule toggles');
+    expect(res.body).toContain('name="productCodeLookupEnabled"');
+    expect(res.body).toContain('name="menuSendingEnabled"');
+    expect(res.body).toContain('name="postProductHandoffEnabled"');
+    expect(res.body).toContain('name="fallbackEnabled"');
+    expect(res.body).toContain('name="leadCaptureEnabled"');
     expect(res.body).toContain('Save settings');
     expect(res.body).toContain('Chat behavior settings updated.');
     expect(res.body.includes('do-not-return')).toBeFalse();
@@ -2550,6 +2573,12 @@ describe('admin dashboard routes', () => {
         handoff_message: ' Staff will reply ',
         menu_intro_text: ' Menu intro ',
         fallback_text: ' Fallback ',
+        productCodeLookupEnabled: 'false',
+        menuSendingEnabled: 'true',
+        postProductHandoffEnabled: 'false',
+        fallbackEnabled: 'true',
+        leadCaptureEnabled: 'true',
+        unknownToggle: 'true',
         token: 'do-not-return'
       }
     }), res);
@@ -2561,11 +2590,16 @@ describe('admin dashboard routes', () => {
     expect(body.settings.bot_mode).toBe('menu_only');
     expect(body.settings.handoff_enabled).toBeTrue();
     expect(body.settings.handoff_message).toBe('Staff will reply');
+    expect(body.settings.settings_json.ruleToggles.productCodeLookupEnabled).toBeFalse();
+    expect(body.settings.settings_json.ruleToggles.postProductHandoffEnabled).toBeFalse();
+    expect(body.settings.settings_json.ruleToggles.leadCaptureEnabled).toBeTrue();
+    expect(body.settings.settings_json.ruleToggles.unknownToggle).toBe(undefined);
     expect(body.settings.settings_json.accessToken).toBe(undefined);
     expect(bodyText.includes('do-not-return')).toBeFalse();
     expect(bodyText.includes('api_secret')).toBeFalse();
     expect(settingsWrites.calls[0].method).toBe('updateSettings');
     expect(settingsWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(settingsWrites.calls[0].input.body.unknownToggle).toBe('true');
   });
 
   it('shop settings update API maps invalid bot mode and missing schema to safe errors', async () => {
@@ -2623,13 +2657,20 @@ describe('admin dashboard routes', () => {
         handoff_enabled: ['false'],
         handoff_message: '',
         menu_intro_text: '',
-        fallback_text: ''
+        fallback_text: '',
+        productCodeLookupEnabled: ['false', 'true'],
+        menuSendingEnabled: ['false'],
+        postProductHandoffEnabled: ['false', 'true'],
+        fallbackEnabled: ['false', 'true'],
+        leadCaptureEnabled: ['false']
       }
     }), res);
 
     expect(res.statusCode).toBe(303);
     expect(res.headers.location).toBe('/admin/shops/adult-shop?productMessage=settings-updated');
     expect(settingsWrites.calls[0].input.body.handoff_enabled).toEqual(['false']);
+    expect(settingsWrites.calls[0].input.body.productCodeLookupEnabled).toEqual(['false', 'true']);
+    expect(settingsWrites.calls[0].input.body.menuSendingEnabled).toEqual(['false']);
   });
 
   it('shops API trả schemaReady=false khi thiếu multi-shop schema', async () => {
@@ -3414,6 +3455,33 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
   });
 
+  it('shop settings input normalizes invalid or missing rule toggles to defaults', () => {
+    const input = normalizeSettingsInput({
+      bot_mode: 'menu_code_handoff',
+      handoff_enabled: true,
+      settings_json: {
+        ruleToggles: {
+          productCodeLookupEnabled: 'invalid',
+          menuSendingEnabled: 'wat',
+          postProductHandoffEnabled: '',
+          fallbackEnabled: 'off',
+          leadCaptureEnabled: 'enabled',
+          unknownToggle: true
+        }
+      }
+    }, {
+      bot_mode: 'menu_code_handoff'
+    });
+
+    expect(input.settings_json.ruleToggles).toEqual({
+      productCodeLookupEnabled: true,
+      menuSendingEnabled: true,
+      postProductHandoffEnabled: true,
+      fallbackEnabled: false,
+      leadCaptureEnabled: true
+    });
+  });
+
   it('shop settings write service updates settings, writes audit, and commits atomically', async () => {
     const queries = [];
     class FakeClient {
@@ -3437,12 +3505,31 @@ describe('admin dashboard PostgreSQL reader', () => {
               handoff_message: 'old',
               menu_intro_text: 'old menu',
               fallback_text: 'old fallback',
-              settings_json: { minAge: 18 }
+              settings_json: {
+                shopName: 'Adult Shop',
+                minAge: 18,
+                botMode: { productCodeLookupEnabled: true },
+                followUp: { enabled: true },
+                policies: { privacy: 'masked' },
+                recommendations: { budget: ['DB1'] },
+                hotCarouselProductCodes: ['DB1'],
+                intents: { disabled: ['X'] },
+                templates: { systemBusy: 'busy' },
+                ruleToggles: {
+                  productCodeLookupEnabled: true,
+                  menuSendingEnabled: true,
+                  postProductHandoffEnabled: true,
+                  fallbackEnabled: true,
+                  leadCaptureEnabled: false,
+                  unknownToggle: true
+                }
+              }
             }]
           };
         }
         if (/^INSERT INTO shop_settings/i.test(normalized)) {
           expect(normalized).toContain('ON CONFLICT (shop_id) DO UPDATE');
+          expect(normalized).toContain('settings_json = EXCLUDED.settings_json');
           expect(params.slice(0, 6)).toEqual([
             'adult-shop',
             'menu_only',
@@ -3451,6 +3538,23 @@ describe('admin dashboard PostgreSQL reader', () => {
             'Menu intro',
             'Fallback'
           ]);
+          const mergedSettingsJson = JSON.parse(params[6]);
+          expect(mergedSettingsJson.shopName).toBe('Adult Shop');
+          expect(mergedSettingsJson.minAge).toBe(18);
+          expect(mergedSettingsJson.botMode.productCodeLookupEnabled).toBe(true);
+          expect(mergedSettingsJson.followUp.enabled).toBe(true);
+          expect(mergedSettingsJson.policies.privacy).toBe('masked');
+          expect(mergedSettingsJson.recommendations.budget).toEqual(['DB1']);
+          expect(mergedSettingsJson.hotCarouselProductCodes).toEqual(['DB1']);
+          expect(mergedSettingsJson.intents.disabled).toEqual(['X']);
+          expect(mergedSettingsJson.templates.systemBusy).toBe('busy');
+          expect(mergedSettingsJson.ruleToggles).toEqual({
+            productCodeLookupEnabled: false,
+            menuSendingEnabled: true,
+            postProductHandoffEnabled: true,
+            fallbackEnabled: true,
+            leadCaptureEnabled: true
+          });
           return {
             rows: [{
               shop_id: params[0],
@@ -3472,6 +3576,13 @@ describe('admin dashboard PostgreSQL reader', () => {
           expect(metadata.shop_id).toBe('adult-shop');
           expect(metadata.bot_mode).toBe('menu_only');
           expect(metadata.handoff_message).toBe(undefined);
+          expect(metadata.rule_toggles).toEqual({
+            productCodeLookupEnabled: false,
+            menuSendingEnabled: true,
+            postProductHandoffEnabled: true,
+            fallbackEnabled: true,
+            leadCaptureEnabled: true
+          });
           return { rows: [] };
         }
         throw new Error(`unexpected query: ${normalized}`);
@@ -3496,13 +3607,19 @@ describe('admin dashboard PostgreSQL reader', () => {
         handoff_enabled: 'false',
         handoff_message: ' Staff will reply ',
         menu_intro_text: ' Menu intro ',
-        fallback_text: ' Fallback '
+        fallback_text: ' Fallback ',
+        productCodeLookupEnabled: 'false',
+        leadCaptureEnabled: 'true',
+        unknownToggle: 'true'
       }
     });
 
     expect(result.settings.bot_mode).toBe('menu_only');
     expect(result.settings.handoff_enabled).toBeFalse();
     expect(result.settings.handoff_message).toBe('Staff will reply');
+    expect(result.settings.settings_json.ruleToggles.productCodeLookupEnabled).toBeFalse();
+    expect(result.settings.settings_json.ruleToggles.leadCaptureEnabled).toBeTrue();
+    expect(result.settings.settings_json.ruleToggles.unknownToggle).toBe(undefined);
     expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeFalse();

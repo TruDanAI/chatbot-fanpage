@@ -461,6 +461,54 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getConversationTurnCalls()).toBe(0);
   });
 
+  it('productCodeLookupEnabled=false skips product-code lookup', async () => {
+    const config = buildAdultRuntimeConfig();
+    config.botMode = {
+      ...(config.botMode || {}),
+      productCodeLookupEnabled: false
+    };
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'toggle_no_code_lookup', 1);
+
+    await h.handleText('cho xem MÃ8', 'toggle_no_code_lookup', 'm_toggle_no_code_lookup');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage.inHandoff('toggle_no_code_lookup')).toBeFalse();
+    expect(h.getGeminiCalls()).toBe(0);
+  });
+
+  it('menuSendingEnabled=false skips menu replies', async () => {
+    const config = buildAdultRuntimeConfig();
+    config.botMode = {
+      ...(config.botMode || {}),
+      menuSendingEnabled: false
+    };
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    await h.handleText('chào shop', 'toggle_no_menu', 'm_toggle_no_menu');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage.inHandoff('toggle_no_menu')).toBeFalse();
+    expect(h.storage.getLastUserAt('toggle_no_menu')).toBeTruthy();
+  });
+
+  it('postProductHandoffEnabled=false sends product info without handoff', async () => {
+    const config = buildAdultRuntimeConfig();
+    config.botMode = {
+      ...(config.botMode || {}),
+      postProductHandoffEnabled: false
+    };
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    await h.handleText('cho xem MÃ8', 'toggle_no_post_code_handoff', 'm_toggle_no_post_code_handoff');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma8.png'))).toBeTrue();
+    expect(textMessages[0]).toContain('680k');
+    expect(textMessages.includes(MENU_CODE_HANDOFF_MESSAGE)).toBeFalse();
+    expect(h.storage.inHandoff('toggle_no_post_code_handoff')).toBeFalse();
+  });
+
   it('out-of-scope text from returning customer sends no reply and has no side effects', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     markReturningCustomer(h.storage, 'minimal_no_ai', 1);
@@ -684,6 +732,31 @@ describe('webhook: default full mode', () => {
     expect(h.getGeminiCalls()).toBe(1);
     expect(h.sent.filter(item => item.type === 'text')[0].text).toBe('Gemini answer');
     expect(h.storage.inHandoff('full_mode')).toBeFalse();
+  });
+
+  it('does not enforce fallbackEnabled=false in full mode yet', async () => {
+    const fullConfig = {
+      shopName: 'shop',
+      policies: shopConfig.policies,
+      intents: {},
+      templates: {},
+      recommendations: {},
+      ruleToggles: {
+        fallbackEnabled: false
+      }
+    };
+    const h = createWebhookHarness(fullConfig, {
+      useGemini: false,
+      buildDeterministicReply: () => null,
+      buildFallbackReply: () => 'Fallback answer',
+      buildLeadDetails: () => ({})
+    });
+
+    await h.handleText('unhandled message', 'fallback_disabled', 'm_fallback_disabled');
+
+    expect(h.sent[0].text).toBe('Fallback answer');
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getFallbackAttentionCalls()).toBe(1);
   });
 
   it('still captures handoff order updates when order flow is enabled', async () => {
