@@ -386,9 +386,12 @@ function presentShopAsset(asset = {}) {
 }
 
 function presentShopAssetsSummary(summary = {}) {
-  return Object.fromEntries(
-    Object.entries(summary).map(([key, value]) => [key, Number(value || 0)])
-  );
+  return {
+    total: Number(summary.total || 0),
+    active: Number(summary.active || 0),
+    product_image: Number(summary.product_image || 0),
+    menu_image: Number(summary.menu_image || 0)
+  };
 }
 
 function presentShopsApi(model = {}) {
@@ -419,7 +422,9 @@ function presentShopDetailApi(model = {}) {
     products: (model.products || []).map(presentShopProduct),
     assets: {
       summary: presentShopAssetsSummary(model.assets?.summary || {}),
-      rows: (model.assets?.rows || []).map(presentShopAsset)
+      rows: (model.assets?.rows || [])
+        .filter(asset => ['menu_image', 'product_image'].includes(String(asset.asset_type || '')))
+        .map(presentShopAsset)
     },
     ...(model.message ? { message: limitText(model.message, 160) } : {})
   };
@@ -443,6 +448,15 @@ function presentShopSettingsWriteApi(model = {}) {
   };
 }
 
+function presentAssetWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    asset: presentShopAsset(model.asset || {})
+  };
+}
+
 function presentShopSettingsReadApi(model = {}) {
   return {
     schemaReady: model.schemaReady !== false,
@@ -454,6 +468,7 @@ function presentShopSettingsReadApi(model = {}) {
 
 module.exports = {
   maskSensitiveText,
+  presentAssetWriteApi,
   presentAuditApi,
   presentDashboardApi,
   presentInternalNotesApi,

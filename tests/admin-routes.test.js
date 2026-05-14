@@ -575,6 +575,59 @@ function createProductWriteServiceStub({ failWith, createdProduct, updatedProduc
   };
 }
 
+function createAssetWriteServiceStub({ failWith, createdAsset, updatedAsset, statusAsset, archivedAsset } = {}) {
+  const calls = [];
+  const baseAsset = {
+    id: 'asset-1',
+    shop_id: 'adult-shop',
+    product_id: 'prod-1',
+    product_code: 'DB1',
+    asset_type: 'product_image',
+    storage_provider: 'public_url',
+    public_url: 'https://cdn.example.test/db1.jpg',
+    content_type: 'image/jpeg',
+    size_bytes: null,
+    status: 'active',
+    sort_order: 1,
+    updated_at: '2026-05-12T04:00:00.000Z'
+  };
+  return {
+    calls,
+    async createAsset(input = {}) {
+      calls.push({ method: 'createAsset', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        asset: createdAsset || { ...baseAsset, id: 'asset-2', asset_type: input.body?.asset_type || 'menu_image', public_url: input.body?.public_url || baseAsset.public_url }
+      };
+    },
+    async updateAsset(input = {}) {
+      calls.push({ method: 'updateAsset', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        asset: updatedAsset || { ...baseAsset, public_url: input.body?.public_url || 'https://cdn.example.test/updated.jpg' }
+      };
+    },
+    async setAssetEnabled(input = {}) {
+      calls.push({ method: 'setAssetEnabled', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        asset: statusAsset || { ...baseAsset, status: input.enabled ? 'active' : 'hidden' }
+      };
+    },
+    async archiveAsset(input = {}) {
+      calls.push({ method: 'archiveAsset', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        asset: archivedAsset || { ...baseAsset, status: 'archived' }
+      };
+    }
+  };
+}
+
 function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) {
   const calls = [];
   return {
@@ -2257,6 +2310,7 @@ describe('admin dashboard routes', () => {
     expect(body.products[0].code).toBe('DB1');
     expect(body.products[0].metadata_json.size).toBe('M');
     expect(body.assets.summary.product_image).toBe(1);
+    expect(body.assets.summary.shop_image).toBe(undefined);
     expect(body.assets.rows[0].public_url).toBe('https://cdn.example.test/db1.jpg');
     expect(bodyText.includes('do-not-return')).toBeFalse();
     expect(bodyText.includes('page_access_token')).toBeFalse();
@@ -2295,6 +2349,15 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('status status-danger">archived');
     expect(res.body).toContain('data-confirm="Archive product"');
     expect(res.body).toContain('Archive this product? It will be hidden from active use, not deleted.');
+    expect(res.body).toContain('Add asset URL');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/assets"');
+    expect(res.body).toContain('name="asset_type"');
+    expect(res.body).toContain('value="menu_image"');
+    expect(res.body).toContain('value="product_image"');
+    expect(res.body).toContain('name="public_url"');
+    expect(res.body).toContain('data-confirm="Archive asset"');
+    expect(res.body.includes('storage_key')).toBeFalse();
+    expect(res.body.includes('shop_image')).toBeFalse();
   });
 
   it('shop detail HTML renders chat behavior settings edit form', async () => {
@@ -2515,6 +2578,105 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(body.product.status).toBe('archived');
     expect(productWrites.calls[0].method).toBe('archiveProduct');
+  });
+
+  it('asset create/update/status/archive API uses URL-only write service', async () => {
+    const app = createApp();
+    const assetWrites = createAssetWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetWriteService: assetWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const resCreate = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        asset_type: 'product_image',
+        product_id: 'prod-1',
+        public_url: 'https://cdn.example.test/db1.jpg?token=do-not-return',
+        storage_key: 'do-not-use'
+      }
+    }), resCreate);
+    const createBody = JSON.parse(resCreate.body);
+    const createText = JSON.stringify(createBody);
+
+    expect(resCreate.statusCode).toBe(201);
+    expect(createBody.ok).toBeTrue();
+    expect(createBody.asset.storage_provider).toBe('public_url');
+    expect(createBody.asset.storage_key).toBe(undefined);
+    expect(createText.includes('do-not-use')).toBeFalse();
+    expect(assetWrites.calls[0].method).toBe('createAsset');
+    expect(assetWrites.calls[0].input.shopId).toBe('adult-shop');
+
+    const resUpdate = createRes();
+    await app.routes['PATCH /admin/api/shops/:shopId/assets/:assetId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', assetId: 'asset-1' },
+      body: { public_url: 'https://cdn.example.test/updated.jpg' }
+    }), resUpdate);
+    expect(JSON.parse(resUpdate.body).asset.public_url).toBe('https://cdn.example.test/updated.jpg');
+    expect(assetWrites.calls[1].method).toBe('updateAsset');
+    expect(assetWrites.calls[1].input.assetId).toBe('asset-1');
+
+    const resStatus = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/:assetId/status'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', assetId: 'asset-1' },
+      body: { enabled: 'false' }
+    }), resStatus);
+    expect(JSON.parse(resStatus.body).asset.status).toBe('hidden');
+    expect(assetWrites.calls[2].method).toBe('setAssetEnabled');
+    expect(assetWrites.calls[2].input.enabled).toBeFalse();
+
+    const resArchive = createRes();
+    await app.routes['DELETE /admin/api/shops/:shopId/assets/:assetId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', assetId: 'asset-1' }
+    }), resArchive);
+    expect(JSON.parse(resArchive.body).asset.status).toBe('archived');
+    expect(assetWrites.calls[3].method).toBe('archiveAsset');
+  });
+
+  it('asset write API maps validation and missing schema errors safely', async () => {
+    for (const item of [
+      { code: 'invalid_public_url', status: 400, error: 'invalid_public_url' },
+      { code: 'invalid_asset_type', status: 400, error: 'invalid_asset_input' },
+      { code: 'product_not_found', status: 404, error: 'product_not_found' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'asset_commit_failed', status: 500, error: 'asset_commit_failed' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shop_assets" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        assetWriteService: createAssetWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/assets'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { asset_type: 'menu_image', public_url: 'https://cdn.example.test/menu.jpg' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
   });
 
   it('product write API maps duplicate code and missing schema to safe errors', async () => {

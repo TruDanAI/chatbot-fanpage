@@ -35,6 +35,13 @@ const PRODUCT_FLASH_MESSAGES = {
   archived: { type: 'success', text: 'Product archived. No product was deleted.' },
   'settings-updated': { type: 'success', text: 'Chat behavior settings updated.' }
 };
+const ASSET_FLASH_MESSAGES = {
+  created: { type: 'success', text: 'Asset created.' },
+  updated: { type: 'success', text: 'Asset updated.' },
+  enabled: { type: 'success', text: 'Asset enabled.' },
+  disabled: { type: 'success', text: 'Asset disabled.' },
+  archived: { type: 'success', text: 'Asset archived. No asset was deleted.' }
+};
 
 function createAdminReadHandlers({
   reader,
@@ -105,6 +112,11 @@ function createAdminReadHandlers({
   function resolveProductFlash(query = {}) {
     const key = String(query.productMessage || '').trim().toLowerCase();
     return PRODUCT_FLASH_MESSAGES[key] || {};
+  }
+
+  function resolveAssetFlash(query = {}) {
+    const key = String(query.assetMessage || '').trim().toLowerCase();
+    return ASSET_FLASH_MESSAGES[key] || {};
   }
 
   function isMissingInternalNotesSchemaError(err) {
@@ -384,6 +396,7 @@ function createAdminReadHandlers({
         shown: presented.products.length
       };
       presented.productFlash = resolveProductFlash(req.query || {});
+      presented.assetFlash = resolveAssetFlash(req.query || {});
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,

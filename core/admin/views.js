@@ -610,6 +610,73 @@ function renderProductStatusActions(shopId = '', product = {}) {
   `;
 }
 
+function renderProductOptions(products = [], selectedProductId = '', { includeEmpty = true } = {}) {
+  const empty = includeEmpty ? '<option value="">none</option>' : '';
+  return `${empty}${(products || []).map(product => {
+    const id = String(product.id || '');
+    const label = [product.code, product.name].filter(Boolean).join(' - ') || id;
+    return `<option value="${escapeHtml(id)}"${id === String(selectedProductId || '') ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('')}`;
+}
+
+function renderAssetTypeOptions(selected = '') {
+  const type = String(selected || 'menu_image');
+  return ['menu_image', 'product_image']
+    .map(value => `<option value="${escapeHtml(value)}"${type === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+    .join('');
+}
+
+function renderAssetStatusOptions(selected = '') {
+  const status = String(selected || 'active');
+  return ['active', 'hidden', 'archived']
+    .map(value => `<option value="${escapeHtml(value)}"${status === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+    .join('');
+}
+
+function renderAssetAddForm(shopId = '', products = []) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/assets`;
+  return `<form class="product-form" method="post" action="${escapeHtml(action)}">
+    <h3>Add asset URL</h3>
+    <label>Asset type <span class="required">required</span><select name="asset_type" required>${renderAssetTypeOptions('menu_image')}</select></label>
+    <label>Product<select name="product_id">${renderProductOptions(products)}</select></label>
+    <label>Content type<input name="content_type" maxlength="120" placeholder="image/jpeg"></label>
+    <label>Sort order<input name="sort_order" type="number" value="0"></label>
+    <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
+    <label>Public image URL <span class="required">required</span><input name="public_url" type="url" maxlength="2048" required aria-required="true" autocomplete="off"></label>
+    <div class="form-actions"><button type="submit">Add asset</button><span class="meta">Product is required for product_image. URLs are stored as public_url only.</span></div>
+  </form>`;
+}
+
+function renderAssetEditForm(shopId = '', asset = {}, products = []) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/${encodeRoutePart(asset.id)}`;
+  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
+    <label>Type <span class="required">required</span><select name="asset_type" required>${renderAssetTypeOptions(asset.asset_type)}</select></label>
+    <label>Product<select name="product_id">${renderProductOptions(products, asset.product_id)}</select></label>
+    <label>Content type<input name="content_type" value="${escapeHtml(asset.content_type || '')}" maxlength="120"></label>
+    <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(asset.sort_order || 0)}"></label>
+    <label>Status<select name="status">${renderAssetStatusOptions(asset.status)}</select></label>
+    <label>Public URL <span class="required">required</span><input name="public_url" type="url" value="${escapeHtml(asset.public_url || '')}" maxlength="2048" required aria-required="true"></label>
+    <div class="form-actions"><button type="submit">Save asset</button></div>
+  </form>`;
+}
+
+function renderAssetStatusActions(shopId = '', asset = {}) {
+  const nextEnabled = String(asset.status || '').toLowerCase() === 'active' ? 'false' : 'true';
+  const label = nextEnabled === 'true' ? 'Enable' : 'Disable';
+  const statusAction = `/admin/shops/${encodeRoutePart(shopId)}/assets/${encodeRoutePart(asset.id)}/status`;
+  const archiveAction = `/admin/shops/${encodeRoutePart(shopId)}/assets/${encodeRoutePart(asset.id)}/archive`;
+  return `
+    <form class="inline-action" method="post" action="${escapeHtml(statusAction)}">
+      <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
+      <button type="submit">${escapeHtml(label)}</button>
+    </form>
+    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-confirm="Archive asset">
+      <button type="submit" onclick="return confirm('Archive this asset? It will be hidden from active use, not deleted.');">Archive asset</button>
+    </form>
+    <span class="meta">Archive is a soft archive, not a delete action.</span>
+  `;
+}
+
 function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/settings`;
   const botMode = String(settings?.bot_mode || 'disabled');
@@ -746,16 +813,20 @@ function renderShopDetailHtml(model = {}) {
       </section>
 
       <h2>Assets</h2>
+      ${renderProductFlash(model.assetFlash || {})}
       ${renderCounts(summary)}
-      ${renderTable(['type', 'product', 'provider', 'url', 'status', 'size', 'updated'], assets.rows || [], asset => `
+      ${renderAssetAddForm(shop.id, model.products || [])}
+      ${renderTable(['type', 'product', 'provider', 'url', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], assets.rows || [], asset => `
         <tr>
           <td>${escapeHtml(asset.asset_type)}</td>
           <td>${escapeHtml(asset.product_code || asset.product_id || '')}</td>
           <td>${escapeHtml(asset.storage_provider)}</td>
           <td>${asset.public_url ? `<a href="${escapeHtml(asset.public_url)}" rel="noreferrer">${escapeHtml(limitText(asset.public_url, 90))}</a>` : ''}</td>
           <td>${renderStatus(asset.status)}</td>
-          <td>${escapeHtml(asset.size_bytes ?? '')}</td>
+          <td>${escapeHtml(asset.sort_order || 0)}</td>
           <td>${escapeHtml(formatDate(asset.updated_at))}</td>
+          <td class="product-actions">${renderAssetStatusActions(shop.id, asset)}</td>
+          <td>${renderAssetEditForm(shop.id, asset, model.products || [])}</td>
         </tr>
       `)}
     ` : ''}

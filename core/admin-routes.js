@@ -5,6 +5,7 @@ const {
 } = require('./admin-auth');
 const { createPostgresAuditLogger } = require('./admin/audit');
 const {
+  presentAssetWriteApi,
   presentProductWriteApi,
   presentShopSettingsWriteApi
 } = require('./admin/api-presenter');
@@ -13,6 +14,10 @@ const {
   INTERNAL_NOTE_RESOURCE_TYPE,
   createPostgresInternalNoteService
 } = require('./admin/internal-notes');
+const {
+  createPostgresAssetWriteService,
+  isMissingAssetWriteSchemaError
+} = require('./admin/asset-writes');
 const {
   createPostgresProductWriteService,
   isMissingProductWriteSchemaError
@@ -313,6 +318,66 @@ function presentShopSettingsWriteTextError(err) {
   };
 }
 
+function presentAssetWriteError(err) {
+  if (isMissingAssetWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    invalid_asset_type: ['invalid_asset_input', 'Asset type is invalid.', 400],
+    invalid_asset_status: ['invalid_asset_input', 'Asset status is invalid.', 400],
+    public_url_required: ['invalid_public_url', 'Public URL is required.', 400],
+    public_url_too_long: ['invalid_public_url', 'Public URL is too long.', 400],
+    invalid_public_url: ['invalid_public_url', 'Public URL is invalid.', 400],
+    product_id_required: ['product_id_required', 'Product image requires product_id.', 400],
+    product_not_found: ['product_not_found', 'Product was not found for this shop.', 404],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    asset_not_found: ['asset_not_found', 'Asset was not found.', 404],
+    permission_denied: ['permission_denied', 'Asset write permission is required.', 403],
+    database_url_required: ['asset_write_unavailable', 'Asset writes are unavailable.', 503],
+    asset_commit_failed: ['asset_commit_failed', 'Asset write could not be committed.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'asset_write_failed',
+      message: 'Asset write could not be completed.'
+    }
+  };
+}
+
+function presentAssetWriteTextError(err) {
+  const response = presentAssetWriteError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Asset write could not be completed.'
+  };
+}
+
 function registerAdminRoutes(app, {
   storage,
   adminExportToken,
@@ -320,6 +385,7 @@ function registerAdminRoutes(app, {
   getClientIp,
   dashboardReader,
   internalNoteService,
+  assetWriteService,
   productWriteService,
   shopSettingsWriteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
@@ -354,6 +420,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl,
     tenantId,
     pageId
+  });
+  const assetWrites = assetWriteService || createPostgresAssetWriteService({
+    databaseUrl: dashboardDatabaseUrl
   });
   const productWrites = productWriteService || createPostgresProductWriteService({
     databaseUrl: dashboardDatabaseUrl
@@ -631,6 +700,111 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function createAssetApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.create',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await assetWrites.createAsset({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentAssetWriteApi(result));
+    } catch (err) {
+      const response = presentAssetWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function updateAssetApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const assetId = String(req.params.assetId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.update',
+      resourceType: 'shop_asset',
+      resourceId: assetId
+    });
+    if (!principal) return;
+    try {
+      const result = await assetWrites.updateAsset({
+        principal,
+        shopId,
+        assetId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentAssetWriteApi(result));
+    } catch (err) {
+      const response = presentAssetWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function setAssetStatusApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const assetId = String(req.params.assetId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.status',
+      resourceType: 'shop_asset',
+      resourceId: assetId
+    });
+    if (!principal) return;
+    try {
+      const body = req.body || {};
+      const enabled = Object.prototype.hasOwnProperty.call(body, 'enabled')
+        ? /^(1|true|yes|on|active|enabled)$/i.test(String(body.enabled || '').trim())
+        : /^(active|enable|enabled)$/i.test(String(body.status || '').trim());
+      const result = await assetWrites.setAssetEnabled({
+        principal,
+        shopId,
+        assetId,
+        enabled,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentAssetWriteApi(result));
+    } catch (err) {
+      const response = presentAssetWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function archiveAssetApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const assetId = String(req.params.assetId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.archive',
+      resourceType: 'shop_asset',
+      resourceId: assetId
+    });
+    if (!principal) return;
+    try {
+      const result = await assetWrites.archiveAsset({
+        principal,
+        shopId,
+        assetId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentAssetWriteApi(result));
+    } catch (err) {
+      const response = presentAssetWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function createProductHtml(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -733,6 +907,114 @@ function registerAdminRoutes(app, {
     }
   }
 
+  function shopAssetRedirect(shopId = '', message = '') {
+    const base = `/admin/shops/${encodeURIComponent(shopId)}`;
+    const safeMessage = String(message || '').trim();
+    return safeMessage ? `${base}?assetMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  async function createAssetHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.create',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await assetWrites.createAsset({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, 'created'));
+    } catch (err) {
+      const response = presentAssetWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function updateAssetHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const assetId = String(req.params.assetId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.update',
+      resourceType: 'shop_asset',
+      resourceId: assetId
+    });
+    if (!principal) return;
+    try {
+      await assetWrites.updateAsset({
+        principal,
+        shopId,
+        assetId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, 'updated'));
+    } catch (err) {
+      const response = presentAssetWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function setAssetStatusHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const assetId = String(req.params.assetId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.status',
+      resourceType: 'shop_asset',
+      resourceId: assetId
+    });
+    if (!principal) return;
+    try {
+      const enabled = /^(1|true|yes|on|active|enabled)$/i.test(String(req.body?.enabled || '').trim());
+      await assetWrites.setAssetEnabled({
+        principal,
+        shopId,
+        assetId,
+        enabled,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, enabled ? 'enabled' : 'disabled'));
+    } catch (err) {
+      const response = presentAssetWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function archiveAssetHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const assetId = String(req.params.assetId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.archive',
+      resourceType: 'shop_asset',
+      resourceId: assetId
+    });
+    if (!principal) return;
+    try {
+      await assetWrites.archiveAsset({
+        principal,
+        shopId,
+        assetId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, 'archived'));
+    } catch (err) {
+      const response = presentAssetWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   async function updateShopSettingsHtml(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -770,15 +1052,20 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
+  app.post('/admin/api/shops/:shopId/assets', createAssetApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
   if (typeof app.patch === 'function') {
     app.patch('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
     app.patch('/admin/api/shops/:shopId/products/:productId', updateProductApi);
     app.patch('/admin/api/shops/:shopId/products/:productId/status', setProductStatusApi);
+    app.patch('/admin/api/shops/:shopId/assets/:assetId', updateAssetApi);
+    app.patch('/admin/api/shops/:shopId/assets/:assetId/status', setAssetStatusApi);
   }
   app.post('/admin/api/shops/:shopId/products/:productId/status', setProductStatusApi);
+  app.post('/admin/api/shops/:shopId/assets/:assetId/status', setAssetStatusApi);
   if (typeof app.delete === 'function') {
     app.delete('/admin/api/shops/:shopId/products/:productId', archiveProductApi);
+    app.delete('/admin/api/shops/:shopId/assets/:assetId', archiveAssetApi);
   }
   app.get('/admin/api/audit', sendAuditLogApi);
   app.get('/admin/api/internal-notes', sendInternalNotesApi);
@@ -793,6 +1080,10 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
   app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
   app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
+  app.post('/admin/shops/:shopId/assets', createAssetHtml);
+  app.post('/admin/shops/:shopId/assets/:assetId', updateAssetHtml);
+  app.post('/admin/shops/:shopId/assets/:assetId/status', setAssetStatusHtml);
+  app.post('/admin/shops/:shopId/assets/:assetId/archive', archiveAssetHtml);
   app.post('/admin/dashboard/users/:senderId/notes', createInternalNoteHtml);
   app.get('/admin/db/users/:senderId', sendUserDetail);
   app.get('/admin/audit', sendAuditLog);
@@ -814,6 +1105,7 @@ module.exports = {
   createAdminLoginRateLimiter,
   createAdminReadHandlers,
   createPostgresAuditLogger,
+  createPostgresAssetWriteService,
   createPostgresDashboardReader,
   createPostgresProductWriteService,
   createPostgresShopSettingsWriteService,
