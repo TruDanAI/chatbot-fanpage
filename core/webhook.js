@@ -13,6 +13,8 @@ const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
 const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
 
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
+const MESSAGE_TEXT_DEDUPE_TTL_MS = 5 * 1000;
+const MESSAGE_TEXT_DEDUPE_MAX_KEYS = 2000;
 
 function createWebhook({
   storage,
@@ -63,6 +65,48 @@ function createWebhook({
   redactSensitiveText,
   resolveRuntimeForPage
 }) {
+  const recentMessageTextKeys = new Map();
+
+  function pruneRecentMessageTextKeys(nowMs = Date.now()) {
+    for (const [key, expiresAt] of recentMessageTextKeys) {
+      if (expiresAt > nowMs) continue;
+      recentMessageTextKeys.delete(key);
+    }
+
+    while (recentMessageTextKeys.size > MESSAGE_TEXT_DEDUPE_MAX_KEYS) {
+      const oldestKey = recentMessageTextKeys.keys().next().value;
+      if (!oldestKey) break;
+      recentMessageTextKeys.delete(oldestKey);
+    }
+  }
+
+  function normalizeMessageTextForDedupe(text, normalize) {
+    const normalized = typeof normalize === 'function'
+      ? normalize(text)
+      : String(text || '').toLowerCase();
+    return String(normalized || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function shouldSkipDuplicateMessageText({ pageId, senderId, userText, normalize }) {
+    const normalizedText = normalizeMessageTextForDedupe(userText, normalize);
+    if (!senderId || !normalizedText) return false;
+
+    const nowMs = Date.now();
+    pruneRecentMessageTextKeys(nowMs);
+
+    const key = JSON.stringify([
+      String(pageId || ''),
+      String(senderId || ''),
+      normalizedText
+    ]);
+    const expiresAt = recentMessageTextKeys.get(key);
+    if (expiresAt && expiresAt > nowMs) return true;
+
+    recentMessageTextKeys.set(key, nowMs + MESSAGE_TEXT_DEDUPE_TTL_MS);
+    pruneRecentMessageTextKeys(nowMs);
+    return false;
+  }
+
   function verifySignature(req) {
     if (!fbAppSecret) return true;
     const sig = req.get('X-Hub-Signature-256');
@@ -408,11 +452,18 @@ function createWebhook({
       const siblingMessageInRequest = options.requestMessageSenders?.has?.(senderId) === true;
       if (menuCodeHandoffMode && effectiveAdsReferralEvent && !siblingMessageInRequest) {
         console.log(`📣 [${senderId}]: referral từ quảng cáo (không kèm tin nhắn)`);
-        await menuCodeHandoffHandler.handleEvent(senderId, '', baseUrlOverride, {
-          adsReferral: true,
-          requestImageDedupe
-        });
       }
+      return;
+    }
+
+    const pageId = getEventPageId(event, options);
+    if (shouldSkipDuplicateMessageText({
+      pageId,
+      senderId,
+      userText,
+      normalize: normalizeText
+    })) {
+      console.log(`🔁 Bỏ qua tin trùng trong TTL: page=${safePageLabel(pageId)} sender=${senderId}`);
       return;
     }
 

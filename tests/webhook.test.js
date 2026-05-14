@@ -629,26 +629,81 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.length).toBe(3);
   });
 
-  it('pure ads referral event without message text sends price/menu reply', async () => {
+  it('pure ads referral event without message text logs only and sends no reply', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleReferral('ads_referral_only', 'ADS');
 
-    expect(h.sent[0].type).toBe('text');
-    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
-    expect(h.sent[1].url).toContain('menu1.png');
-    expect(h.sent[2].url).toContain('menu2.png');
-    expect(h.sent.length).toBe(3);
+    expect(h.sent.length).toBe(0);
   });
 
-  it('SHORTLINK referral (m.me link) also triggers menu+caption', async () => {
+  it('SHORTLINK referral (m.me link) logs only and sends no reply', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     markReturningCustomer(h.storage, 'shortlink_returning', 5);
 
     await h.handleReferral('shortlink_returning', 'SHORTLINK');
 
+    expect(h.sent.length).toBe(0);
+  });
+
+  it('ads referral followed by a real message sends one menu reply', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'ads_then_real_message';
+
+    await h.handleReferral(senderId, 'ADS', 'page_ads');
+    await h.handleText('chào shop', senderId, 'm_ads_then_real', 'page_ads');
+
     expect(h.sent.length).toBe(3);
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
+  it('dedupes same sender and normalized text across webhook calls within TTL', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('Chào   shop', 'ttl_same_sender_text', 'm_ttl_1', 'page_ttl');
+    await h.handleText('chào shop', 'ttl_same_sender_text', 'm_ttl_2', 'page_ttl');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('allows same sender and same text again after the duplicate TTL', async () => {
+    const originalNow = Date.now;
+    let nowMs = 1000000;
+    Date.now = () => nowMs;
+    try {
+      const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+      await h.handleText('chào shop', 'ttl_expired_sender', 'm_ttl_expired_1', 'page_ttl');
+      nowMs += 5100;
+      await h.handleText('chào shop', 'ttl_expired_sender', 'm_ttl_expired_2', 'page_ttl');
+
+      expect(h.sent.length).toBe(6);
+      expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it('allows different text from the same sender within duplicate TTL', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('chào shop', 'ttl_different_text', 'm_ttl_text_1', 'page_ttl');
+    await h.handleText('giá', 'ttl_different_text', 'm_ttl_text_2', 'page_ttl');
+
+    expect(h.sent.length).toBe(6);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
+  });
+
+  it('allows different sender with the same text within duplicate TTL', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleText('chào shop', 'ttl_sender_1', 'm_ttl_sender_1', 'page_ttl');
+    await h.handleText('chào shop', 'ttl_sender_2', 'm_ttl_sender_2', 'page_ttl');
+
+    expect(h.sent.length).toBe(6);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
   });
 
   it('ads referral with off-topic message overrides returning-customer silence', async () => {
