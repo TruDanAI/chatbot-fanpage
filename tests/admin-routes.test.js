@@ -408,6 +408,26 @@ function createDashboardReaderStub() {
             customerPhone: '0987654321'
           },
           updated_at: '2026-05-12T00:00:00.000Z'
+        }, {
+          id: 'prod-2',
+          code: 'DB2',
+          name: 'Hidden Product',
+          description: 'hidden product',
+          price_text: '220k',
+          status: 'hidden',
+          sort_order: 2,
+          metadata_json: {},
+          updated_at: '2026-05-12T00:10:00.000Z'
+        }, {
+          id: 'prod-3',
+          code: 'DB3',
+          name: 'Archived Product',
+          description: 'archived product',
+          price_text: '330k',
+          status: 'archived',
+          sort_order: 3,
+          metadata_json: {},
+          updated_at: '2026-05-12T00:20:00.000Z'
         }],
         assets: {
           summary: {
@@ -2198,6 +2218,71 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('api_secret')).toBeFalse();
     expect(bodyText.includes('customerPhone')).toBeFalse();
     expect(bodyText.includes('0987654321')).toBeFalse();
+  });
+
+  it('shop detail HTML render product search/filter controls, badges, and archive confirmation', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('name="productSearch"');
+    expect(res.body).toContain('name="productStatus"');
+    expect(res.body).toContain('name/title');
+    expect(res.body).toContain('price_text');
+    expect(res.body).toContain('sort_order');
+    expect(res.body).toContain('status status-success">active');
+    expect(res.body).toContain('status status-warning">hidden');
+    expect(res.body).toContain('status status-danger">archived');
+    expect(res.body).toContain('data-confirm="Archive product"');
+    expect(res.body).toContain('Archive this product? It will be hidden from active use, not deleted.');
+  });
+
+  it('shop detail HTML filters products by code/name and status without exposing secrets', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      query: {
+        productSearch: 'hidden',
+        productStatus: 'hidden'
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Hidden Product');
+    expect(res.body).toContain('1 of 3 products');
+    expect(res.body.includes('DB Product')).toBeFalse();
+    expect(res.body.includes('Archived Product')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+    expect(res.body.includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('secret_note')).toBeFalse();
+    expect(res.body.includes('accessToken')).toBeFalse();
+    expect(res.body.includes('api_secret')).toBeFalse();
+    expect(res.body.includes('customerPhone')).toBeFalse();
+    expect(res.body.includes('0987654321')).toBeFalse();
+    expect(res.body.toLowerCase().includes('token')).toBeFalse();
+    expect(res.body.toLowerCase().includes('secret')).toBeFalse();
   });
 
   it('product create API trims input and returns sanitized product fields', async () => {

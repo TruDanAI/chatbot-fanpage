@@ -432,6 +432,12 @@ function registerAdminRoutes(app, {
     return buildInternalNoteRequestContext(req, getClientIp);
   }
 
+  function shopProductRedirect(shopId = '', message = '') {
+    const base = `/admin/shops/${encodeURIComponent(shopId)}`;
+    const safeMessage = String(message || '').trim();
+    return safeMessage ? `${base}?productMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
   async function createProductApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -554,7 +560,7 @@ function registerAdminRoutes(app, {
         body: req.body || {},
         requestContext: buildProductWriteRequestContext(req)
       });
-      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+      return res.redirect(303, shopProductRedirect(shopId, 'created'));
     } catch (err) {
       const response = presentProductWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
@@ -580,7 +586,7 @@ function registerAdminRoutes(app, {
         body: req.body || {},
         requestContext: buildProductWriteRequestContext(req)
       });
-      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+      return res.redirect(303, shopProductRedirect(shopId, 'updated'));
     } catch (err) {
       const response = presentProductWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
@@ -599,14 +605,15 @@ function registerAdminRoutes(app, {
     });
     if (!principal) return;
     try {
+      const enabled = /^(1|true|yes|on|active|enabled)$/i.test(String(req.body?.enabled || '').trim());
       await productWrites.setProductEnabled({
         principal,
         shopId,
         productId,
-        enabled: /^(1|true|yes|on|active|enabled)$/i.test(String(req.body?.enabled || '').trim()),
+        enabled,
         requestContext: buildProductWriteRequestContext(req)
       });
-      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+      return res.redirect(303, shopProductRedirect(shopId, enabled ? 'enabled' : 'disabled'));
     } catch (err) {
       const response = presentProductWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
@@ -631,7 +638,7 @@ function registerAdminRoutes(app, {
         productId,
         requestContext: buildProductWriteRequestContext(req)
       });
-      return res.redirect(303, `/admin/shops/${encodeURIComponent(shopId)}`);
+      return res.redirect(303, shopProductRedirect(shopId, 'archived'));
     } catch (err) {
       const response = presentProductWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);

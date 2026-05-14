@@ -25,6 +25,14 @@ const {
 } = require('./views');
 
 const USER_DETAIL_INTERNAL_NOTE_LIMIT = 20;
+const PRODUCT_STATUS_FILTERS = new Set(['', 'active', 'hidden', 'archived']);
+const PRODUCT_FLASH_MESSAGES = {
+  created: { type: 'success', text: 'Product created.' },
+  updated: { type: 'success', text: 'Product updated.' },
+  enabled: { type: 'success', text: 'Product enabled.' },
+  disabled: { type: 'success', text: 'Product disabled.' },
+  archived: { type: 'success', text: 'Product archived. No product was deleted.' }
+};
 
 function createAdminReadHandlers({
   reader,
@@ -67,6 +75,34 @@ function createAdminReadHandlers({
       message,
       error
     });
+  }
+
+  function normalizeShopProductFilters(query = {}) {
+    const productSearch = String(query.productSearch || query.search || '').trim().slice(0, 100);
+    const productStatus = String(query.productStatus || '').trim().toLowerCase();
+    return {
+      productSearch,
+      productStatus: PRODUCT_STATUS_FILTERS.has(productStatus) ? productStatus : ''
+    };
+  }
+
+  function filterShopProducts(products = [], filters = {}) {
+    const search = String(filters.productSearch || '').trim().toLowerCase();
+    const status = String(filters.productStatus || '').trim().toLowerCase();
+    return products.filter(product => {
+      if (status && String(product.status || '').toLowerCase() !== status) return false;
+      if (!search) return true;
+      return [
+        product.code,
+        product.name,
+        product.title
+      ].some(value => String(value || '').toLowerCase().includes(search));
+    });
+  }
+
+  function resolveProductFlash(query = {}) {
+    const key = String(query.productMessage || '').trim().toLowerCase();
+    return PRODUCT_FLASH_MESSAGES[key] || {};
   }
 
   function isMissingInternalNotesSchemaError(err) {
@@ -336,15 +372,30 @@ function createAdminReadHandlers({
     try {
       const model = await reader.getShopDetail(shopId);
       const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
+      const presented = presentShopDetailApi(model);
+      const productFilters = normalizeShopProductFilters(req.query || {});
+      const products = Array.isArray(presented.products) ? presented.products : [];
+      presented.products = filterShopProducts(products, productFilters);
+      presented.productFilters = productFilters;
+      presented.productFilterSummary = {
+        total: products.length,
+        shown: presented.products.length
+      };
+      presented.productFlash = resolveProductFlash(req.query || {});
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,
         resourceType: 'shop',
         resourceId: shopId,
         outcome: statusCode === 404 ? 'error' : 'success',
-        metadata: { schemaReady: model.schemaReady !== false, statusCode }
+        metadata: {
+          schemaReady: model.schemaReady !== false,
+          statusCode,
+          productFilterStatus: productFilters.productStatus || '',
+          productSearchPresent: Boolean(productFilters.productSearch)
+        }
       });
-      return res.status(statusCode).type('html').send(renderShopDetailHtml(presentShopDetailApi(model)));
+      return res.status(statusCode).type('html').send(renderShopDetailHtml(presented));
     } catch (err) {
       await recordAdminAudit(req, {
         principal,

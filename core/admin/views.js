@@ -51,9 +51,10 @@ function formatLabel(value = '') {
 
 function statusClass(value = '') {
   const status = String(value || '').toLowerCase();
-  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success') return 'status status-success';
+  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active') return 'status status-success';
   if (status === 'cancelled' || status === 'denied' || status.includes('failed') || status.includes('error')) return 'status status-danger';
-  if (status === 'abandoned') return 'status status-warning';
+  if (status === 'abandoned' || status === 'hidden') return 'status status-warning';
+  if (status === 'archived') return 'status status-danger';
   return 'status status-neutral';
 }
 
@@ -155,6 +156,9 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .login-panel input { min-height: 38px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit; }
     .login-panel button { min-height: 38px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-weight: 700; cursor: pointer; }
     .error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; padding: 9px 10px; font-size: 14px; }
+    .banner { border-radius: 6px; padding: 9px 10px; font-size: 14px; margin: 10px 0 14px; }
+    .banner-success { color: var(--success); background: #dcfce7; border: 1px solid #bbf7d0; }
+    .banner-error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; }
     .note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
     .note-form { display: grid; gap: 10px; margin: 12px 0 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .note-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 12px; }
@@ -163,13 +167,25 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .note-form fieldset label { display: inline-flex; align-items: center; gap: 5px; }
     .note-form textarea { min-height: 92px; border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px; color: #17202a; background: #ffffff; font: inherit; resize: vertical; }
     .note-form button { width: fit-content; min-height: 36px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-weight: 700; padding: 7px 11px; cursor: pointer; }
-    .product-form { display: grid; gap: 8px; margin: 12px 0 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
-    .product-form.compact { padding: 0; margin: 0; border: 0; background: transparent; grid-template-columns: repeat(2, minmax(90px, 1fr)); }
+    .product-section { display: grid; gap: 14px; }
+    .product-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .product-toolbar h2 { margin: 0; }
+    .product-filters { margin: 0; }
+    .product-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 0 0 6px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .product-form.compact { padding: 0; margin: 0; border: 0; background: transparent; grid-template-columns: repeat(2, minmax(96px, 1fr)); }
+    .product-form h3 { grid-column: 1 / -1; margin: 0 0 2px; font-size: 15px; }
     .product-form label { display: grid; gap: 4px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
     .product-form input, .product-form textarea, .product-form select { min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
     .product-form textarea { min-height: 54px; resize: vertical; grid-column: 1 / -1; }
     .product-form button, .inline-action button { min-height: 32px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; cursor: pointer; }
+    .product-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+    .product-form .required { color: var(--danger); }
+    .product-name { min-width: 190px; }
+    .product-actions { display: grid; gap: 6px; min-width: 86px; }
+    .product-actions .meta { max-width: 180px; }
     .inline-action { margin: 0 0 6px; }
+    .inline-action:last-child { margin-bottom: 0; }
+    .inline-action.warning button { border-color: var(--warning); background: var(--warning); }
     .inline-action.danger button { border-color: var(--danger); background: var(--danger); }
   </style>
 </head>
@@ -505,32 +521,60 @@ function renderJsonBlock(value = {}) {
   return `<pre class="empty">${escapeHtml(json)}</pre>`;
 }
 
+function renderProductFlash(flash = {}) {
+  const text = String(flash.text || '').trim();
+  if (!text) return '';
+  const type = flash.type === 'error' ? 'error' : 'success';
+  return `<div class="banner banner-${escapeHtml(type)}" role="status">${escapeHtml(text)}</div>`;
+}
+
+function renderProductFilterForm(shopId = '', filters = {}, summary = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}`;
+  const statusOptions = ['', 'active', 'hidden', 'archived']
+    .map(value => `<option value="${escapeHtml(value)}"${filters.productStatus === value ? ' selected' : ''}>${escapeHtml(value || 'all')}</option>`)
+    .join('');
+  const total = Number(summary.total || 0);
+  const shown = Number(summary.shown || total);
+  return `<form class="filters product-filters" method="get" action="${escapeHtml(action)}">
+    <label>Search code/name
+      <input name="productSearch" value="${escapeHtml(filters.productSearch || '')}" maxlength="100" autocomplete="off">
+    </label>
+    <label>Status
+      <select name="productStatus">${statusOptions}</select>
+    </label>
+    <button type="submit">Filter</button>
+    <a href="${escapeHtml(action)}">Clear</a>
+    <span class="meta">${escapeHtml(shown)} of ${escapeHtml(total)} products</span>
+  </form>`;
+}
+
 function renderProductAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
-    <label>Code<input name="code" maxlength="80" required></label>
-    <label>Name<input name="name" maxlength="180" required></label>
-    <label>Price text<input name="price_text" maxlength="120"></label>
-    <label>Sort<input name="sort_order" type="number" value="0"></label>
+    <h3>Add product</h3>
+    <label>Product code <span class="required">required</span><input name="code" maxlength="80" required aria-required="true" autocomplete="off"></label>
+    <label>Name / title <span class="required">required</span><input name="name" maxlength="180" required aria-required="true"></label>
+    <label>Price text<input name="price_text" maxlength="120" placeholder="150k"></label>
+    <label>Sort order<input name="sort_order" type="number" value="0"></label>
     <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
     <label>Category<input name="category" maxlength="80"></label>
     <label>Tags<input name="tags" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000"></textarea></label>
-    <button type="submit">Add product</button>
+    <div class="form-actions"><button type="submit">Add product</button><span class="meta">Required fields: code and name/title.</span></div>
   </form>`;
 }
 
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
-    <label>Code<input name="code" value="${escapeHtml(product.code)}" maxlength="80" required></label>
-    <label>Name<input name="name" value="${escapeHtml(product.name)}" maxlength="180" required></label>
-    <label>Price<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
-    <label>Sort<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
+    <label>Code <span class="required">required</span><input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true"></label>
+    <label>Name/title <span class="required">required</span><input name="name" value="${escapeHtml(product.name)}" maxlength="180" required aria-required="true"></label>
+    <label>Price text<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
+    <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
     <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
     <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
-    <textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea>
-    <button type="submit">Save</button>
+    <label>Description<textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea></label>
+    <div class="form-actions"><button type="submit">Save product</button></div>
   </form>`;
 }
 
@@ -544,9 +588,10 @@ function renderProductStatusActions(shopId = '', product = {}) {
       <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
       <button type="submit">${escapeHtml(label)}</button>
     </form>
-    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}">
-      <button type="submit">Archive</button>
+    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-confirm="Archive product">
+      <button type="submit" onclick="return confirm('Archive this product? It will be hidden from active use, not deleted.');">Archive product</button>
     </form>
+    <span class="meta">Archive is a soft archive, not a delete action.</span>
   `;
 }
 
@@ -592,20 +637,27 @@ function renderShopDetailHtml(model = {}) {
       <h2>Settings JSON</h2>
       ${renderJsonBlock(model.settings?.settings_json || {})}
 
-      <h2>Products</h2>
-      ${renderProductAddForm(shop.id)}
-      ${renderTable(['code', 'name', 'status', 'price', 'sort', 'updated', 'edit', 'actions'], model.products || [], product => `
+      <section class="product-section">
+        ${renderProductFlash(model.productFlash || {})}
+        <div class="product-toolbar">
+          <h2>Products</h2>
+          <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>
+        </div>
+        ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
+        ${renderProductAddForm(shop.id)}
+        ${renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products || [], product => `
         <tr>
           <td><code>${escapeHtml(product.code)}</code></td>
-          <td>${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
-          <td>${renderStatus(product.status)}</td>
+          <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
           <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
+          <td>${renderStatus(product.status)}</td>
           <td>${escapeHtml(product.sort_order || 0)}</td>
           <td>${escapeHtml(formatDate(product.updated_at))}</td>
+          <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
           <td>${renderProductEditForm(shop.id, product)}</td>
-          <td>${renderProductStatusActions(shop.id, product)}</td>
         </tr>
       `)}
+      </section>
 
       <h2>Assets</h2>
       ${renderCounts(summary)}
