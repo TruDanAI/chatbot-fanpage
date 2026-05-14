@@ -6,6 +6,7 @@ const MENU_CODE_HANDOFF_MESSAGE = [
 ].join('\n');
 
 const MENU_CODE_MENU_PRICE_REPLY = 'Dạ sản phẩm bên em từ 150k tuỳ mã ạ. Em gửi mình xem qua menu, ưng mã nào nhắn em tư vấn kỹ hơn nhé.';
+const { uniqueImagesForRequest } = require('../runtime-image-dedupe');
 
 // Khách quay lại sau ngần này mới được tự động chào lại bằng menu+cap.
 const MENU_CODE_REENGAGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -81,8 +82,8 @@ function createMenuCodeHandoffHandler({
     }
   }
 
-  async function sendImages(senderId, images) {
-    for (const { file, url } of images) {
+  async function sendImages(senderId, images, sentImages) {
+    for (const { file, url } of uniqueImagesForRequest(senderId, images, sentImages)) {
       try {
         await sendImage(senderId, url);
         console.log(`🖼️  Gửi ảnh: ${file}`);
@@ -112,6 +113,7 @@ function createMenuCodeHandoffHandler({
 
   async function handleEvent(senderId, userText, baseUrlOverride, options = {}) {
     const adsReferral = options.adsReferral === true;
+    const sentImages = options.requestImageDedupe || new Set();
     // Chụp trước flag first-touch để lát sau dù markLastUserAt cập nhật
     // timestamp thì quyết định vẫn dựa trên trạng thái lúc tin vừa tới.
     const firstTouch = isFirstTouchOrLapsedCustomer(senderId);
@@ -119,7 +121,7 @@ function createMenuCodeHandoffHandler({
     if (storage.inHandoff(senderId)) {
       console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}`);
       markLastUserAt(senderId);
-      return;
+      return true;
     }
 
     const requestedCodes = productCodeLookupEnabled
@@ -133,7 +135,8 @@ function createMenuCodeHandoffHandler({
         showTyping(senderId);
         await sendImages(
           senderId,
-          buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride)
+          buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride),
+          sentImages
         );
         await sendMessage(senderId, reply);
         if (postProductHandoffEnabled) {
@@ -142,7 +145,7 @@ function createMenuCodeHandoffHandler({
           console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
         }
         markLastUserAt(senderId);
-        return;
+        return true;
       }
     }
 
@@ -150,12 +153,13 @@ function createMenuCodeHandoffHandler({
       showTyping(senderId);
       await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
       console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
-      await sendImages(senderId, getMenuImageUrls(baseUrlOverride));
+      await sendImages(senderId, getMenuImageUrls(baseUrlOverride), sentImages);
       markLastUserAt(senderId);
-      return;
+      return true;
     }
 
     markLastUserAt(senderId);
+    return false;
   }
 
   return {

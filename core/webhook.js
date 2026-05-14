@@ -10,6 +10,9 @@ const {
   isProductCodeLookupEnabled
 } = require('./bot-mode');
 const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
+const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
+
+const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
 
 function createWebhook({
   storage,
@@ -112,6 +115,19 @@ function createWebhook({
     if (String(payload || '').trim()) return true;
     if (extractCodes(text).length) return true;
     return /(?:ma|mau|gia|tu van|goi y|bao nhieu|ship|dia chi|chot|dat|mua|order|combo|hang|san pham|menu)/.test(normalized);
+  }
+
+  function hasMessagePayload(event) {
+    return Boolean(
+      event?.message?.quick_reply?.payload
+      || event?.message?.text
+      || event?.postback?.payload
+    );
+  }
+
+  function hasAdsReferralPayload(event) {
+    const refs = [event?.referral, event?.message?.referral, event?.postback?.referral];
+    return refs.some(ref => MENU_CODE_ADS_REFERRAL_SOURCES.has(String(ref?.source || '').toUpperCase()));
   }
 
   const defaultRuntime = {
@@ -271,13 +287,33 @@ function createWebhook({
       const body = req.body;
       if (body.object !== 'page') return;
 
+      const inferredBaseUrl = inferBaseUrlFromRequest(req);
+      const requestEvents = [];
+      const requestMessageSenders = new Set();
+      const requestAdsReferralSenders = new Set();
+      const requestImageDedupe = new Set();
+
       for (const entry of body.entry || []) {
         for (const event of entry.messaging || []) {
-          const inferredBaseUrl = inferBaseUrlFromRequest(req);
-          handleEvent(event, inferredBaseUrl, { pageId: entry.id }).catch(err => {
-            console.error('❌ handleEvent:', err.response?.data || err.message);
-          });
+          requestEvents.push({ event, pageId: entry.id });
+          if (hasMessagePayload(event) && event.sender?.id) {
+            requestMessageSenders.add(event.sender.id);
+          }
+          if (hasAdsReferralPayload(event) && event.sender?.id) {
+            requestAdsReferralSenders.add(event.sender.id);
+          }
         }
+      }
+
+      for (const { event, pageId } of requestEvents) {
+        handleEvent(event, inferredBaseUrl, {
+          pageId,
+          requestMessageSenders,
+          requestAdsReferralSenders,
+          requestImageDedupe
+        }).catch(err => {
+          console.error('❌ handleEvent:', err.response?.data || err.message);
+        });
       }
     });
   }
@@ -355,6 +391,9 @@ function createWebhook({
     } = runtime;
 
     const adsReferralEvent = menuCodeHandoffHandler?.isAdsReferralEvent(event) === true;
+    const requestAdsReferralEvent = options.requestAdsReferralSenders?.has?.(senderId) === true;
+    const effectiveAdsReferralEvent = adsReferralEvent || requestAdsReferralEvent;
+    const requestImageDedupe = options.requestImageDedupe || new Set();
 
     let userText = null;
     let quickReplyPayload = '';
@@ -366,16 +405,24 @@ function createWebhook({
     else if (event.postback?.payload) userText = event.postback.payload;
 
     if (!userText) {
-      if (menuCodeHandoffMode && adsReferralEvent) {
+      const siblingMessageInRequest = options.requestMessageSenders?.has?.(senderId) === true;
+      if (menuCodeHandoffMode && effectiveAdsReferralEvent && !siblingMessageInRequest) {
         console.log(`📣 [${senderId}]: referral từ quảng cáo (không kèm tin nhắn)`);
-        await menuCodeHandoffHandler.handleEvent(senderId, '', baseUrlOverride, { adsReferral: true });
+        await menuCodeHandoffHandler.handleEvent(senderId, '', baseUrlOverride, {
+          adsReferral: true,
+          requestImageDedupe
+        });
       }
       return;
     }
 
     console.log(`📩 [${senderId}]: ${redactSensitiveText(userText)}`);
     if (menuCodeHandoffHandler) {
-      await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, { adsReferral: adsReferralEvent });
+      const handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
+        adsReferral: effectiveAdsReferralEvent,
+        requestImageDedupe
+      });
+      if (handled) return;
       return;
     }
 
@@ -556,7 +603,7 @@ function createWebhook({
           return;
         }
 
-        for (const { file, url } of images) {
+        for (const { file, url } of uniqueImagesForRequest(senderId, images, requestImageDedupe)) {
           try {
             await sendImage(senderId, url);
             console.log(`🖼️  Gửi ảnh: ${file}`);

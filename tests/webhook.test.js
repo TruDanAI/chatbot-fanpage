@@ -188,14 +188,14 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     sendHotCarousel: async () => false,
     isGreetingText: text => /^(?:chào|chao|hi|hello|alo|shop)/i.test(String(text || '').trim()),
     isHotProductsText: () => false,
-    getMenuImageUrls: base => [
+    getMenuImageUrls: options.getMenuImageUrls || (base => [
       { file: 'menu1.png', url: `${base}/media/menu1.png` },
       { file: 'menu2.png', url: `${base}/media/menu2.png` }
-    ],
-    buildRequestedImageUrls: (text, _senderId, base) => {
+    ]),
+    buildRequestedImageUrls: options.buildRequestedImageUrls || ((text, _senderId, base) => {
       const codes = rules.extractRequestedProductCodes(text);
       return codes.length ? [{ file: 'ma8.png', url: `${base}/media/ma8.png` }] : [];
-    },
+    }),
     pushLeadToSheet: () => {
       pushedLeadCalls += 1;
     },
@@ -225,6 +225,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     handleReferral: (senderId = 'sender_1', source = 'ADS', pageId = '') => webhook.handleEvent(makeReferralEvent(senderId, source, pageId), 'https://example.test'),
     handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid) =>
       webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid), 'https://example.test'),
+    handleRawEvent: (event, options = {}) => webhook.handleEvent(event, 'https://example.test', options),
     sent,
     storage,
     getGeminiCalls: () => geminiCalls,
@@ -461,6 +462,32 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getConversationTurnCalls()).toBe(0);
   });
 
+  it('product-code message with sibling ads referral does not also send menu or fallback', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildFallbackReply: () => {
+        throw new Error('fallback should not run');
+      }
+    });
+    const senderId = 'minimal_code_with_referral';
+    const requestOptions = {
+      requestMessageSenders: new Set([senderId]),
+      requestImageDedupe: new Set()
+    };
+
+    await h.handleRawEvent(makeReferralEvent(senderId, 'ADS'), requestOptions);
+    await h.handleRawEvent(makeMessageWithReferral('cho xem MÃ8', senderId, 'ADS', 'm_code_referral'), requestOptions);
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma8.png'))).toBeTrue();
+    expect(textMessages[0]).toContain('680k');
+    expect(textMessages[1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(textMessages.includes(MENU_CODE_MENU_PRICE_REPLY)).toBeFalse();
+    expect(h.storage.inHandoff(senderId)).toBeTrue();
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getFallbackAttentionCalls()).toBe(0);
+  });
+
   it('productCodeLookupEnabled=false skips product-code lookup', async () => {
     const config = buildAdultRuntimeConfig();
     config.botMode = {
@@ -559,6 +586,27 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.storage.getLastUserAt('first_touch_offtopic')).toBeTruthy();
   });
 
+  it('sends each duplicate menu image asset only once per request', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      getMenuImageUrls: base => [
+        { file: 'menu1.png', url: `${base}/media/menu1.png` },
+        { file: 'menu1.png', url: `${base}/media/menu1.png` },
+        { file: 'menu2.png', url: `${base}/media/menu2.png` },
+        { file: 'menu2.png', url: `${base}/media/menu2.png` }
+      ]
+    });
+
+    await h.handleText('chào shop', 'minimal_duplicate_menu_assets', 'm_duplicate_menu_assets');
+
+    const imageUrls = h.sent.filter(item => item.type === 'image').map(item => item.url);
+    expect(imageUrls).toEqual([
+      'https://example.test/media/menu1.png',
+      'https://example.test/media/menu2.png'
+    ]);
+    expect(h.sent.length).toBe(3);
+  });
+
   it('returning customer (within 30 days) off-topic stays silent', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     markReturningCustomer(h.storage, 'returning_recent', 5);
@@ -611,6 +659,24 @@ describe('webhook: menu_code_handoff mode', () => {
 
     expect(h.sent.length).toBe(3);
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('sibling ads referral in same request still makes the message send one menu', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'ads_sibling_returning';
+    markReturningCustomer(h.storage, senderId, 5);
+    const requestOptions = {
+      requestMessageSenders: new Set([senderId]),
+      requestAdsReferralSenders: new Set([senderId]),
+      requestImageDedupe: new Set()
+    };
+
+    await h.handleRawEvent(makeReferralEvent(senderId, 'ADS'), requestOptions);
+    await h.handleRawEvent(makeEvent('bên kia rẻ hơn shop', senderId, 'm_ads_sibling'), requestOptions);
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
   it('ads referral during handoff does not break handoff silence', async () => {
@@ -732,6 +798,28 @@ describe('webhook: default full mode', () => {
     expect(h.getGeminiCalls()).toBe(1);
     expect(h.sent.filter(item => item.type === 'text')[0].text).toBe('Gemini answer');
     expect(h.storage.inHandoff('full_mode')).toBeFalse();
+  });
+
+  it('still sends fallback for unmatched full-mode messages when Gemini is disabled', async () => {
+    const fullConfig = {
+      shopName: 'shop',
+      policies: shopConfig.policies,
+      intents: {},
+      templates: {},
+      recommendations: {}
+    };
+    const h = createWebhookHarness(fullConfig, {
+      useGemini: false,
+      buildDeterministicReply: () => null,
+      buildFallbackReply: () => 'Fallback answer',
+      buildLeadDetails: () => ({})
+    });
+
+    await h.handleText('unhandled message', 'full_mode_fallback', 'm_full_fallback');
+
+    expect(h.sent[0].text).toBe('Fallback answer');
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getFallbackAttentionCalls()).toBe(1);
   });
 
   it('does not enforce fallbackEnabled=false in full mode yet', async () => {
