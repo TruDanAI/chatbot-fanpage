@@ -35,7 +35,8 @@ function createMenuCodeHandoffHandler({
   isGreetingText,
   getMenuImageUrls,
   buildRequestedImageUrls,
-  redactSensitiveText
+  redactSensitiveText,
+  shouldSkipRecentMenuSend = () => false
 }) {
   function isMenuQuestion(userText) {
     const t = normalizeText(userText).replace(/\s+/g, ' ').trim();
@@ -150,6 +151,10 @@ function createMenuCodeHandoffHandler({
     }
 
     if (menuSendingEnabled && (adsReferral || firstTouch || isMenuQuestion(userText))) {
+      if (shouldSkipRecentMenuSend({ pageId: options.pageId, senderId })) {
+        markLastUserAt(senderId);
+        return true;
+      }
       showTyping(senderId);
       await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
       console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);

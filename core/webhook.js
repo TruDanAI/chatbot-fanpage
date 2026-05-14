@@ -15,6 +15,8 @@ const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
 const MESSAGE_TEXT_DEDUPE_TTL_MS = 5 * 1000;
 const MESSAGE_TEXT_DEDUPE_MAX_KEYS = 2000;
+const MENU_SEND_COOLDOWN_MS = 15 * 1000;
+const MENU_SEND_COOLDOWN_MAX_KEYS = 2000;
 
 function createWebhook({
   storage,
@@ -66,18 +68,23 @@ function createWebhook({
   resolveRuntimeForPage
 }) {
   const recentMessageTextKeys = new Map();
+  const recentMenuSendKeys = new Map();
+
+  function pruneExpiringMap(map, maxKeys, nowMs = Date.now()) {
+    for (const [key, expiresAt] of map) {
+      if (expiresAt > nowMs) continue;
+      map.delete(key);
+    }
+
+    while (map.size > maxKeys) {
+      const oldestKey = map.keys().next().value;
+      if (!oldestKey) break;
+      map.delete(oldestKey);
+    }
+  }
 
   function pruneRecentMessageTextKeys(nowMs = Date.now()) {
-    for (const [key, expiresAt] of recentMessageTextKeys) {
-      if (expiresAt > nowMs) continue;
-      recentMessageTextKeys.delete(key);
-    }
-
-    while (recentMessageTextKeys.size > MESSAGE_TEXT_DEDUPE_MAX_KEYS) {
-      const oldestKey = recentMessageTextKeys.keys().next().value;
-      if (!oldestKey) break;
-      recentMessageTextKeys.delete(oldestKey);
-    }
+    pruneExpiringMap(recentMessageTextKeys, MESSAGE_TEXT_DEDUPE_MAX_KEYS, nowMs);
   }
 
   function normalizeMessageTextForDedupe(text, normalize) {
@@ -104,6 +111,27 @@ function createWebhook({
 
     recentMessageTextKeys.set(key, nowMs + MESSAGE_TEXT_DEDUPE_TTL_MS);
     pruneRecentMessageTextKeys(nowMs);
+    return false;
+  }
+
+  function shouldSkipRecentMenuSend({ pageId, senderId }) {
+    if (!senderId) return false;
+
+    const nowMs = Date.now();
+    pruneExpiringMap(recentMenuSendKeys, MENU_SEND_COOLDOWN_MAX_KEYS, nowMs);
+
+    const key = JSON.stringify([
+      String(pageId || ''),
+      String(senderId || '')
+    ]);
+    const expiresAt = recentMenuSendKeys.get(key);
+    if (expiresAt && expiresAt > nowMs) {
+      console.log(`skipped duplicate menu within cooldown: page=${safePageLabel(pageId)} sender=${senderId}`);
+      return true;
+    }
+
+    recentMenuSendKeys.set(key, nowMs + MENU_SEND_COOLDOWN_MS);
+    pruneExpiringMap(recentMenuSendKeys, MENU_SEND_COOLDOWN_MAX_KEYS, nowMs);
     return false;
   }
 
@@ -238,7 +266,8 @@ function createWebhook({
       isGreetingText: runtime.isGreetingText,
       getMenuImageUrls: runtime.getMenuImageUrls,
       buildRequestedImageUrls: runtime.buildRequestedImageUrls,
-      redactSensitiveText: runtime.redactSensitiveText
+      redactSensitiveText: runtime.redactSensitiveText,
+      shouldSkipRecentMenuSend
     });
   }
 
@@ -471,6 +500,7 @@ function createWebhook({
     if (menuCodeHandoffHandler) {
       const handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
         adsReferral: effectiveAdsReferralEvent,
+        pageId,
         requestImageDedupe
       });
       if (handled) return;

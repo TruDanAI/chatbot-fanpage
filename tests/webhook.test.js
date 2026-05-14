@@ -668,7 +668,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
   });
 
-  it('allows same sender and same text again after the duplicate TTL', async () => {
+  it('allows same sender and same menu text again after duplicate TTL and menu cooldown', async () => {
     const originalNow = Date.now;
     let nowMs = 1000000;
     Date.now = () => nowMs;
@@ -676,7 +676,7 @@ describe('webhook: menu_code_handoff mode', () => {
       const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
       await h.handleText('chào shop', 'ttl_expired_sender', 'm_ttl_expired_1', 'page_ttl');
-      nowMs += 5100;
+      nowMs += 15100;
       await h.handleText('chào shop', 'ttl_expired_sender', 'm_ttl_expired_2', 'page_ttl');
 
       expect(h.sent.length).toBe(6);
@@ -686,14 +686,42 @@ describe('webhook: menu_code_handoff mode', () => {
     }
   });
 
-  it('allows different text from the same sender within duplicate TTL', async () => {
-    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+  it('suppresses different menu-trigger text from the same sender within menu cooldown', async () => {
+    const logs = [];
+    const originalLog = console.log;
+    console.log = message => logs.push(String(message));
+    try {
+      const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
-    await h.handleText('chào shop', 'ttl_different_text', 'm_ttl_text_1', 'page_ttl');
-    await h.handleText('giá', 'ttl_different_text', 'm_ttl_text_2', 'page_ttl');
+      await h.handleText('Cho tôi xem danh sách sản phẩm', 'menu_cooldown_text', 'm_menu_cooldown_1', 'page_ttl');
+      await h.handleText('Giá Sản Phẩm Từ Bao Nhiêu', 'menu_cooldown_text', 'm_menu_cooldown_2', 'page_ttl');
 
-    expect(h.sent.length).toBe(6);
-    expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
+      expect(h.sent.length).toBe(3);
+      expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+      expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+      expect(logs.join('\n')).toContain('skipped duplicate menu within cooldown');
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('allows same sender to receive menu again after menu cooldown', async () => {
+    const originalNow = Date.now;
+    let nowMs = 2000000;
+    Date.now = () => nowMs;
+    try {
+      const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+      await h.handleText('Cho tôi xem danh sách sản phẩm', 'menu_cooldown_expired', 'm_menu_cooldown_expired_1', 'page_ttl');
+      nowMs += 15100;
+      await h.handleText('Giá Sản Phẩm Từ Bao Nhiêu', 'menu_cooldown_expired', 'm_menu_cooldown_expired_2', 'page_ttl');
+
+      expect(h.sent.length).toBe(6);
+      expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
+      expect(h.sent.filter(item => item.type === 'image').length).toBe(4);
+    } finally {
+      Date.now = originalNow;
+    }
   });
 
   it('allows different sender with the same text within duplicate TTL', async () => {
@@ -704,6 +732,22 @@ describe('webhook: menu_code_handoff mode', () => {
 
     expect(h.sent.length).toBe(6);
     expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
+  });
+
+  it('allows product-code reply within menu cooldown', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'code_during_menu_cooldown';
+
+    await h.handleText('chào shop', senderId, 'm_code_cooldown_1', 'page_ttl');
+    await h.handleText('cho xem MÃ8', senderId, 'm_code_cooldown_2', 'page_ttl');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.length).toBe(6);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma8.png'))).toBeTrue();
+    expect(textMessages.filter(text => text === MENU_CODE_MENU_PRICE_REPLY).length).toBe(1);
+    expect(textMessages.some(text => text.includes('680k'))).toBeTrue();
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff(senderId)).toBeTrue();
   });
 
   it('ads referral with off-topic message overrides returning-customer silence', async () => {
