@@ -1,4 +1,4 @@
-const { normalizeRuleToggles } = require('../rule-toggles');
+const { normalizeFeatureFlags } = require('./feature-flags');
 
 function text(value) {
   return value == null ? '' : String(value);
@@ -123,9 +123,9 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
   const handoffMessage = trimText(settings.handoff_message || botModeJson.handoffMessage);
   const menuIntroText = trimText(settings.menu_intro_text || settingsJson.menuIntroText);
   const handoffEnabled = boolValue(settings.handoff_enabled, boolValue(botModeJson.handoffEnabled, false));
-  const ruleToggles = normalizeRuleToggles({
-    ...botModeJson,
-    ...jsonObject(settingsJson.ruleToggles)
+  const ruleToggles = normalizeFeatureFlags({
+    botMode: botModeJson,
+    settings_json: settingsJson
   });
   const groupedAssets = groupAssets(assets);
 

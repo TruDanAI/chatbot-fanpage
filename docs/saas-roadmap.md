@@ -73,8 +73,9 @@ Last verified baseline from May 12, 2026:
   `a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS` at commit
   `fae7c7f Fix user detail internal notes UI contract`
 - Latest pushed/code commit:
-  `fae7c7f Fix user detail internal notes UI contract`
-- Latest git state: clean worktree, `origin/main...HEAD = 0 0`.
+  `179953e Add atomic MID idempotency`
+- Latest git state: must be re-checked before production work. Feature flag
+  facade phase 1 is local-only until a separate commit/push is approved.
 - Latest production internal_notes schema apply:
   `db/internal-notes-proposal.sql` has been applied to production PostgreSQL.
 - Backup used before internal_notes schema apply/read smoke:
@@ -635,10 +636,15 @@ Current safety foundation:
   `INSERT ... ON CONFLICT DO NOTHING RETURNING`, duplicate MIDs skip the
   webhook event, and MID storage errors fail closed without sending a customer
   reply.
+- Feature flag facade phase 1 is implemented locally:
+  `core/shops/feature-flags.js` provides `getFeatureFlag()` and
+  `getRuleToggle()` so runtime bot-mode decisions use a single bridge for
+  rule toggles and legacy `botMode` options. No schema migration, plan billing,
+  adult-shop behavior change, or durable queue was added in this phase.
 - Runtime logs use `page_ref=p:<hash>` for page correlation instead of raw
   `page_id`.
 - Latest local safety-foundation test baseline: `npm test` passed with
-  `481 passed, 0 failed`.
+  `489 passed, 0 failed`.
 
 Multi-shop safety track before shop #2:
 
@@ -649,12 +655,11 @@ Multi-shop safety track before shop #2:
    `tryMarkMid()` before processing; PostgreSQL uses
    `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage preserves the
    previous in-memory dedupe behavior behind the same interface.
-3. Feature flag facade. Next: add `getFeatureFlag(shopConfig/shopId, key)` before
-   migrating schema, so runtime code stops reading `settings_json.ruleToggles`
-   directly.
-4. Durable webhook queue. Build this only after credential isolation and
-   idempotency are stable; use PostgreSQL queue rows with bounded retry and
-   `FOR UPDATE SKIP LOCKED`.
+3. Feature flag facade. Local phase 1 done: runtime bot-mode helpers use
+   `getFeatureFlag()`/`getRuleToggle()` bridge defaults and overrides before
+   any schema migration.
+4. Durable webhook queue. Next: use PostgreSQL queue rows with bounded retry
+   and `FOR UPDATE SKIP LOCKED`.
 5. Per-shop health. Show last webhook, last successful send, send error rate,
    active handoffs, and credential status without raw secrets, raw page IDs, or
    customer data.
@@ -731,10 +736,10 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. Per-page credential resolution phase 1 and atomic message idempotency
-phase 1 are complete locally. The current multi-shop safety order is now:
-feature flag facade, durable webhook queue, then per-shop health/credential
-status. Do not jump to the queue before the feature flag facade is in place.
+session. Per-page credential resolution phase 1, atomic message idempotency
+phase 1, and feature flag facade phase 1 are complete locally. The current
+multi-shop safety order is now: durable webhook queue, then per-shop
+health/credential status.
 Any production rollout still follows `docs/multi-shop-rollout.md` and needs
 separate approval for deploy, env changes, DB writes, credential seeding, and
 authenticated smoke.

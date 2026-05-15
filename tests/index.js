@@ -12,6 +12,7 @@ require('./reminder-service.test');
 require('./storage-config.test');
 require('./storage-file-adapter.test');
 require('./storage-postgres-adapter.test');
+require('./feature-flags.test');
 require('./db-shop-config.test');
 require('./page-credentials.test');
 require('./migration-plan.test');

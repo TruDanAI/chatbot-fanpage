@@ -42,6 +42,13 @@ Mục tiêu sản phẩm:
   MID storage error fail-closed rõ ràng không gửi customer reply, file adapter
   giữ behavior MID dedupe hiện tại sau cùng interface; latest local
   verification `npm test` = 481 passed, 0 failed.
+- Feature flag facade phase 1 đã hoàn tất local-only:
+  `core/shops/feature-flags.js` expose `getFeatureFlag()` /
+  `getRuleToggle()`, runtime bot-mode helpers đọc facade thay vì đọc trực tiếp
+  behavior flags từ `settings_json.ruleToggles`/legacy `botMode`, DB shop
+  config normalization dùng facade bridge tạm; chưa migrate schema, chưa thêm
+  plan billing, chưa đổi adult-shop flow; latest local verification
+  `npm test` = 489 passed, 0 failed.
   Không deploy, không đổi production env, không ghi production DB, không đụng
   production /data.
 
@@ -92,11 +99,13 @@ Trạng thái production mới nhất đã biết:
   a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS ở commit fae7c7f
   Fix user detail internal notes UI contract
 - Latest pushed/code commit:
-  fae7c7f Fix user detail internal notes UI contract
+  179953e Add atomic MID idempotency
 - Latest git state:
   Must be re-checked at the start of the next session with `git status` and
   `git rev-list --left-right --count origin/main...HEAD`. Do not assume the
   previous clean state still holds after handoff/docs/runtime safety updates.
+  Feature flag facade phase 1 is local-only until a separate commit/push is
+  approved.
 - Latest production internal_notes schema apply:
   db/internal-notes-proposal.sql đã apply thành công vào production
   PostgreSQL sau backup mới.
@@ -146,15 +155,17 @@ Trạng thái production mới nhất đã biết:
 - Không apply schema trong lúc POST/GET smoke.
 - Không đụng production /data.
 - Latest local test coverage baseline:
-  `npm test` passed with 481 passed, 0 failed after atomic message
-  idempotency phase 1.
+  `npm test` passed with 489 passed, 0 failed after feature flag facade
+  phase 1.
   Tests cover internal-notes validation/RBAC/transaction/audit fail-closed
   behavior, SQL verifier guardrails, read model behavior, webhook log
   redaction, multi-shop runtime admission, page credential encryption/decryption,
   DB-backed credential token selection, missing credential fail-closed behavior,
   legacy `FB_PAGE_TOKEN` fallback, atomic MID `tryMarkMid()` duplicate skips,
-  PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe, and
-  no raw token/page_id logging.
+  PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe,
+  feature flag facade defaults/overrides/unknown-default behavior,
+  menu_code_handoff facade regression coverage, and no raw token/page_id
+  logging.
 - Latest Phase 4 internal notes live local SQL verification:
   npm run verify:internal-notes-sql passed using local Docker Postgres
   container chatbot-fanpage-internal-notes-pg, bound to
@@ -1226,16 +1237,12 @@ Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session
 production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Phase 4 internal
 notes v1 backend/API/UI đã complete và production-smoked theo các giới hạn an
 toàn ở trên. Multi-shop staging MVP đã pass, và runtime admission guard đã được
-thêm để giảm blast radius. Per-page credential resolution phase 1 đã hoàn tất
-local-only. Atomic message idempotency phase 1 đã hoàn tất local-only. Trọng
-tâm tiếp theo là feature flag facade trước khi rollout production rộng hơn.
+thêm để giảm blast radius. Per-page credential resolution phase 1, atomic
+message idempotency phase 1, và feature flag facade phase 1 đã hoàn tất
+local-only. Trọng tâm tiếp theo là durable webhook queue trước per-shop health.
 
 Next recommended task:
-- Làm feature flag facade:
-  - tạo `getFeatureFlag(shopConfig/shopId, key)`
-  - runtime đọc facade, không đọc trực tiếp `settings_json.ruleToggles.X` rải rác
-  - chưa migrate schema nếu chưa cần
-- Chỉ làm durable webhook queue sau credential isolation và idempotency:
+- Làm durable webhook queue:
   - states: queued, processing, done, failed
   - retry bounded
   - PostgreSQL `FOR UPDATE SKIP LOCKED`; Redis chưa cần cho mục tiêu 5-20 shop
@@ -1275,14 +1282,15 @@ Việc nên làm đầu phiên tới:
    - admin_user_roles
    - admin_audit_log
 7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline
-   coverage mới nhất đã biết: `npm test` 481 passed, 0 failed sau atomic
-   message idempotency phase 1; tests cover validation, RBAC, transaction/audit
+   coverage mới nhất đã biết: `npm test` 489 passed, 0 failed sau feature
+   flag facade phase 1; tests cover validation, RBAC, transaction/audit
    fail-closed behavior, static SQL checks, verifier guardrails, read model
    behavior, webhook log redaction, multi-shop admission, credential
    encryption/decryption, DB-backed credential token selection, missing
    credential fail-closed, legacy `FB_PAGE_TOKEN`, atomic MID duplicate skips,
-   PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe, and
-   no raw token/page_id logging.
+   PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe,
+   feature flag facade behavior, menu_code_handoff facade regression coverage,
+   and no raw token/page_id logging.
 
 Phase 3 browser cookie smoke:
 - Đã hoàn tất ngày 2026-05-11 sau backup và xác nhận riêng.
@@ -1296,8 +1304,9 @@ Code-only hướng khác:
 - Multi-shop safety foundation:
   - per-page credential resolution phase 1 đã hoàn tất local-only
   - atomic `tryMarkMid()` phase 1 đã hoàn tất local-only
-  - feature flag facade là bước tiếp theo
-  - durable queue đứng sau token isolation và idempotency, không làm trước
+  - feature flag facade phase 1 đã hoàn tất local-only
+  - durable queue là bước tiếp theo sau token isolation, idempotency, và
+    feature flag facade
   - per-shop health/credential status đứng sau queue/credential validation
 - Phase 4 internal notes:
   - v1 backend/API/UI đã complete
@@ -1319,7 +1328,8 @@ Không làm vội:
 - Không tạo production internal note nếu chưa xác nhận rõ vì sẽ ghi business data.
 - Không coi browser session hiện tại là per-human identity; nó vẫn là static-token bridge cho tới khi admin_users login thật được implement.
 - Không thêm admin user production nếu chưa review identity provisioning và rollback.
-- Không làm durable webhook queue trước per-page credentials và atomic idempotency.
+- Không làm durable webhook queue trước per-page credentials, atomic
+  idempotency, và feature flag facade.
 - Không apply/seed `shop_page_credentials` production hoặc set
   `CREDENTIAL_MASTER_KEY` production nếu chưa có backup/approval riêng.
 - Không coi `RUNTIME_ALLOWED_PAGE_IDS` là whitelist cho page chưa có DB mapping; nó chỉ là post-resolution override.

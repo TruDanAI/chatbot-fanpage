@@ -4,6 +4,7 @@ const {
   MENU_CODE_MENU_PRICE_REPLY,
   getMenuCodeHandoffMessage
 } = require('./modes/menu-code-handoff');
+const { getFeatureFlag } = require('./shops/feature-flags');
 
 const MENU_CODE_HANDOFF_DISABLED_INTENTS = [
   'AGE_POLICY',
@@ -55,61 +56,48 @@ function getBotModeName(config = {}) {
   return String(mode.name || '').trim();
 }
 
-function getModeOptions(config = {}) {
-  const mode = config.botMode || {};
-  return typeof mode === 'object' && mode ? mode : {};
-}
-
 function isMenuCodeHandoffMode(config = {}) {
   return getBotModeName(config) === MENU_CODE_HANDOFF;
 }
 
 function isAiFallbackEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.aiFallbackEnabled === true;
+  return getFeatureFlag(config, 'aiFallbackEnabled', false) === true;
 }
 
 function isLeadCaptureEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.leadCaptureEnabled === true;
+  return getFeatureFlag(config, 'leadCaptureEnabled', false) === true;
 }
 
 function isOrderFlowEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.orderFlowEnabled === true;
+  return getFeatureFlag(config, 'orderFlowEnabled', false) === true;
 }
 
 function isFollowUpEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.followUpEnabled === true;
+  return getFeatureFlag(config, 'followUpEnabled', false) === true;
 }
 
 function isProductCodeLookupEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.productCodeLookupEnabled !== false;
+  return getFeatureFlag(config, 'productCodeLookupEnabled', true) !== false;
 }
 
 function isMenuSendingEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.menuSendingEnabled !== false;
+  return getFeatureFlag(config, 'menuSendingEnabled', true) !== false;
 }
 
 function isPostProductHandoffEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.postProductHandoffEnabled !== false;
+  return getFeatureFlag(config, 'postProductHandoffEnabled', true) !== false;
 }
 
 function isFallbackEnabled(config = {}) {
   if (!isMenuCodeHandoffMode(config)) return true;
-  const mode = getModeOptions(config);
-  return mode.fallbackEnabled !== false;
+  return getFeatureFlag(config, 'fallbackEnabled', true) !== false;
 }
 
 function applyBotModeConfig(config = {}) {

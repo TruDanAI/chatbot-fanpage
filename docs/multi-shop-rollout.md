@@ -71,6 +71,22 @@ Latest local atomic message idempotency phase 1 update:
   `481 passed, 0 failed`.
 - Production deploy/env/DB/data remain untouched.
 
+Latest local feature flag facade phase 1 update:
+
+- `core/shops/feature-flags.js` now provides `getFeatureFlag()` and
+  `getRuleToggle()` with explicit defaults for the current runtime rule
+  toggles.
+- Runtime bot-mode helpers use the facade instead of reading behavior flags
+  directly from `settings_json.ruleToggles` or legacy `botMode` options.
+- DB-backed shop config normalization uses the facade as a bridge before any
+  future schema migration.
+- No schema migration, plan billing, adult-shop behavior change, durable queue,
+  production deploy, production env change, production DB write, or production
+  `/data` touch was done.
+- Latest local verification for this update: `npm test` passed with
+  `489 passed, 0 failed`.
+- Production deploy/env/DB/data remain untouched.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -124,13 +140,13 @@ production environment variables, or write production data.
    Runtime awaits `tryMarkMid()` before processing. PostgreSQL uses
    `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage preserves the
    previous behavior behind the same interface.
-3. Feature flag facade:
-   add `getFeatureFlag(shopConfig/shopId, key)` before any schema migration so
-   runtime code stops depending directly on `settings_json.ruleToggles.X`.
+3. Feature flag facade: local phase 1 done.
+   Runtime bot-mode helpers now use the facade bridge and keep existing
+   defaults/overrides before any schema migration.
 4. Durable webhook queue:
-   implement only after credentials and idempotency are stable. Use PostgreSQL
-   queue rows with bounded retry and `FOR UPDATE SKIP LOCKED`; Redis is not
-   needed for the current 5-20 shop target.
+   implement next. Use PostgreSQL queue rows with bounded retry and
+   `FOR UPDATE SKIP LOCKED`; Redis is not needed for the current 5-20 shop
+   target.
 5. Per-shop health:
    expose last webhook, last successful send, send error rate, and credential
    status without raw tokens, raw page IDs, customer rows, messages, or orders.

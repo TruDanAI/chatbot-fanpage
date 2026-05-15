@@ -605,6 +605,60 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getFallbackAttentionCalls()).toBe(0);
   });
 
+  it('uses facade defaults when menu_code_handoff rule toggles are missing', async () => {
+    const config = applyBotModeConfig({
+      ...shopConfig,
+      botMode: {
+        name: 'menu_code_handoff',
+        aiFallbackEnabled: false,
+        orderFlowEnabled: false,
+        handoffMessage: MENU_CODE_HANDOFF_MESSAGE
+      }
+    });
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    await h.handleText('cho xem MÃ8', 'toggle_defaults_code', 'm_toggle_defaults_code');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma8.png'))).toBeTrue();
+    expect(textMessages[0]).toContain('680k');
+    expect(textMessages[1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('toggle_defaults_code')).toBeTrue();
+  });
+
+  it('ruleToggles false override disables product-code lookup through the facade', async () => {
+    const config = buildAdultRuntimeConfig();
+    config.ruleToggles = {
+      productCodeLookupEnabled: false
+    };
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'toggle_rule_false_code_lookup', 1);
+
+    await h.handleText('cho xem MÃ8', 'toggle_rule_false_code_lookup', 'm_toggle_rule_false_code_lookup');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage.inHandoff('toggle_rule_false_code_lookup')).toBeFalse();
+    expect(h.getGeminiCalls()).toBe(0);
+  });
+
+  it('ruleToggles true override beats legacy botMode false through the facade', async () => {
+    const config = buildAdultRuntimeConfig();
+    config.botMode = {
+      ...(config.botMode || {}),
+      productCodeLookupEnabled: false
+    };
+    config.ruleToggles = {
+      productCodeLookupEnabled: true
+    };
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    await h.handleText('cho xem MÃ8', 'toggle_rule_true_code_lookup', 'm_toggle_rule_true_code_lookup');
+
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma8.png'))).toBeTrue();
+    expect(h.sent.filter(item => item.type === 'text').map(item => item.text).join('\n')).toContain('680k');
+    expect(h.storage.inHandoff('toggle_rule_true_code_lookup')).toBeTrue();
+  });
+
   it('productCodeLookupEnabled=false skips product-code lookup', async () => {
     const config = buildAdultRuntimeConfig();
     config.botMode = {
