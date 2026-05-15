@@ -31,6 +31,32 @@ Latest local verification before the commit:
 - `npm audit --omit=dev` found `0 vulnerabilities`.
 - `git diff --check` passed.
 
+Latest local safety-foundation update after runtime admission guard:
+
+- Runtime admission now supports `RUNTIME_ALLOWED_SHOP_IDS` and
+  `RUNTIME_ALLOWED_PAGE_IDS`.
+- Webhook/runtime fail-closed logs use `page_ref=p:<hash>` instead of raw
+  `page_id`.
+- Latest local verification for that update: `npm test` passed with
+  `469 passed, 0 failed`; `git diff --check` passed.
+
+Latest local per-page credential phase 1 update:
+
+- `db/multi-shop-proposal.sql` now includes additive/idempotent
+  `shop_page_credentials` for active encrypted `fb_page_token` credentials by
+  shop/page mapping.
+- `core/credentials/page-credentials.js` encrypts/decrypts credentials using
+  `CREDENTIAL_MASTER_KEY`.
+- DB-backed runtime resolves the credential for the resolved shop/page and
+  uses that page token for Messenger sends.
+- Missing DB-backed credentials fail closed and do not fallback to
+  `FB_PAGE_TOKEN`; file-backed legacy runtime still uses `FB_PAGE_TOKEN`.
+- Runtime logs continue to use `page_ref=p:<hash>` and do not log raw tokens or
+  raw `page_id`.
+- Latest local verification for this update: `npm test` passed with
+  `479 passed, 0 failed`; `git diff --check` passed.
+- Production deploy/env/DB/data remain untouched.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -42,6 +68,14 @@ safe, non-production values:
 - `ADMIN_PRINCIPAL_ID`: safe actor id for audit entries.
 - `ADMIN_PRINCIPAL_DISPLAY_NAME`: safe display name for audit/admin context.
 - `MULTI_SHOP_DB_CONFIG_ENABLED=true`: enables DB-backed runtime config.
+- `CREDENTIAL_MASTER_KEY`: required only when DB-backed runtime decrypts
+  `shop_page_credentials`; use a long random value and do not change in
+  production without a rotation/re-encryption plan.
+- `RUNTIME_ALLOWED_SHOP_IDS`: optional runtime admission allowlist for
+  `shops.id` values during staged rollout.
+- `RUNTIME_ALLOWED_PAGE_IDS`: optional post-resolution page override. It only
+  applies after `shop_pages` resolves the page to a shop; unknown pages still
+  fail closed and do not fallback because of this variable.
 
 Do not print any value for these variables in logs, chat, or runbooks.
 
@@ -63,6 +97,30 @@ Audit writes remain fail-closed for product writes. Missing or broken audit
 schema must fail the product transaction safely instead of persisting a product
 without an audit record.
 
+## Next Engineering Steps Before Shop #2
+
+This section is an engineering roadmap, not approval to deploy, change
+production environment variables, or write production data.
+
+1. Per-page credential resolution: local phase 1 done.
+   store encrypted page credentials by shop/page and make Messenger sends select
+   the resolved page token. Keep `FB_PAGE_TOKEN` only as the legacy file-backed
+   fallback.
+2. Atomic message idempotency:
+   replace `seenMid()` plus async `markMid()` with `tryMarkMid()`. PostgreSQL
+   should use `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage can
+   preserve current behavior behind the same interface.
+3. Feature flag facade:
+   add `getFeatureFlag(shopConfig/shopId, key)` before any schema migration so
+   runtime code stops depending directly on `settings_json.ruleToggles.X`.
+4. Durable webhook queue:
+   implement only after credentials and idempotency are stable. Use PostgreSQL
+   queue rows with bounded retry and `FOR UPDATE SKIP LOCKED`; Redis is not
+   needed for the current 5-20 shop target.
+5. Per-shop health:
+   expose last webhook, last successful send, send error rate, and credential
+   status without raw tokens, raw page IDs, customer rows, messages, or orders.
+
 ## Production Rollout Order
 
 Production rollout needs separate approval for each production-impacting gate.
@@ -80,20 +138,26 @@ Approval for one gate does not imply approval for later gates.
    not already have it.
 8. Seed `adult-shop` into production PostgreSQL from the current production
    file-backed catalog/config.
-9. Verify count-only table state:
+9. Seed encrypted `shop_page_credentials` only after separate production secret
+   handling/env approval. Do not print token plaintext, encrypted values, or
+   `CREDENTIAL_MASTER_KEY`.
+10. Verify count-only table state:
    `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
-   `admin_roles`, `admin_users`, `admin_user_roles`, and `admin_audit_log`.
-10. Deploy the reviewed runtime/dashboard commit only after deploy approval.
-11. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
+   `shop_page_credentials`, `admin_roles`, `admin_users`, `admin_user_roles`,
+   and `admin_audit_log`.
+11. Deploy the reviewed runtime/dashboard commit only after deploy approval.
+12. Set `CREDENTIAL_MASTER_KEY` only after separate production environment
+    approval.
+13. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
     environment approval.
-12. Smoke public `/healthz` without auth.
-13. Smoke admin shops read routes only after approval, because authenticated
+14. Smoke public `/healthz` without auth.
+15. Smoke admin shops read routes only after approval, because authenticated
     admin reads can write audit rows.
-14. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
+16. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
     after explicit production DB write approval.
-15. Archive the smoke product as cleanup and verify there is no duplicate
+17. Archive the smoke product as cleanup and verify there is no duplicate
     active smoke code.
-16. Verify count-only audit delta and product counts. Do not print raw audit,
+18. Verify count-only audit delta and product counts. Do not print raw audit,
     product, customer, order, or message rows.
 
 Expected post-rollout product checks:
@@ -117,6 +181,12 @@ Expected post-rollout product checks:
 - Product writes must fail closed on aborted transactions.
 - Runtime page resolution must fail closed for unknown pages instead of sending
   another shop's content.
+- DB-backed runtime with a missing/decrypt-failed page credential must fail
+  closed instead of using another shop's token or the legacy `FB_PAGE_TOKEN`.
+- `FB_PAGE_TOKEN` remains only the file-backed legacy fallback.
+- If `RUNTIME_ALLOWED_SHOP_IDS` or `RUNTIME_ALLOWED_PAGE_IDS` is set, resolved
+  shops/pages outside those lists must fail closed. Use shop IDs as the primary
+  control; page IDs are only a transition override.
 - Product updates, status changes, and archive actions must stay shop-scoped;
   no cross-shop updates.
 - Product code uniqueness is enforced per shop for active products.

@@ -27,6 +27,17 @@ Mục tiêu sản phẩm:
   product CRUD smoke passed, audit delta +5, original 13 products unchanged,
   smoke product archived. Latest multi-shop fix commit:
   e98ad73 Fail product writes on aborted transactions. Production chưa đụng.
+- Multi-shop runtime safety foundation mới nhất: runtime admission guard dùng
+  `RUNTIME_ALLOWED_SHOP_IDS` / `RUNTIME_ALLOWED_PAGE_IDS`; unknown page vẫn
+  fail-closed khi allowlist active; runtime logs dùng `page_ref=p:<hash>` thay
+  raw `page_id`.
+- Per-page credential resolution phase 1 đã hoàn tất local-only:
+  `shop_page_credentials` additive SQL proposal, credential service mã hóa/giải
+  mã bằng `CREDENTIAL_MASTER_KEY`, DB-backed runtime chọn đúng page token,
+  missing credential fail-closed, legacy file-backed runtime vẫn dùng
+  `FB_PAGE_TOKEN`; latest local verification `npm test` = 479 passed, 0 failed.
+  Không deploy, không đổi production env, không ghi production DB, không đụng
+  production /data.
 
 Quy tắc an toàn bắt buộc:
 - Ưu tiên an toàn dữ liệu tuyệt đối.
@@ -77,7 +88,9 @@ Trạng thái production mới nhất đã biết:
 - Latest pushed/code commit:
   fae7c7f Fix user detail internal notes UI contract
 - Latest git state:
-  Git clean, origin/main...HEAD = 0 0.
+  Must be re-checked at the start of the next session with `git status` and
+  `git rev-list --left-right --count origin/main...HEAD`. Do not assume the
+  previous clean state still holds after handoff/docs/runtime safety updates.
 - Latest production internal_notes schema apply:
   db/internal-notes-proposal.sql đã apply thành công vào production
   PostgreSQL sau backup mới.
@@ -127,9 +140,12 @@ Trạng thái production mới nhất đã biết:
 - Không apply schema trong lúc POST/GET smoke.
 - Không đụng production /data.
 - Latest local test coverage baseline:
-  Phase 4 internal notes tests cover validation, RBAC, transaction/audit
-  fail-closed behavior, static SQL checks, verifier guardrails, and read model
-  behavior.
+  `npm test` passed with 479 passed, 0 failed after per-page credential phase 1.
+  Tests cover internal-notes validation/RBAC/transaction/audit fail-closed
+  behavior, SQL verifier guardrails, read model behavior, webhook log
+  redaction, multi-shop runtime admission, page credential encryption/decryption,
+  DB-backed credential token selection, missing credential fail-closed behavior,
+  legacy `FB_PAGE_TOKEN` fallback, and no raw token/page_id logging.
 - Latest Phase 4 internal notes live local SQL verification:
   npm run verify:internal-notes-sql passed using local Docker Postgres
   container chatbot-fanpage-internal-notes-pg, bound to
@@ -1108,6 +1124,29 @@ Tính năng admin hiện có:
     aborted transaction, COMMIT reporting ROLLBACK, and fake 201; fixed by
     applying audit schema and guarding COMMIT command with product_commit_failed
   - production not deployed, env not changed, DB not written, smoke not run
+- Multi-shop runtime safety foundation after staging MVP:
+  - `RUNTIME_ALLOWED_SHOP_IDS` and `RUNTIME_ALLOWED_PAGE_IDS` exist as runtime
+    admission controls for DB-backed rollout
+  - `RUNTIME_ALLOWED_PAGE_IDS` is post-resolution only; it does not make unknown
+    pages fallback to file config
+  - fail-closed/fallback webhook logs use `page_ref=p:<hash>`, not raw
+    `page_id`
+  - startup validation warns if allowed shop IDs are absent/inactive in DB but
+    does not crash production startup
+  - per-page credential resolution phase 1 local-only:
+    - additive/idempotent `shop_page_credentials` proposal in
+      `db/multi-shop-proposal.sql`
+    - `core/credentials/page-credentials.js` encrypts/decrypts with
+      `CREDENTIAL_MASTER_KEY`
+    - DB-backed runtime resolves `fb_page_token` for the resolved shop/page and
+      uses that token for Messenger sends
+    - missing/decrypt-failed credential fail-closed and does not fallback to
+      `FB_PAGE_TOKEN`
+    - file-backed legacy runtime still uses `FB_PAGE_TOKEN`
+  - latest local verification for this safety foundation: `npm test` 476
+    passed, 0 failed; `git diff --check` passed
+  - production deploy/env/DB/data remain untouched unless a future session gets
+    separate approval
 
 File quan trọng:
 - core/admin-auth.js
@@ -1121,6 +1160,12 @@ File quan trọng:
 - core/admin/session.js
 - core/admin/internal-notes.js
 - core/admin/views.js
+- core/credentials/page-credentials.js
+- core/utils/log-refs.js
+- core/webhook.js
+- core/messenger-client.js
+- core/shops/db-shop-config.js
+- index.js
 - db/admin-auth-rbac-audit-proposal.sql
 - db/internal-notes-proposal.sql
 - db/multi-shop-proposal.sql
@@ -1149,6 +1194,7 @@ Việc bắt buộc làm đầu phiên mới:
    - Không cần token.
    - Chỉ báo metadata an toàn: ok, storage.adapter, storage.ready, messenger.dryRun.
 4. Đọc lại:
+   - docs/next-session-prompt.md
    - docs/saas-roadmap.md
    - docs/phase-4-internal-notes-design.md
    - docs/admin-auth-rbac-audit-runbook.md
@@ -1157,6 +1203,8 @@ Việc bắt buộc làm đầu phiên mới:
    - docs/multi-shop-rollout.md
    - db/multi-shop-proposal.sql
    - db/internal-notes-proposal.sql
+   - core/webhook.js
+   - index.js
    - core/admin/internal-notes.js
    - tests/admin-internal-notes.test.js
    - DESIGN.md
@@ -1165,26 +1213,40 @@ Việc bắt buộc làm đầu phiên mới:
    - npm audit --omit=dev
 
 Hướng tốt nhất cho phiên tới:
-Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Read-only dashboard/audit pagination đã deploy và authenticated smoke đã pass sau backup. Phase 3.5 login rate limit đã deploy và production-smoked; identity provisioning/admin users và actor/audit semantics đã được thiết kế trong docs. Phase 4 internal notes v1 backend/API/UI đã complete: design doc, SQL proposal, safe SQL verifier, live local PostgreSQL SQL verification, create service, read/list model, GET+POST API deployed, production internal_notes schema applied, production POST note-create smoke passed creating exactly 1 smoke note, post-create GET read smoke passed với schemaReady=true/notes.length=1/pagination present/auditDelta=+1 success, và User Detail UI smoke passed với HTTP 200, smoke note visible, form visibility đúng theo role, internal_notes 1 -> 1, admin_audit_log 61 -> 62, auditDelta=+1 success. Latest known counts: internal_notes=1; admin_audit_log=62, success=40, denied=22, error=0. Smoke note vẫn tồn tại và chưa bị hidden/deleted. User Detail UI/list/form exists; chưa có edit/delete/hide/order-notes UI.
+Phase 2 production audit rollout đã hoàn tất. Phase 3 admin login/session
+production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Phase 4 internal
+notes v1 backend/API/UI đã complete và production-smoked theo các giới hạn an
+toàn ở trên. Multi-shop staging MVP đã pass, và runtime admission guard đã được
+thêm để giảm blast radius. Per-page credential resolution phase 1 đã hoàn tất
+local-only. Trọng tâm tiếp theo là atomic message idempotency trước khi rollout
+production rộng hơn.
 
 Next recommended task:
-- Prepare the multi-shop MVP production rollout plan from
-  docs/multi-shop-rollout.md, but do not execute production steps without
-  fresh backup and separate approvals.
-- Production rollout order: backup first, apply multi-shop schema, apply/verify
-  admin audit schema, seed adult-shop, verify counts, deploy runtime, enable
-  MULTI_SHOP_DB_CONFIG_ENABLED, smoke healthz, smoke admin shops after approval,
-  smoke product CRUD with test product after explicit production DB write
-  approval, archive cleanup, verify audit delta count-only.
+- Làm atomic message idempotency:
+  - thay `seenMid()` + async `markMid()` bằng `tryMarkMid()`
+  - PostgreSQL dùng `INSERT ... ON CONFLICT DO NOTHING RETURNING`
+  - file adapter giữ behavior hiện tại sau cùng interface
+- Sau đó làm feature flag facade:
+  - tạo `getFeatureFlag(shopConfig/shopId, key)`
+  - runtime đọc facade, không đọc trực tiếp `settings_json.ruleToggles.X` rải rác
+  - chưa migrate schema nếu chưa cần
+- Chỉ làm durable webhook queue sau credential isolation và idempotency:
+  - states: queued, processing, done, failed
+  - retry bounded
+  - PostgreSQL `FOR UPDATE SKIP LOCKED`; Redis chưa cần cho mục tiêu 5-20 shop
+- Sau queue mới làm per-shop health/credential status:
+  - last webhook, last successful send, send error rate, active handoffs,
+    credential status
+  - không expose raw token, raw page_id, customer rows, messages, orders
+- Production multi-shop rollout vẫn phải theo docs/multi-shop-rollout.md và cần
+  approval riêng cho từng gate: backup, schema apply, credential seed,
+  `CREDENTIAL_MASTER_KEY` env, deploy, env enable, authenticated smoke, product
+  CRUD smoke.
 - Any further production internal-notes smoke or write still needs separate
   approval because GET writes audit rows and POST writes business data.
 - Tiếp tục chỉ dùng explicit non-production URL như CHATBOT_TEST_DATABASE_URL
   hoặc CHATBOT_STAGING_DATABASE_URL cho schema verification; không dùng
   DATABASE_URL vì có thể là production.
-- Không chạy authenticated /admin/api/internal-notes smoke nếu chưa có xác nhận
-  riêng vì route sẽ ghi audit rows.
-- Không thêm edit/delete/hide/order-notes UI trước khi có rollout plan, tests,
-  và approval rõ cho production impact.
 
 Việc nên làm đầu phiên tới:
 1. Re-check git/deployment/healthz.
@@ -1207,7 +1269,14 @@ Việc nên làm đầu phiên tới:
    - admin_roles
    - admin_user_roles
    - admin_audit_log
-7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline coverage mới nhất đã biết: tests cover validation, RBAC, transaction/audit fail-closed behavior, static SQL checks, verifier guardrails, and read model behavior.
+7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline
+   coverage mới nhất đã biết: `npm test` 479 passed, 0 failed sau per-page
+   credential phase 1; tests cover validation, RBAC, transaction/audit
+   fail-closed behavior, static SQL checks, verifier guardrails, read model
+   behavior, webhook log redaction, multi-shop admission, credential
+   encryption/decryption, DB-backed credential token selection, missing
+   credential fail-closed, legacy `FB_PAGE_TOKEN`, and no raw token/page_id
+   logging.
 
 Phase 3 browser cookie smoke:
 - Đã hoàn tất ngày 2026-05-11 sau backup và xác nhận riêng.
@@ -1218,6 +1287,12 @@ Code-only hướng khác:
 - Tiếp tục hardening read-only:
   - pagination read-only cho user detail timelines nếu fixed limits bắt đầu thiếu
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
+- Multi-shop safety foundation:
+  - per-page credential resolution phase 1 đã hoàn tất local-only
+  - atomic `tryMarkMid()` là bước tiếp theo
+  - feature flag facade đứng sau idempotency
+  - durable queue đứng sau token isolation và idempotency, không làm trước
+  - per-shop health/credential status đứng sau queue/credential validation
 - Phase 4 internal notes:
   - v1 backend/API/UI đã complete
   - internal notes design/create service/read-list model/test baseline đã có
@@ -1238,6 +1313,10 @@ Không làm vội:
 - Không tạo production internal note nếu chưa xác nhận rõ vì sẽ ghi business data.
 - Không coi browser session hiện tại là per-human identity; nó vẫn là static-token bridge cho tới khi admin_users login thật được implement.
 - Không thêm admin user production nếu chưa review identity provisioning và rollback.
+- Không làm durable webhook queue trước per-page credentials và atomic idempotency.
+- Không apply/seed `shop_page_credentials` production hoặc set
+  `CREDENTIAL_MASTER_KEY` production nếu chưa có backup/approval riêng.
+- Không coi `RUNTIME_ALLOWED_PAGE_IDS` là whitelist cho page chưa có DB mapping; nó chỉ là post-resolution override.
 - Không deploy/push/đổi env/ghi production DB nếu chưa có xác nhận riêng trong phiên mới.
 
 Cuối mỗi lượt phải báo rõ:

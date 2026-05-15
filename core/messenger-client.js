@@ -8,8 +8,15 @@ function sleep(ms) {
 
 function createMessengerClient({ fbPageToken, dryRun = false }) {
   async function postFb(payload, attempts = 2, options = {}) {
+    const hasPageTokenOverride = Object.prototype.hasOwnProperty.call(options, 'fbPageToken');
+    const pageToken = hasPageTokenOverride ? options.fbPageToken : fbPageToken;
     if (dryRun) {
       return { data: { dryRun: true, payloadType: payload?.sender_action ? 'sender_action' : 'message' } };
+    }
+    if (!pageToken) {
+      const err = new Error('messenger_page_token_missing');
+      err.code = 'messenger_page_token_missing';
+      throw err;
     }
 
     const timeout = options.timeout || 10000;
@@ -17,7 +24,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     for (let i = 0; i < attempts; i += 1) {
       try {
         return await axios.post(
-          `https://graph.facebook.com/v19.0/me/messages?access_token=${fbPageToken}`,
+          `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`,
           payload,
           { timeout }
         );
@@ -32,7 +39,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     throw lastErr;
   }
 
-  async function sendMessage(recipientId, text) {
+  async function sendMessage(recipientId, text, options = {}) {
     const chunks = [];
     while (text.length > 0) {
       chunks.push(text.slice(0, 1900));
@@ -43,13 +50,13 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
       await postFb({
         recipient: { id: recipientId },
         message: { text: chunk, metadata: BOT_MESSAGE_METADATA }
-      });
+      }, 2, options);
     }
   }
 
-  async function sendQuickReplies(recipientId, text, quickReplies = []) {
+  async function sendQuickReplies(recipientId, text, quickReplies = [], options = {}) {
     const replies = Array.isArray(quickReplies) ? quickReplies.filter(Boolean).slice(0, 13) : [];
-    if (!replies.length) return sendMessage(recipientId, text);
+    if (!replies.length) return sendMessage(recipientId, text, options);
 
     const chunks = [];
     text = String(text || '');
@@ -65,11 +72,11 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
       await postFb({
         recipient: { id: recipientId },
         message
-      });
+      }, 2, options);
     }
   }
 
-  async function sendImage(recipientId, imageUrl) {
+  async function sendImage(recipientId, imageUrl, options = {}) {
     if (!imageUrl) return;
     await postFb({
       recipient: { id: recipientId },
@@ -80,10 +87,10 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
           payload: { url: imageUrl, is_reusable: true }
         }
       }
-    });
+    }, 2, options);
   }
 
-  async function sendCarousel(recipientId, elements) {
+  async function sendCarousel(recipientId, elements, options = {}) {
     if (!Array.isArray(elements) || !elements.length) return;
     await postFb({
       recipient: { id: recipientId },
@@ -98,15 +105,20 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
           }
         }
       }
-    });
+    }, 2, options);
   }
 
-  function showTyping(recipientId) {
+  function showTyping(recipientId, options = {}) {
+    const postOptions = { timeout: 5000 };
+    if (Object.prototype.hasOwnProperty.call(options, 'fbPageToken')) {
+      postOptions.fbPageToken = options.fbPageToken;
+    }
+
     // Fire-and-forget: lỗi typing không chặn flow trả lời chính
     return postFb(
       { recipient: { id: recipientId }, sender_action: 'typing_on' },
       1,
-      { timeout: 5000 }
+      postOptions
     ).catch(() => {});
   }
 
@@ -129,6 +141,19 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     }
   }
 
+  function withPageToken(pageToken) {
+    return {
+      BOT_MESSAGE_METADATA,
+      postFb: (payload, attempts = 2, options = {}) => postFb(payload, attempts, { ...options, fbPageToken: pageToken }),
+      sendCarousel: (recipientId, elements, options = {}) => sendCarousel(recipientId, elements, { ...options, fbPageToken: pageToken }),
+      sendImage: (recipientId, imageUrl, options = {}) => sendImage(recipientId, imageUrl, { ...options, fbPageToken: pageToken }),
+      sendMessage: (recipientId, text, options = {}) => sendMessage(recipientId, text, { ...options, fbPageToken: pageToken }),
+      sendQuickReplies: (recipientId, text, quickReplies = [], options = {}) =>
+        sendQuickReplies(recipientId, text, quickReplies, { ...options, fbPageToken: pageToken }),
+      showTyping: (recipientId, options = {}) => showTyping(recipientId, { ...options, fbPageToken: pageToken })
+    };
+  }
+
   return {
     BOT_MESSAGE_METADATA,
     checkPageToken,
@@ -137,7 +162,8 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     sendImage,
     sendMessage,
     sendQuickReplies,
-    showTyping
+    showTyping,
+    withPageToken
   };
 }
 

@@ -11,6 +11,7 @@ const {
 } = require('./bot-mode');
 const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
 const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
+const { pageRef } = require('./utils/log-refs');
 
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
 const MESSAGE_TEXT_DEDUPE_TTL_MS = 5 * 1000;
@@ -126,7 +127,7 @@ function createWebhook({
     ]);
     const expiresAt = recentMenuSendKeys.get(key);
     if (expiresAt && expiresAt > nowMs) {
-      console.log(`skipped duplicate menu within cooldown: page=${safePageLabel(pageId)} sender=${senderId}`);
+      console.log(`skipped duplicate menu within cooldown: page_ref=${pageRef(pageId)} sender=${senderId}`);
       return true;
     }
 
@@ -292,12 +293,6 @@ function createWebhook({
     return value.replace(/[^a-z0-9_.:-]/g, '_').slice(0, 80) || 'unknown';
   }
 
-  function safePageLabel(pageId) {
-    const value = String(pageId || '').trim();
-    if (!value) return 'missing';
-    return value.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 80);
-  }
-
   function getEventPageId(event, options = {}) {
     return String(
       options.pageId
@@ -320,17 +315,17 @@ function createWebhook({
       });
       if (!resolved) return staticRuntime;
       if (resolved.failClosed) {
-        console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_id=${safePageLabel(pageId)}`);
+        console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
         return { failClosed: true };
       }
       if (resolved.shopConfig) return materializeRuntime(resolved);
       if (resolved.reason) {
-        console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(resolved.reason)} page_id=${safePageLabel(pageId)}`);
+        console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
       }
       return staticRuntime;
     } catch (err) {
       const reason = err && (err.code || err.reason) ? (err.code || err.reason) : 'resolver_error';
-      console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(reason)} page_id=${safePageLabel(pageId)}`);
+      console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(reason)} page_ref=${pageRef(pageId)}`);
       return staticRuntime;
     }
   }
@@ -500,7 +495,7 @@ function createWebhook({
       userText,
       normalize: normalizeText
     })) {
-      console.log(`🔁 Bỏ qua tin trùng trong TTL: page=${safePageLabel(pageId)} sender=${senderId}`);
+      console.log(`🔁 Bỏ qua tin trùng trong TTL: page_ref=${pageRef(pageId)} sender=${senderId}`);
       return;
     }
 

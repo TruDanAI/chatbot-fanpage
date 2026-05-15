@@ -575,9 +575,10 @@ Candidate first write actions:
 - Trigger one safe staff notification retry.
 - Update limited shop setting in staging first.
 
-Recommended next task:
+Historical next-task note:
 
-- Add configurable minimal shop mode `menu_code_handoff`.
+- Configurable minimal shop mode `menu_code_handoff` has been added; current
+  next work is the multi-shop safety track in Phase 5.
 - Any further deploy or production smoke still needs separate approval.
   Authenticated read smoke writes audit rows, and create-note smoke writes
   business data.
@@ -616,52 +617,50 @@ Status: multi-shop MVP is staging-verified on
 approval, schema apply, seed, deploy, env enable, and approved smoke. The
 current rollout record is `docs/multi-shop-rollout.md`.
 
-Goal: support multiple pages/shops cleanly.
+Goal: support multiple pages/shops cleanly without increasing blast radius for
+the existing `adult-shop` runtime.
 
-Schema direction:
+Current safety foundation:
 
-- `tenants`
-- `tenant_memberships`
-- `pages`
-- `page_runtime_config`
-- `admin_users`
-- `admin_user_roles`
-- `admin_audit_log`
+- DB-backed runtime config supports `menu_code_handoff` only and fails closed
+  for unsupported DB modes.
+- Runtime admission can be restricted with `RUNTIME_ALLOWED_SHOP_IDS` and
+  `RUNTIME_ALLOWED_PAGE_IDS`.
+- Per-page credential resolution phase 1 is implemented locally: encrypted
+  `shop_page_credentials`, `CREDENTIAL_MASTER_KEY` crypto service, DB runtime
+  page-token selection, missing credential fail-closed behavior, and legacy
+  file-backed `FB_PAGE_TOKEN` fallback.
+- Runtime logs use `page_ref=p:<hash>` for page correlation instead of raw
+  `page_id`.
+- Latest local safety-foundation test baseline: `npm test` passed with
+  `479 passed, 0 failed`.
 
-Existing tables already include `tenant_id` and `page_id`; keep using those
-keys. Do not hard-code `TENANT_ID=default` in new business logic.
+Multi-shop safety track before shop #2:
 
-Required env direction:
+1. Per-page credential resolution. Local phase 1 done: add encrypted shop/page credentials and make
+   Messenger sends use the resolved page token; keep `FB_PAGE_TOKEN` as the
+   legacy file-backed fallback.
+2. Atomic message idempotency. Replace `seenMid()` plus async `markMid()` with
+   `tryMarkMid()`, using PostgreSQL `INSERT ... ON CONFLICT DO NOTHING
+   RETURNING` when available.
+3. Feature flag facade. Add `getFeatureFlag(shopConfig/shopId, key)` before
+   migrating schema, so runtime code stops reading `settings_json.ruleToggles`
+   directly.
+4. Durable webhook queue. Build this only after credential isolation and
+   idempotency are stable; use PostgreSQL queue rows with bounded retry and
+   `FOR UPDATE SKIP LOCKED`.
+5. Per-shop health. Show last webhook, last successful send, send error rate,
+   active handoffs, and credential status without raw secrets, raw page IDs, or
+   customer data.
 
-```env
-# DEFAULT_TENANT_ID=default
-# DEFAULT_PAGE_ID=1026325343908119
-# MULTITENANT_MODE=false
-```
+Later SaaS/multi-tenant direction:
 
-Do not add these env keys until code actually consumes them.
-
-Current production rollout order for the multi-shop MVP:
-
-1. Create and verify a fresh production PostgreSQL backup outside the repo.
-2. Apply the multi-shop schema.
-3. Apply or verify the admin audit schema.
-4. Seed `adult-shop`.
-5. Verify count-only table state.
-6. Deploy the reviewed runtime/dashboard commit.
-7. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true`.
-8. Smoke `/healthz`.
-9. Smoke admin shops reads after approval.
-10. Smoke product CRUD with a test product after explicit production DB write
-    approval, then archive cleanup.
-
-Open multi-shop work after MVP safety:
-
-- Asset upload and asset management UI.
-- Better dashboard UX for shop/product operations.
-- Real multi-tenant admin auth separation.
-- Pagination/search expansion for larger catalogs.
-- Metrics and analytics for multi-shop operations.
+- Existing tables already include `tenant_id` and `page_id`; keep using those
+  keys and do not hard-code `TENANT_ID=default` in new business logic.
+- Do not add future tenant env keys until code actually consumes them.
+- Asset upload UI, better shop/product dashboard UX, real multi-tenant admin
+  identity, pagination/search expansion, and analytics remain future work after
+  MVP safety.
 
 ### Phase 6: dedicated frontend
 
@@ -726,17 +725,9 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. Phase 4 internal notes now has a design doc, SQL proposal, local
-create service, local read/list model, deployed GET+POST API, safe SQL
-verifier, focused tests, and a passing live local PostgreSQL SQL verification
-against an isolated schema. Production `internal_notes` schema is applied and
-verified; production POST note-create smoke passed and created exactly 1 smoke
-note; post-create GET read smoke passed with `schemaReady=true`,
-`notes.length=1`, pagination present, and `auditDelta=+1 success`; User Detail
-UI smoke passed with HTTP 200, smoke note visible, correct form visibility, and
-`internal_notes` unchanged `1 -> 1`. Latest known counts are
-`internal_notes=1` and `admin_audit_log=62` with `success=40`, `denied=22`,
-`error=0`. The smoke note still exists and was not hidden/deleted. User Detail
-UI/list/form exists; edit/delete/hide/order-notes UI does not exist yet. The
-next business-priority task is configurable minimal shop mode
-`menu_code_handoff`.
+session. Per-page credential resolution phase 1 is complete locally. The
+current multi-shop safety order is now: atomic `tryMarkMid()`, feature flag
+facade, durable webhook queue, then per-shop health/credential status. Do not
+jump to the queue before idempotency is stable. Any production rollout still
+follows `docs/multi-shop-rollout.md` and needs separate approval for deploy,
+env changes, DB writes, credential seeding, and authenticated smoke.

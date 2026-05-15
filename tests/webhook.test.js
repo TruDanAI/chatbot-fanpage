@@ -346,6 +346,56 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.length).toBe(0);
   });
 
+  it('fail-closed runtime logs use page_ref instead of raw page_id', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'shop_not_allowed' })
+      });
+
+      await h.handleText('chào shop', 'db_denied_page', 'm_db_denied', 'page-secret-raw');
+
+      const joined = warnings.join('\n');
+      expect(joined).toContain('shop_not_allowed');
+      expect(joined).toContain('page_ref=p:');
+      expect(joined.includes('page_id=')).toBeFalse();
+      expect(joined.includes('page-secret-raw')).toBeFalse();
+      expect(h.sent.length).toBe(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it('credential fail-closed logs do not include raw token or raw page_id', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        resolveRuntimeForPage: async () => ({
+          failClosed: true,
+          reason: 'credential_not_found',
+          debugToken: 'EAAB-raw-page-token'
+        })
+      });
+
+      await h.handleText('chào shop', 'db_missing_credential', 'm_missing_credential', 'page-secret-raw');
+
+      const joined = warnings.join('\n');
+      expect(joined).toContain('credential_not_found');
+      expect(joined).toContain('page_ref=p:');
+      expect(joined.includes('EAAB-raw-page-token')).toBeFalse();
+      expect(joined.includes('page-secret-raw')).toBeFalse();
+      expect(h.sent.length).toBe(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   it('falls back safely on DB resolver errors without logging secrets', async () => {
     const warnings = [];
     const originalWarn = console.warn;

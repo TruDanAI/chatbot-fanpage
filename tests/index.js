@@ -13,6 +13,7 @@ require('./storage-config.test');
 require('./storage-file-adapter.test');
 require('./storage-postgres-adapter.test');
 require('./db-shop-config.test');
+require('./page-credentials.test');
 require('./migration-plan.test');
 require('./admin-auth.test');
 require('./admin-internal-notes.test');

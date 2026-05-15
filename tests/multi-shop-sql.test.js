@@ -52,7 +52,7 @@ describe('multi-shop SQL proposal', () => {
     }
   });
 
-  it('creates the five multi-shop tables', () => {
+  it('creates the six multi-shop tables including page credentials', () => {
     const normalized = normalizeSql(readSql());
 
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shops\b/i);
@@ -60,7 +60,8 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_settings\b/i);
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_products\b/i);
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_assets\b/i);
-    expect((normalized.match(/\bCREATE TABLE IF NOT EXISTS\b/gi) || []).length).toBe(5);
+    expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_page_credentials\b/i);
+    expect((normalized.match(/\bCREATE TABLE IF NOT EXISTS\b/gi) || []).length).toBe(6);
   });
 
   it('defines non-empty identity fields and core status constraints', () => {
@@ -81,6 +82,8 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toContain("CHECK (asset_type IN ('product_image', 'menu_image', 'shop_image'))");
     expect(normalized).toContain("CHECK (storage_provider IN ('public_url', 'object_storage'))");
     expect(normalized).toContain("CHECK (storage_key <> '' OR public_url <> '')");
+    expect(normalized).toContain("CHECK (credential_type IN ('fb_page_token'))");
+    expect(normalized).toContain("CHECK (encrypted_value <> '')");
   });
 
   it('defines the key lookup and partial uniqueness indexes', () => {
@@ -93,6 +96,9 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS shop_pages_shop_status_idx\b/i);
     expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS shop_products_shop_status_sort_idx\b/i);
     expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS shop_assets_shop_type_status_idx\b/i);
+    expect(normalized).toMatch(/\bCREATE UNIQUE INDEX IF NOT EXISTS shop_page_credentials_active_type_uidx\b/i);
+    expect(normalized).toMatch(/shop_page_credentials_active_type_uidx ON shop_page_credentials \(shop_id, page_mapping_id, credential_type\) WHERE status = 'active'/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS shop_page_credentials_lookup_idx\b/i);
   });
 });
 

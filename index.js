@@ -23,6 +23,7 @@ const {
 const { createLeadParser } = require('./core/lead-parser');
 const { createImageService } = require('./core/image-service');
 const { createMessengerClient } = require('./core/messenger-client');
+const { resolvePageCredential } = require('./core/credentials/page-credentials');
 const {
   buildTelegramLeadAlertText,
   buildTelegramUserLines,
@@ -36,6 +37,7 @@ const {
   isAiFallbackEnabled,
   isFollowUpEnabled
 } = require('./core/bot-mode');
+const { pageRef } = require('./core/utils/log-refs');
 
 const ROOT_DIR = __dirname;
 let multiShopDbPool = null;
@@ -246,10 +248,20 @@ function envBoolean(name, fallback = false) {
 }
 
 function envList(name) {
-  return String(process.env[name] || '')
+  return listFromValue(process.env[name]);
+}
+
+function listFromValue(value) {
+  return String(value || '')
     .split(',')
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function safeLogValue(value, fallback = 'unknown') {
+  const normalized = String(value || '').trim();
+  if (!normalized) return fallback;
+  return normalized.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 120);
 }
 
 const REQUIRE_FB_APP_SECRET = IS_PRODUCTION || envBoolean('REQUIRE_FB_APP_SECRET', false);
@@ -287,6 +299,86 @@ const FILE_CONFIG_PAGE_IDS = envList('FB_PAGE_ID')
   .concat(envList('PAGE_ID'))
   .map(String)
   .filter(Boolean);
+const RUNTIME_ALLOWLIST = createRuntimeAllowlist(process.env);
+
+function createRuntimeAllowlist(env = process.env) {
+  return {
+    shopIds: new Set(listFromValue(env.RUNTIME_ALLOWED_SHOP_IDS)),
+    pageIds: new Set(listFromValue(env.RUNTIME_ALLOWED_PAGE_IDS))
+  };
+}
+
+function hasRuntimeAllowlist(allowlist = RUNTIME_ALLOWLIST) {
+  return Boolean(allowlist?.shopIds?.size || allowlist?.pageIds?.size);
+}
+
+function isAllowedResolvedRuntime({ shopId, pageId } = {}, allowlist = RUNTIME_ALLOWLIST) {
+  if (!hasRuntimeAllowlist(allowlist)) return true;
+  const normalizedShopId = String(shopId || '').trim();
+  const normalizedPageId = String(pageId || '').trim();
+  return allowlist.shopIds.has(normalizedShopId) || allowlist.pageIds.has(normalizedPageId);
+}
+
+function evaluateDbShopRuntimeAdmission({
+  result,
+  normalizedPageId = '',
+  knownFileConfigPage = false,
+  allowlist = RUNTIME_ALLOWLIST,
+  logger = console
+} = {}) {
+  if (!result?.found) {
+    if (hasRuntimeAllowlist(allowlist)) return { failClosed: true, reason: result?.reason || 'page_not_found' };
+    if (result?.reason === 'missing_page_id') return { failClosed: true, reason: result.reason };
+    if (knownFileConfigPage) return { reason: result?.reason || 'page_not_found' };
+    return { failClosed: true, reason: result?.reason || 'page_not_found' };
+  }
+
+  const shopId = String(result.shop?.id || '').trim();
+  const resolvedPageId = String(result.page?.page_id || normalizedPageId || '').trim();
+  if (!isAllowedResolvedRuntime({ shopId, pageId: resolvedPageId }, allowlist)) {
+    logger.warn?.(
+      `[multi-shop] runtime admission: resolved shop not in allowlist, fail-closed reason=shop_not_allowed shop_id=${safeLogValue(shopId)} page_ref=${pageRef(resolvedPageId)}`
+    );
+    return { failClosed: true, reason: 'shop_not_allowed' };
+  }
+
+  return null;
+}
+
+async function validateRuntimeAllowlistOnStartup({
+  db,
+  allowlist = RUNTIME_ALLOWLIST,
+  logger = console
+} = {}) {
+  const ids = [...(allowlist?.shopIds || [])].filter(Boolean);
+  if (!ids.length) return { checked: false, missing: [] };
+
+  try {
+    const queryable = db || getMultiShopDbPool();
+    const found = await queryable.query(
+      `
+        SELECT id
+        FROM shops
+        WHERE id = ANY($1)
+          AND status = 'active'
+      `,
+      [ids]
+    );
+    const foundSet = new Set((found.rows || []).map(row => String(row.id)));
+    const missing = ids.filter(id => !foundSet.has(id));
+    if (missing.length) {
+      logger.error?.(
+        `[multi-shop] RUNTIME_ALLOWED_SHOP_IDS contains IDs not found in DB; these shops will fail-closed: ${missing.map(id => safeLogValue(id)).join(', ')}`
+      );
+    }
+    return { checked: true, missing };
+  } catch (err) {
+    logger.error?.(
+      `[multi-shop] Could not validate RUNTIME_ALLOWED_SHOP_IDS at startup; runtime admission remains fail-closed as configured: ${String(err?.message || err)}`
+    );
+    return { checked: false, missing: [], error: err };
+  }
+}
 
 function getMultiShopDbPool() {
   if (multiShopDbPool) return multiShopDbPool;
@@ -391,7 +483,8 @@ const {
   sendImage,
   sendMessage,
   sendQuickReplies,
-  showTyping
+  showTyping,
+  withPageToken
 } = createMessengerClient({
   fbPageToken: FB_PAGE_TOKEN,
   dryRun: MESSENGER_DRY_RUN
@@ -455,9 +548,13 @@ const {
 });
 registerMediaRoutes(app);
 
-function buildDbShopRuntime(resolved) {
+function buildDbShopRuntime(resolved, options = {}) {
   const dbConfig = applyBotModeConfig(resolved.config);
   const dbProducts = resolved.products || [];
+  const messenger = options.messenger
+    || (typeof options.messengerFactory === 'function'
+      ? options.messengerFactory(options.fbPageToken)
+      : withPageToken(options.fbPageToken));
   const dbRules = createRuleEngine({
     products: dbProducts,
     config: dbConfig,
@@ -475,7 +572,7 @@ function buildDbShopRuntime(resolved) {
     config: dbConfig,
     products: dbProducts,
     rules: dbRules,
-    sendCarousel
+    sendCarousel: messenger.sendCarousel
   });
 
   return {
@@ -495,29 +592,59 @@ function buildDbShopRuntime(resolved) {
     buildRequestedImageUrls: dbImages.buildRequestedImageUrls,
     isGreetingText: dbImages.isGreetingText,
     isHotProductsText: dbImages.isHotProductsText,
-    sendHotCarousel: dbImages.sendHotCarousel
+    sendHotCarousel: dbImages.sendHotCarousel,
+    sendMessage: messenger.sendMessage,
+    sendQuickReplies: messenger.sendQuickReplies,
+    sendImage: messenger.sendImage,
+    showTyping: messenger.showTyping
   };
 }
 
-async function resolveDbShopRuntimeForPage({ pageId } = {}) {
+async function resolveDbShopRuntimeForPage({
+  pageId,
+  db,
+  credentialMasterKey = process.env.CREDENTIAL_MASTER_KEY,
+  credentialResolver = resolvePageCredential,
+  messengerFactory
+} = {}) {
   const normalizedPageId = String(pageId || '').trim();
+  const queryable = db || getMultiShopDbPool();
   const result = await resolveShopConfigForPage({
     pageId: normalizedPageId,
     tenantId: process.env.TENANT_ID || 'default',
-    db: getMultiShopDbPool()
+    db: queryable
   });
 
-  if (!result.found) {
-    if (result.reason === 'missing_page_id') return { failClosed: true, reason: result.reason };
-    if (isKnownFileConfigPage(normalizedPageId)) return { reason: result.reason };
-    return { failClosed: true, reason: result.reason };
-  }
+  const admission = evaluateDbShopRuntimeAdmission({
+    result,
+    normalizedPageId,
+    knownFileConfigPage: isKnownFileConfigPage(normalizedPageId)
+  });
+  if (admission) return admission;
 
   if (!result.products.length) return { failClosed: true, reason: 'db_products_empty' };
   const modeName = String(result.config?.botMode?.name || '').trim();
   if (modeName === 'disabled') return { failClosed: true, reason: 'db_bot_mode_disabled' };
   if (modeName !== 'menu_code_handoff') return { failClosed: true, reason: 'db_bot_mode_unsupported' };
-  return buildDbShopRuntime(result);
+  let credential;
+  try {
+    credential = await credentialResolver({
+      db: queryable,
+      shopId: result.shop.id,
+      pageMappingId: result.page.id,
+      credentialType: 'fb_page_token',
+      masterKey: credentialMasterKey
+    });
+  } catch {
+    return { failClosed: true, reason: 'credential_lookup_failed' };
+  }
+  if (!credential?.found || !credential.secret) {
+    return { failClosed: true, reason: credential?.reason || 'credential_not_found' };
+  }
+  return buildDbShopRuntime(result, {
+    fbPageToken: credential.secret,
+    messengerFactory
+  });
 }
 
 const {
@@ -654,6 +781,9 @@ function shutdown(signal) {
 
 async function startServer() {
   await storage.ready;
+  if (MULTI_SHOP_DB_CONFIG_ENABLED) {
+    await validateRuntimeAllowlistOnStartup();
+  }
   server = app.listen(PORT, async () => {
     const geminiLabel = EFFECTIVE_USE_GEMINI ? `${GEMINI_PROVIDER}/${GEMINI_MODEL}` : 'off';
     console.log(`🚀 Bot shop="${ACTIVE_SHOP_ID}" port ${PORT} (sản phẩm: ${products.length}, Gemini: ${geminiLabel})`);
@@ -677,8 +807,11 @@ if (require.main === module) {
 module.exports = {
   buildDeterministicReply,
   buildFallbackReply,
+  buildDbShopRuntime,
   buildLeadDetails,
   buildAbandonedCartReminderText,
+  createRuntimeAllowlist,
+  evaluateDbShopRuntimeAdmission,
   buildGeminiRuntimeContext,
   buildGeminiRequestHistory,
   buildHealthPayload,
@@ -686,11 +819,15 @@ module.exports = {
   buildTelegramUserLines,
   getAdminRequestToken,
   getFacebookProfileDisplayName,
+  hasRuntimeAllowlist,
+  isAllowedResolvedRuntime,
   recordConversationTurn,
   redactSensitiveText,
+  resolveDbShopRuntimeForPage,
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,
   scanEngagedFollowUpReminders,
   startAbandonedCartReminderWorker,
-  startEngagedFollowUpReminderWorker
+  startEngagedFollowUpReminderWorker,
+  validateRuntimeAllowlistOnStartup
 };

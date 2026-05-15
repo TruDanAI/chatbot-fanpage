@@ -93,6 +93,27 @@ CREATE TABLE IF NOT EXISTS shop_assets (
   CHECK (status IN ('active', 'hidden', 'archived'))
 );
 
+CREATE TABLE IF NOT EXISTS shop_page_credentials (
+  id TEXT PRIMARY KEY,
+  shop_id TEXT NOT NULL REFERENCES shops(id),
+  page_mapping_id TEXT NOT NULL REFERENCES shop_pages(id),
+  credential_type TEXT NOT NULL DEFAULT 'fb_page_token',
+  encrypted_value TEXT NOT NULL,
+  encryption_key_id TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL DEFAULT 'active',
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (id <> ''),
+  CHECK (shop_id <> ''),
+  CHECK (page_mapping_id <> ''),
+  CHECK (credential_type IN ('fb_page_token')),
+  CHECK (encrypted_value <> ''),
+  CHECK (encryption_key_id <> ''),
+  CHECK (status IN ('active', 'paused', 'archived')),
+  CHECK (jsonb_typeof(metadata_json) = 'object')
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS shops_active_slug_uidx
   ON shops (slug)
   WHERE status = 'active';
@@ -120,3 +141,10 @@ CREATE INDEX IF NOT EXISTS shop_assets_shop_type_status_idx
 CREATE INDEX IF NOT EXISTS shop_assets_product_status_idx
   ON shop_assets (product_id, status, sort_order, id)
   WHERE product_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS shop_page_credentials_active_type_uidx
+  ON shop_page_credentials (shop_id, page_mapping_id, credential_type)
+  WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS shop_page_credentials_lookup_idx
+  ON shop_page_credentials (page_mapping_id, credential_type, status);

@@ -10,6 +10,8 @@ process.env.USE_GEMINI = 'false';
 
 const {
   buildAbandonedCartReminderText,
+  createRuntimeAllowlist,
+  evaluateDbShopRuntimeAdmission,
   buildGeminiRequestHistory,
   buildGeminiRuntimeContext,
   buildHealthPayload,
@@ -18,11 +20,15 @@ const {
   buildTelegramUserLines,
   getAdminRequestToken,
   getFacebookProfileDisplayName,
+  isAllowedResolvedRuntime,
   maybeResetTimedOutSession,
   redactSensitiveText,
-  recordConversationTurn
+  resolveDbShopRuntimeForPage,
+  recordConversationTurn,
+  validateRuntimeAllowlistOnStartup
 } = require('../index');
 const storage = require('../core/storage');
+const { pageRef } = require('../core/utils/log-refs');
 
 describe('index: buildLeadDetails parser hồi quy', () => {
   it('"đổi sang mã 10" đổi sản phẩm, không ghi address = "ma 10"', () => {
@@ -195,6 +201,338 @@ describe('index: security hardening helpers', () => {
     };
 
     expect(getAdminRequestToken(req)).toBe('bearer-token');
+  });
+
+  it('pageRef creates a stable grep-friendly page reference', () => {
+    const first = pageRef('123456789');
+
+    expect(first).toMatch(/^p:[a-f0-9]{10}$/);
+    expect(pageRef('123456789')).toBe(first);
+    expect(pageRef('')).toBe('unknown');
+  });
+
+  it('runtime admission allows all resolved shops when allowlist is empty', () => {
+    const allowlist = createRuntimeAllowlist({});
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'shop-any' },
+        page: { page_id: 'page-any' }
+      },
+      allowlist
+    });
+
+    expect(admission).toBe(null);
+    expect(isAllowedResolvedRuntime({ shopId: 'shop-any', pageId: 'page-any' }, allowlist)).toBeTrue();
+  });
+
+  it('runtime admission allows a resolved shop_id in RUNTIME_ALLOWED_SHOP_IDS', () => {
+    const allowlist = createRuntimeAllowlist({ RUNTIME_ALLOWED_SHOP_IDS: 'adult-shop' });
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'adult-shop' },
+        page: { page_id: 'page-adult' }
+      },
+      allowlist
+    });
+
+    expect(admission).toBe(null);
+  });
+
+  it('runtime admission fails closed when neither resolved shop_id nor page_id is allowed', () => {
+    const logs = [];
+    const allowlist = createRuntimeAllowlist({
+      RUNTIME_ALLOWED_SHOP_IDS: 'adult-shop',
+      RUNTIME_ALLOWED_PAGE_IDS: 'page-adult'
+    });
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'new-shop' },
+        page: { page_id: 'page-secret-raw' }
+      },
+      allowlist,
+      logger: { warn: message => logs.push(String(message)) }
+    });
+
+    expect(admission).toEqual({ failClosed: true, reason: 'shop_not_allowed' });
+    expect(logs.join('\n')).toContain('shop_id=new-shop');
+    expect(logs.join('\n')).toContain('page_ref=p:');
+    expect(logs.join('\n').includes('page-secret-raw')).toBeFalse();
+  });
+
+  it('runtime admission allows page_id transition override after DB resolution', () => {
+    const allowlist = createRuntimeAllowlist({
+      RUNTIME_ALLOWED_SHOP_IDS: 'adult-shop',
+      RUNTIME_ALLOWED_PAGE_IDS: 'page-transition'
+    });
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'new-shop' },
+        page: { page_id: 'page-transition' }
+      },
+      allowlist
+    });
+
+    expect(admission).toBe(null);
+  });
+
+  it('runtime admission rejects disallowed page_id when shop_id is also disallowed', () => {
+    const allowlist = createRuntimeAllowlist({ RUNTIME_ALLOWED_PAGE_IDS: 'page-transition' });
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'new-shop' },
+        page: { page_id: 'page-other' }
+      },
+      allowlist,
+      logger: { warn() {} }
+    });
+
+    expect(admission).toEqual({ failClosed: true, reason: 'shop_not_allowed' });
+  });
+
+  it('runtime admission fails closed for unresolved pages when allowlist is active', () => {
+    const logs = [];
+    const allowlist = createRuntimeAllowlist({
+      RUNTIME_ALLOWED_SHOP_IDS: 'adult-shop',
+      RUNTIME_ALLOWED_PAGE_IDS: 'page-file'
+    });
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: { found: false, reason: 'page_not_found' },
+      normalizedPageId: 'page-file',
+      knownFileConfigPage: true,
+      allowlist,
+      logger: { warn: message => logs.push(String(message)) }
+    });
+
+    expect(admission).toEqual({ failClosed: true, reason: 'page_not_found' });
+    expect(logs.length).toBe(0);
+  });
+
+  it('startup allowlist validation reports active shop ids missing from DB without throwing', async () => {
+    const errors = [];
+    const allowlist = createRuntimeAllowlist({
+      RUNTIME_ALLOWED_SHOP_IDS: 'adult-shop,missing-shop'
+    });
+    const result = await validateRuntimeAllowlistOnStartup({
+      allowlist,
+      db: {
+        query: async (_sql, values) => {
+          expect(values).toEqual([['adult-shop', 'missing-shop']]);
+          return { rows: [{ id: 'adult-shop' }] };
+        }
+      },
+      logger: { error: message => errors.push(String(message)) }
+    });
+
+    expect(result.checked).toBeTrue();
+    expect(result.missing).toEqual(['missing-shop']);
+    expect(errors.join('\n')).toContain('missing-shop');
+    expect(errors.join('\n')).toContain('fail-closed');
+  });
+
+  it('DB-backed runtime resolves and uses the page credential for Messenger sends', async () => {
+    const sent = [];
+    const credentialCalls = [];
+    let factoryToken = '';
+    const db = {
+      query: async (sql, values) => {
+        const normalized = String(sql).replace(/\s+/g, ' ').trim();
+        if (normalized.includes('FROM shop_pages sp')) {
+          expect(values).toEqual(['page_db']);
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              shop_slug: 'adult-shop',
+              shop_name: 'Adult Shop',
+              default_locale: 'vi-VN',
+              timezone: 'Asia/Bangkok',
+              page_mapping_id: 'page-map-db',
+              page_id: 'page_db',
+              page_name: 'DB Page',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: 'DB handoff',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_products')) {
+          return {
+            rows: [{
+              id: 'prod-db',
+              shop_id: 'adult-shop',
+              code: 'MÃ99',
+              name: 'DB Product',
+              description: 'DB only',
+              price: 999000,
+              currency: 'VND',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_assets')) return { rows: [] };
+        return { rows: [] };
+      }
+    };
+
+    const runtime = await resolveDbShopRuntimeForPage({
+      pageId: 'page_db',
+      db,
+      credentialMasterKey: 'unused-in-stub',
+      credentialResolver: async args => {
+        credentialCalls.push(args);
+        return { found: true, secret: 'db-page-token' };
+      },
+      messengerFactory: token => {
+        factoryToken = token;
+        return {
+          sendCarousel: async () => {},
+          sendImage: async (senderId, url) => sent.push({ type: 'image', senderId, url, token }),
+          sendMessage: async (senderId, text) => sent.push({ type: 'text', senderId, text, token }),
+          sendQuickReplies: async (senderId, text) => sent.push({ type: 'quick_replies', senderId, text, token }),
+          showTyping: () => {}
+        };
+      }
+    });
+
+    expect(runtime.failClosed).toBe(undefined);
+    expect(factoryToken).toBe('db-page-token');
+    expect(credentialCalls.length).toBe(1);
+    expect(credentialCalls[0].shopId).toBe('adult-shop');
+    expect(credentialCalls[0].pageMappingId).toBe('page-map-db');
+
+    await runtime.sendMessage('sender_db', 'hello');
+    expect(sent).toEqual([{ type: 'text', senderId: 'sender_db', text: 'hello', token: 'db-page-token' }]);
+  });
+
+  it('DB-backed runtime fails closed when page credential is missing', async () => {
+    let messengerFactoryCalled = false;
+    const db = {
+      query: async (sql, values) => {
+        const normalized = String(sql).replace(/\s+/g, ' ').trim();
+        if (normalized.includes('FROM shop_pages sp')) {
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              shop_slug: 'adult-shop',
+              shop_name: 'Adult Shop',
+              default_locale: 'vi-VN',
+              timezone: 'Asia/Bangkok',
+              page_mapping_id: 'page-map-db',
+              page_id: values[0],
+              page_name: 'DB Page',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: '',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_products')) {
+          return {
+            rows: [{
+              id: 'prod-db',
+              shop_id: 'adult-shop',
+              code: 'MÃ99',
+              name: 'DB Product',
+              description: 'DB only',
+              price: 999000,
+              currency: 'VND',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_assets')) return { rows: [] };
+        return { rows: [] };
+      }
+    };
+
+    const runtime = await resolveDbShopRuntimeForPage({
+      pageId: 'page_db',
+      db,
+      credentialResolver: async () => ({ found: false, reason: 'credential_not_found' }),
+      messengerFactory: () => {
+        messengerFactoryCalled = true;
+        return {};
+      }
+    });
+
+    expect(runtime).toEqual({ failClosed: true, reason: 'credential_not_found' });
+    expect(messengerFactoryCalled).toBeFalse();
+  });
+
+  it('DB-backed runtime fails closed when credential lookup throws', async () => {
+    let messengerFactoryCalled = false;
+    const db = {
+      query: async (sql, values) => {
+        const normalized = String(sql).replace(/\s+/g, ' ').trim();
+        if (normalized.includes('FROM shop_pages sp')) {
+          return {
+            rows: [{
+              shop_id: 'adult-shop',
+              shop_slug: 'adult-shop',
+              shop_name: 'Adult Shop',
+              default_locale: 'vi-VN',
+              timezone: 'Asia/Bangkok',
+              page_mapping_id: 'page-map-db',
+              page_id: values[0],
+              page_name: 'DB Page',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: '',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_products')) {
+          return {
+            rows: [{
+              id: 'prod-db',
+              shop_id: 'adult-shop',
+              code: 'MÃ99',
+              name: 'DB Product',
+              description: 'DB only',
+              price: 999000,
+              currency: 'VND',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_assets')) return { rows: [] };
+        return { rows: [] };
+      }
+    };
+
+    const runtime = await resolveDbShopRuntimeForPage({
+      pageId: 'page_db',
+      db,
+      credentialResolver: async () => {
+        throw new Error('relation shop_page_credentials token=EAAB-raw-page-token');
+      },
+      messengerFactory: () => {
+        messengerFactoryCalled = true;
+        return {};
+      }
+    });
+
+    expect(runtime).toEqual({ failClosed: true, reason: 'credential_lookup_failed' });
+    expect(messengerFactoryCalled).toBeFalse();
   });
 });
 
