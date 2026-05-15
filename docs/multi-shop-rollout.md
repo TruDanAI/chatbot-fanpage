@@ -87,6 +87,25 @@ Latest local feature flag facade phase 1 update:
   `489 passed, 0 failed`.
 - Production deploy/env/DB/data remain untouched.
 
+Latest local durable webhook queue phase 1 update:
+
+- `db/multi-shop-proposal.sql` now includes additive/idempotent
+  `webhook_queue` with states `queued`, `processing`, `done`, and `failed`,
+  `payload_json`/`event_json`, bounded `attempt_count`/`max_attempts`,
+  `available_at`, `locked_at`, `locked_by`, `last_error`, and lifecycle
+  timestamps.
+- `core/webhook-queue.js` provides PostgreSQL enqueue, claim-next-batch with
+  `FOR UPDATE SKIP LOCKED`, mark-done, and bounded retry/fail behavior.
+- `WEBHOOK_QUEUE_ENABLED=false` is the default. With the flag off, webhook
+  behavior stays on the current inline async processing path. With the flag on,
+  enqueue happens only after signature validation and before worker processing.
+- Queue logs use safe error codes and `page_ref`; they do not log raw customer
+  message bodies, raw tokens, or raw `page_id`.
+- Latest local verification for this update: `npm test` passed with
+  `499 passed, 0 failed`.
+- Production deploy/env/DB/data remain untouched; production queue rollout has
+  not started.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -106,6 +125,10 @@ safe, non-production values:
 - `RUNTIME_ALLOWED_PAGE_IDS`: optional post-resolution page override. It only
   applies after `shop_pages` resolves the page to a shop; unknown pages still
   fail closed and do not fallback because of this variable.
+- `WEBHOOK_QUEUE_ENABLED=false`: durable webhook queue gate; keep false outside
+  an approved queue rollout.
+- `WEBHOOK_QUEUE_BATCH_SIZE`: optional queue worker claim size when the queue
+  gate is enabled.
 
 Do not print any value for these variables in logs, chat, or runbooks.
 
@@ -143,10 +166,10 @@ production environment variables, or write production data.
 3. Feature flag facade: local phase 1 done.
    Runtime bot-mode helpers now use the facade bridge and keep existing
    defaults/overrides before any schema migration.
-4. Durable webhook queue:
-   implement next. Use PostgreSQL queue rows with bounded retry and
-   `FOR UPDATE SKIP LOCKED`; Redis is not needed for the current 5-20 shop
-   target.
+4. Durable webhook queue: local phase 1 done.
+   PostgreSQL queue rows, bounded retry, `FOR UPDATE SKIP LOCKED`, and the
+   opt-in `WEBHOOK_QUEUE_ENABLED=false` default are implemented locally. Redis
+   is not needed for the current 5-20 shop target.
 5. Per-shop health:
    expose last webhook, last successful send, send error rate, and credential
    status without raw tokens, raw page IDs, customer rows, messages, or orders.
@@ -173,21 +196,24 @@ Approval for one gate does not imply approval for later gates.
    `CREDENTIAL_MASTER_KEY`.
 10. Verify count-only table state:
    `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
-   `shop_page_credentials`, `admin_roles`, `admin_users`, `admin_user_roles`,
-   and `admin_audit_log`.
+   `shop_page_credentials`, `webhook_queue`, `admin_roles`, `admin_users`,
+   `admin_user_roles`, and `admin_audit_log`.
 11. Deploy the reviewed runtime/dashboard commit only after deploy approval.
 12. Set `CREDENTIAL_MASTER_KEY` only after separate production environment
     approval.
 13. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
     environment approval.
-14. Smoke public `/healthz` without auth.
-15. Smoke admin shops read routes only after approval, because authenticated
+14. Keep `WEBHOOK_QUEUE_ENABLED=false` until a separate queue rollout approval
+    covers worker behavior, retry visibility, rollback, and production DB
+    write expectations.
+15. Smoke public `/healthz` without auth.
+16. Smoke admin shops read routes only after approval, because authenticated
     admin reads can write audit rows.
-16. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
+17. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
     after explicit production DB write approval.
-17. Archive the smoke product as cleanup and verify there is no duplicate
+18. Archive the smoke product as cleanup and verify there is no duplicate
     active smoke code.
-18. Verify count-only audit delta and product counts. Do not print raw audit,
+19. Verify count-only audit delta and product counts. Do not print raw audit,
     product, customer, order, or message rows.
 
 Expected post-rollout product checks:
@@ -220,6 +246,8 @@ Expected post-rollout product checks:
 - Product updates, status changes, and archive actions must stay shop-scoped;
   no cross-shop updates.
 - Product code uniqueness is enforced per shop for active products.
+- Keep `WEBHOOK_QUEUE_ENABLED=false` in production until schema apply, worker
+  operation, retry observability, and rollback have separate approval.
 - Keep file-backed config as rollback fallback until production DB-backed
   runtime has been proven safe.
 
@@ -231,6 +259,9 @@ non-destructive:
 - If runtime behavior is wrong after deploy, disable
   `MULTI_SHOP_DB_CONFIG_ENABLED` after production env approval and redeploy or
   restart as needed.
+- If queue behavior is wrong after an approved queue rollout, disable
+  `WEBHOOK_QUEUE_ENABLED` after production env approval; leave additive queue
+  rows in place unless a destructive cleanup is separately approved.
 - If product writes show unsafe behavior, stop product write smoke immediately
   and redeploy the previous known-good commit.
 - Leave additive tables in place unless a destructive rollback plan, fresh

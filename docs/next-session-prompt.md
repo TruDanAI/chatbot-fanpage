@@ -42,13 +42,21 @@ Mục tiêu sản phẩm:
   MID storage error fail-closed rõ ràng không gửi customer reply, file adapter
   giữ behavior MID dedupe hiện tại sau cùng interface; latest local
   verification `npm test` = 481 passed, 0 failed.
-- Feature flag facade phase 1 đã hoàn tất local-only:
+- Feature flag facade phase 1 đã hoàn tất và đã push ở `29f03d7`:
   `core/shops/feature-flags.js` expose `getFeatureFlag()` /
   `getRuleToggle()`, runtime bot-mode helpers đọc facade thay vì đọc trực tiếp
   behavior flags từ `settings_json.ruleToggles`/legacy `botMode`, DB shop
   config normalization dùng facade bridge tạm; chưa migrate schema, chưa thêm
   plan billing, chưa đổi adult-shop flow; latest local verification
   `npm test` = 489 passed, 0 failed.
+- Durable webhook queue phase 1 đã hoàn tất local-only:
+  `db/multi-shop-proposal.sql` thêm `webhook_queue` additive/idempotent với
+  states `queued`, `processing`, `done`, `failed`, `payload_json`/`event_json`,
+  bounded retry, lock metadata và queued-job indexes; `core/webhook-queue.js`
+  có enqueue, claim bằng `FOR UPDATE SKIP LOCKED`, mark done, retry/fail;
+  webhook route chỉ dùng queue khi `WEBHOOK_QUEUE_ENABLED=true`, default false
+  giữ current behavior; latest local verification `npm test` = 499 passed,
+  0 failed.
   Không deploy, không đổi production env, không ghi production DB, không đụng
   production /data.
 
@@ -93,18 +101,19 @@ Production:
   - ADMIN_SESSION_COOKIE_NAME set=true theo metadata safe check ngày 2026-05-11, không in value
   - TENANT_ID=default
   - PAGE_ID=1026325343908119
+  - WEBHOOK_QUEUE_ENABLED chưa rollout; phải false/unset nếu chưa có approval riêng
 
 Trạng thái production mới nhất đã biết:
 - Latest verified Railway deployment:
   a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS ở commit fae7c7f
   Fix user detail internal notes UI contract
 - Latest pushed/code commit:
-  179953e Add atomic MID idempotency
+  29f03d7 Add feature flag facade for runtime rule toggles
 - Latest git state:
   Must be re-checked at the start of the next session with `git status` and
   `git rev-list --left-right --count origin/main...HEAD`. Do not assume the
   previous clean state still holds after handoff/docs/runtime safety updates.
-  Feature flag facade phase 1 is local-only until a separate commit/push is
+  Durable webhook queue phase 1 is local-only until a separate commit/push is
   approved.
 - Latest production internal_notes schema apply:
   db/internal-notes-proposal.sql đã apply thành công vào production
@@ -155,7 +164,7 @@ Trạng thái production mới nhất đã biết:
 - Không apply schema trong lúc POST/GET smoke.
 - Không đụng production /data.
 - Latest local test coverage baseline:
-  `npm test` passed with 489 passed, 0 failed after feature flag facade
+  `npm test` passed with 499 passed, 0 failed after durable webhook queue
   phase 1.
   Tests cover internal-notes validation/RBAC/transaction/audit fail-closed
   behavior, SQL verifier guardrails, read model behavior, webhook log
@@ -164,8 +173,9 @@ Trạng thái production mới nhất đã biết:
   legacy `FB_PAGE_TOKEN` fallback, atomic MID `tryMarkMid()` duplicate skips,
   PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe,
   feature flag facade defaults/overrides/unknown-default behavior,
-  menu_code_handoff facade regression coverage, and no raw token/page_id
-  logging.
+  menu_code_handoff facade regression coverage, webhook queue enqueue/claim/
+  done/retry/fail behavior, queue flag-off webhook path, signature-before-queue
+  behavior, and no raw token/page_id/customer-error logging.
 - Latest Phase 4 internal notes live local SQL verification:
   npm run verify:internal-notes-sql passed using local Docker Postgres
   container chatbot-fanpage-internal-notes-pg, bound to
@@ -1183,6 +1193,7 @@ File quan trọng:
 - core/credentials/page-credentials.js
 - core/utils/log-refs.js
 - core/webhook.js
+- core/webhook-queue.js
 - core/messenger-client.js
 - core/shops/db-shop-config.js
 - index.js
@@ -1201,6 +1212,7 @@ File quan trọng:
 - tests/admin-auth.test.js
 - tests/admin-internal-notes.test.js
 - tests/admin-routes.test.js
+- tests/webhook-queue.test.js
 - tests/index.js
 
 Việc bắt buộc làm đầu phiên mới:
@@ -1224,9 +1236,11 @@ Việc bắt buộc làm đầu phiên mới:
    - db/multi-shop-proposal.sql
    - db/internal-notes-proposal.sql
    - core/webhook.js
+   - core/webhook-queue.js
    - index.js
    - core/admin/internal-notes.js
    - tests/admin-internal-notes.test.js
+   - tests/webhook-queue.test.js
    - DESIGN.md
 5. Chạy local:
    - npm test
@@ -1238,18 +1252,20 @@ production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Phase 4 internal
 notes v1 backend/API/UI đã complete và production-smoked theo các giới hạn an
 toàn ở trên. Multi-shop staging MVP đã pass, và runtime admission guard đã được
 thêm để giảm blast radius. Per-page credential resolution phase 1, atomic
-message idempotency phase 1, và feature flag facade phase 1 đã hoàn tất
-local-only. Trọng tâm tiếp theo là durable webhook queue trước per-shop health.
+message idempotency phase 1, feature flag facade phase 1, và durable webhook
+queue phase 1 đã hoàn tất local-only. Trọng tâm tiếp theo là per-shop
+health/credential status và queue rollout planning, không phải production
+rollout.
 
 Next recommended task:
-- Làm durable webhook queue:
-  - states: queued, processing, done, failed
-  - retry bounded
-  - PostgreSQL `FOR UPDATE SKIP LOCKED`; Redis chưa cần cho mục tiêu 5-20 shop
-- Sau queue mới làm per-shop health/credential status:
+- Làm per-shop health/credential status:
   - last webhook, last successful send, send error rate, active handoffs,
     credential status
   - không expose raw token, raw page_id, customer rows, messages, orders
+- Nếu quay lại queue rollout planning:
+  - giữ `WEBHOOK_QUEUE_ENABLED=false` ở production cho tới khi có backup,
+    schema apply, worker/runbook/rollback và approval riêng
+  - queue SQL hiện chỉ là proposal local trong `db/multi-shop-proposal.sql`
 - Production multi-shop rollout vẫn phải theo docs/multi-shop-rollout.md và cần
   approval riêng cho từng gate: backup, schema apply, credential seed,
   `CREDENTIAL_MASTER_KEY` env, deploy, env enable, authenticated smoke, product
@@ -1266,6 +1282,7 @@ Việc nên làm đầu phiên tới:
    - STORAGE_ADAPTER=postgres
    - ALLOW_PRODUCTION_DB_WRITES=true
    - ADMIN_AUDIT_LOG_ENABLED=true
+   - WEBHOOK_QUEUE_ENABLED false/unset cho tới queue rollout approval
    - SESSION_SECRET_set=true
    - ADMIN_PUBLIC_BASE_URL_set=true
    - ADMIN_SESSION_COOKIE_NAME_set=true
@@ -1282,15 +1299,16 @@ Việc nên làm đầu phiên tới:
    - admin_user_roles
    - admin_audit_log
 7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline
-   coverage mới nhất đã biết: `npm test` 489 passed, 0 failed sau feature
-   flag facade phase 1; tests cover validation, RBAC, transaction/audit
+   coverage mới nhất đã biết: `npm test` 499 passed, 0 failed sau durable
+   webhook queue phase 1; tests cover validation, RBAC, transaction/audit
    fail-closed behavior, static SQL checks, verifier guardrails, read model
    behavior, webhook log redaction, multi-shop admission, credential
    encryption/decryption, DB-backed credential token selection, missing
    credential fail-closed, legacy `FB_PAGE_TOKEN`, atomic MID duplicate skips,
    PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe,
-   feature flag facade behavior, menu_code_handoff facade regression coverage,
-   and no raw token/page_id logging.
+   feature flag facade behavior, queue enqueue/claim/done/retry/fail,
+   menu_code_handoff facade regression coverage, and no raw token/page_id/
+   customer-error logging.
 
 Phase 3 browser cookie smoke:
 - Đã hoàn tất ngày 2026-05-11 sau backup và xác nhận riêng.
@@ -1304,10 +1322,10 @@ Code-only hướng khác:
 - Multi-shop safety foundation:
   - per-page credential resolution phase 1 đã hoàn tất local-only
   - atomic `tryMarkMid()` phase 1 đã hoàn tất local-only
-  - feature flag facade phase 1 đã hoàn tất local-only
-  - durable queue là bước tiếp theo sau token isolation, idempotency, và
-    feature flag facade
-  - per-shop health/credential status đứng sau queue/credential validation
+  - feature flag facade phase 1 đã hoàn tất và đã push ở `29f03d7`
+  - durable webhook queue phase 1 đã hoàn tất local-only; flag mặc định
+    `WEBHOOK_QUEUE_ENABLED=false`, chưa rollout production
+  - per-shop health/credential status là bước tiếp theo
 - Phase 4 internal notes:
   - v1 backend/API/UI đã complete
   - internal notes design/create service/read-list model/test baseline đã có
@@ -1328,8 +1346,8 @@ Không làm vội:
 - Không tạo production internal note nếu chưa xác nhận rõ vì sẽ ghi business data.
 - Không coi browser session hiện tại là per-human identity; nó vẫn là static-token bridge cho tới khi admin_users login thật được implement.
 - Không thêm admin user production nếu chưa review identity provisioning và rollback.
-- Không làm durable webhook queue trước per-page credentials, atomic
-  idempotency, và feature flag facade.
+- Không bật `WEBHOOK_QUEUE_ENABLED` production hoặc apply `webhook_queue`
+  production nếu chưa có backup mới, runbook/rollback và xác nhận riêng.
 - Không apply/seed `shop_page_credentials` production hoặc set
   `CREDENTIAL_MASTER_KEY` production nếu chưa có backup/approval riêng.
 - Không coi `RUNTIME_ALLOWED_PAGE_IDS` là whitelist cho page chưa có DB mapping; nó chỉ là post-resolution override.

@@ -73,9 +73,9 @@ Last verified baseline from May 12, 2026:
   `a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS` at commit
   `fae7c7f Fix user detail internal notes UI contract`
 - Latest pushed/code commit:
-  `179953e Add atomic MID idempotency`
-- Latest git state: must be re-checked before production work. Feature flag
-  facade phase 1 is local-only until a separate commit/push is approved.
+  `29f03d7 Add feature flag facade for runtime rule toggles`
+- Latest git state: must be re-checked before production work. Durable webhook
+  queue phase 1 is local-only until a separate commit/push is approved.
 - Latest production internal_notes schema apply:
   `db/internal-notes-proposal.sql` has been applied to production PostgreSQL.
 - Backup used before internal_notes schema apply/read smoke:
@@ -640,11 +640,19 @@ Current safety foundation:
   `core/shops/feature-flags.js` provides `getFeatureFlag()` and
   `getRuleToggle()` so runtime bot-mode decisions use a single bridge for
   rule toggles and legacy `botMode` options. No schema migration, plan billing,
-  adult-shop behavior change, or durable queue was added in this phase.
+  or adult-shop behavior change was added in this phase.
+- Durable webhook queue phase 1 is implemented locally:
+  `db/multi-shop-proposal.sql` defines additive/idempotent `webhook_queue`
+  rows with `queued`, `processing`, `done`, and `failed` states,
+  `payload_json`/`event_json`, bounded attempts, availability timestamps, lock
+  metadata, safe `last_error`, and queued-job indexes. `core/webhook-queue.js`
+  provides enqueue, `FOR UPDATE SKIP LOCKED` claim, mark-done, and bounded
+  retry/fail behavior. `WEBHOOK_QUEUE_ENABLED=false` keeps the current webhook
+  path unchanged by default.
 - Runtime logs use `page_ref=p:<hash>` for page correlation instead of raw
   `page_id`.
 - Latest local safety-foundation test baseline: `npm test` passed with
-  `489 passed, 0 failed`.
+  `499 passed, 0 failed`.
 
 Multi-shop safety track before shop #2:
 
@@ -658,8 +666,9 @@ Multi-shop safety track before shop #2:
 3. Feature flag facade. Local phase 1 done: runtime bot-mode helpers use
    `getFeatureFlag()`/`getRuleToggle()` bridge defaults and overrides before
    any schema migration.
-4. Durable webhook queue. Next: use PostgreSQL queue rows with bounded retry
-   and `FOR UPDATE SKIP LOCKED`.
+4. Durable webhook queue. Local phase 1 done: PostgreSQL queue rows use
+   bounded retry and `FOR UPDATE SKIP LOCKED`; runtime integration is opt-in
+   behind `WEBHOOK_QUEUE_ENABLED=false`.
 5. Per-shop health. Show last webhook, last successful send, send error rate,
    active handoffs, and credential status without raw secrets, raw page IDs, or
    customer data.
@@ -737,9 +746,9 @@ A phase is done only when:
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
 session. Per-page credential resolution phase 1, atomic message idempotency
-phase 1, and feature flag facade phase 1 are complete locally. The current
-multi-shop safety order is now: durable webhook queue, then per-shop
-health/credential status.
+phase 1, feature flag facade phase 1, and durable webhook queue phase 1 are
+complete locally. The current multi-shop safety order is now per-shop
+health/credential status, then approved queue rollout planning.
 Any production rollout still follows `docs/multi-shop-rollout.md` and needs
 separate approval for deploy, env changes, DB writes, credential seeding, and
 authenticated smoke.

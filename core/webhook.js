@@ -66,10 +66,17 @@ function createWebhook({
   trackEvent,
   maybeResetTimedOutSession,
   redactSensitiveText,
-  resolveRuntimeForPage
+  resolveRuntimeForPage,
+  webhookQueue,
+  webhookQueueEnabled = false
 }) {
   const recentMessageTextKeys = new Map();
   const recentMenuSendKeys = new Map();
+  const queueEnabled = Boolean(webhookQueueEnabled);
+
+  if (queueEnabled && (!webhookQueue || typeof webhookQueue.enqueueEvent !== 'function')) {
+    throw new Error('webhook_queue_enabled_requires_enqueue_event');
+  }
 
   function pruneExpiringMap(map, maxKeys, nowMs = Date.now()) {
     for (const [key, expiresAt] of map) {
@@ -293,6 +300,20 @@ function createWebhook({
     return value.replace(/[^a-z0-9_.:-]/g, '_').slice(0, 80) || 'unknown';
   }
 
+  function requestSetToArray(value) {
+    if (!value || typeof value[Symbol.iterator] !== 'function') return [];
+    return [...value]
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, 500);
+  }
+
+  function queuedArray(value) {
+    return Array.isArray(value)
+      ? value.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
+  }
+
   function getEventPageId(event, options = {}) {
     return String(
       options.pageId
@@ -344,16 +365,14 @@ function createWebhook({
       }
     });
 
-    app.post('/webhook', webhookRateLimiter, (req, res) => {
+    app.post('/webhook', webhookRateLimiter, async (req, res) => {
       if (!verifySignature(req)) {
         console.warn('⚠️  Sai chữ ký webhook, từ chối request.');
         return res.sendStatus(403);
       }
 
-      res.sendStatus(200); // Trả 200 ngay để Meta không retry
-
       const body = req.body;
-      if (body.object !== 'page') return;
+      if (body.object !== 'page') return res.sendStatus(200);
 
       const inferredBaseUrl = inferBaseUrlFromRequest(req);
       const requestEvents = [];
@@ -373,12 +392,43 @@ function createWebhook({
         }
       }
 
+      if (queueEnabled) {
+        try {
+          await enqueueWebhookRequestEvents(requestEvents, inferredBaseUrl, {
+            requestMessageSenders,
+            requestAdsReferralSenders
+          });
+          return res.sendStatus(200);
+        } catch (err) {
+          const pageId = requestEvents[0]?.pageId || '';
+          console.error(`[webhook-queue] enqueue failed page_ref=${pageRef(pageId)} reason=${safeLogReason(err?.code || err?.name || 'enqueue_failed')}`);
+          return res.sendStatus(500);
+        }
+      }
+
+      res.sendStatus(200); // Trả 200 ngay để Meta không retry
+
       void processWebhookRequestEvents(requestEvents, inferredBaseUrl, {
         requestMessageSenders,
         requestAdsReferralSenders,
         requestImageDedupe
       });
     });
+  }
+
+  async function enqueueWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions = {}) {
+    for (const { event, pageId } of requestEvents) {
+      await webhookQueue.enqueueEvent({
+        pageId: getEventPageId(event, { pageId }),
+        event,
+        payload: {
+          pageId,
+          baseUrl: inferredBaseUrl || '',
+          requestMessageSenderIds: requestSetToArray(requestOptions.requestMessageSenders),
+          requestAdsReferralSenderIds: requestSetToArray(requestOptions.requestAdsReferralSenders)
+        }
+      });
+    }
   }
 
   async function processWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions) {
@@ -392,6 +442,18 @@ function createWebhook({
         console.error('❌ handleEvent:', err.response?.data || err.message);
       }
     }
+  }
+
+  async function processQueuedWebhookJob(job = {}) {
+    const payload = job.payloadJson || job.payload_json || {};
+    const event = job.eventJson || job.event_json || {};
+    const pageId = String(payload.pageId || job.pageId || job.page_id || getEventPageId(event)).trim();
+    await handleEvent(event, payload.baseUrl || '', {
+      pageId,
+      requestMessageSenders: new Set(queuedArray(payload.requestMessageSenderIds)),
+      requestAdsReferralSenders: new Set(queuedArray(payload.requestAdsReferralSenderIds)),
+      requestImageDedupe: new Set()
+    });
   }
 
   async function handleEvent(event, baseUrlOverride = '', options = {}) {
@@ -512,7 +574,7 @@ function createWebhook({
       return;
     }
 
-    console.log(`📩 [${senderId}]: ${redactSensitiveText(userText)}`);
+    console.log(`📩 customer_message page_ref=${pageRef(pageId)} text_len=${String(userText || '').length}`);
     if (menuCodeHandoffHandler) {
       const handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
         adsReferral: effectiveAdsReferralEvent,
@@ -818,6 +880,7 @@ function createWebhook({
 
   return {
     handleEvent,
+    processQueuedWebhookJob,
     registerWebhookRoutes,
     verifySignature
   };

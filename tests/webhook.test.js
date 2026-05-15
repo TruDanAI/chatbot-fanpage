@@ -163,7 +163,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     storage,
     shopConfig: config,
     fbVerifyToken: 'verify',
-    fbAppSecret: '',
+    fbAppSecret: options.fbAppSecret || '',
     webhookRateLimiter: (_req, _res, next) => next(),
     handoffMs: 30 * 60 * 1000,
     useGemini: options.useGemini !== false,
@@ -238,7 +238,9 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     },
     maybeResetTimedOutSession: () => {},
     redactSensitiveText: text => text,
-    resolveRuntimeForPage: options.resolveRuntimeForPage
+    resolveRuntimeForPage: options.resolveRuntimeForPage,
+    webhookQueue: options.webhookQueue,
+    webhookQueueEnabled: options.webhookQueueEnabled
   });
 
   return {
@@ -1018,6 +1020,228 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
+  it('queue disabled keeps current webhook path', async () => {
+    let enqueueCalls = 0;
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      webhookQueueEnabled: false,
+      webhookQueue: {
+        enqueueEvent: async () => {
+          enqueueCalls += 1;
+          throw new Error('queue should stay disabled');
+        }
+      }
+    });
+
+    let postHandler = null;
+    const app = {
+      get() {},
+      post(_path, limiter, handler) {
+        postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+      }
+    };
+    h.registerWebhookRoutes(app);
+
+    let responseStatus = 0;
+    await postHandler({
+      body: {
+        object: 'page',
+        entry: [{
+          id: 'page_route',
+          messaging: [makeEvent('chào shop', 'queue_disabled_sender', 'm_queue_disabled')]
+        }]
+      },
+      protocol: 'https',
+      get(name) {
+        const headers = {
+          host: 'example.test',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-host': 'example.test'
+        };
+        return headers[String(name || '').toLowerCase()] || '';
+      }
+    }, {
+      sendStatus(code) {
+        responseStatus = code;
+      }
+    });
+
+    expect(responseStatus).toBe(200);
+    await waitFor(() => h.sent.length === 3, 'queue-disabled route did not use inline processing');
+    expect(enqueueCalls).toBe(0);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('queue enabled enqueues request events instead of inline processing', async () => {
+    const enqueued = [];
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      webhookQueueEnabled: true,
+      webhookQueue: {
+        enqueueEvent: async job => {
+          enqueued.push(job);
+          return { id: enqueued.length, status: 'queued' };
+        }
+      }
+    });
+
+    let postHandler = null;
+    const app = {
+      get() {},
+      post(_path, limiter, handler) {
+        postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+      }
+    };
+    h.registerWebhookRoutes(app);
+
+    let responseStatus = 0;
+    await postHandler({
+      body: {
+        object: 'page',
+        entry: [{
+          id: 'page_queue',
+          messaging: [makeEvent('chào shop', 'queue_enabled_sender', 'm_queue_enabled')]
+        }]
+      },
+      protocol: 'https',
+      get(name) {
+        const headers = {
+          host: 'example.test',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-host': 'example.test'
+        };
+        return headers[String(name || '').toLowerCase()] || '';
+      }
+    }, {
+      sendStatus(code) {
+        responseStatus = code;
+      }
+    });
+
+    expect(responseStatus).toBe(200);
+    expect(h.sent.length).toBe(0);
+    expect(enqueued.length).toBe(1);
+    expect(enqueued[0].pageId).toBe('page_queue');
+    expect(enqueued[0].event.message.mid).toBe('m_queue_enabled');
+    expect(enqueued[0].payload.baseUrl).toBe('https://example.test');
+    expect(enqueued[0].payload.requestMessageSenderIds).toEqual(['queue_enabled_sender']);
+  });
+
+  it('queue enabled returns 500 when enqueue fails so Meta can retry', async () => {
+    let enqueueCalls = 0;
+    const errors = [];
+    const originalError = console.error;
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      webhookQueueEnabled: true,
+      webhookQueue: {
+        enqueueEvent: async () => {
+          enqueueCalls += 1;
+          throw new Error('raw customer body EAAB-secret chào shop');
+        }
+      }
+    });
+
+    let postHandler = null;
+    const app = {
+      get() {},
+      post(_path, limiter, handler) {
+        postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+      }
+    };
+    h.registerWebhookRoutes(app);
+
+    let responseStatus = 0;
+    console.error = message => errors.push(String(message));
+    try {
+      await postHandler({
+        body: {
+          object: 'page',
+          entry: [{
+            id: 'page_queue_failure',
+            messaging: [makeEvent('chào shop', 'queue_failure_sender', 'm_queue_failure')]
+          }]
+        },
+        protocol: 'https',
+        get(name) {
+          const headers = {
+            host: 'example.test',
+            'x-forwarded-proto': 'https',
+            'x-forwarded-host': 'example.test'
+          };
+          return headers[String(name || '').toLowerCase()] || '';
+        }
+      }, {
+        sendStatus(code) {
+          responseStatus = code;
+        }
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    const errorText = errors.join('\n');
+    expect(responseStatus).toBe(500);
+    expect(enqueueCalls).toBe(1);
+    expect(h.sent.length).toBe(0);
+    expect(errorText).toContain('[webhook-queue] enqueue failed');
+    expect(errorText.includes('page_queue_failure')).toBeFalse();
+    expect(errorText.includes('chào shop')).toBeFalse();
+    expect(errorText.includes('EAAB-secret')).toBeFalse();
+  });
+
+  it('queue path does not enqueue before signature validation', async () => {
+    let enqueueCalls = 0;
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      fbAppSecret: 'app-secret',
+      webhookQueueEnabled: true,
+      webhookQueue: {
+        enqueueEvent: async () => {
+          enqueueCalls += 1;
+        }
+      }
+    });
+
+    let postHandler = null;
+    const app = {
+      get() {},
+      post(_path, limiter, handler) {
+        postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+      }
+    };
+    h.registerWebhookRoutes(app);
+
+    const body = {
+      object: 'page',
+      entry: [{
+        id: 'page_queue',
+        messaging: [makeEvent('chào shop', 'queue_signature_sender', 'm_queue_signature')]
+      }]
+    };
+    let responseStatus = 0;
+    await postHandler({
+      body,
+      rawBody: Buffer.from(JSON.stringify(body)),
+      protocol: 'https',
+      get(name) {
+        const headers = {
+          host: 'example.test',
+          'x-hub-signature-256': 'sha256=bad'
+        };
+        return headers[String(name || '').toLowerCase()] || '';
+      }
+    }, {
+      sendStatus(code) {
+        responseStatus = code;
+      }
+    });
+
+    expect(responseStatus).toBe(403);
+    expect(enqueueCalls).toBe(0);
+    expect(h.sent.length).toBe(0);
   });
 
   it('ads referral during handoff does not break handoff silence', async () => {

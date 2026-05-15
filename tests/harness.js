@@ -8,6 +8,10 @@
 
 const groups = [];
 let current = null;
+const runnerConsole = {
+  log: console.log.bind(console)
+};
+const VERBOSE_TEST_CONSOLE = /^(1|true|yes|on)$/i.test(String(process.env.TEST_VERBOSE_CONSOLE || '').trim());
 
 function describe(name, fn) {
   current = { name, cases: [] };
@@ -66,22 +70,42 @@ async function run() {
   const failures = [];
 
   for (const group of groups) {
-    console.log(`\n  ${group.name}`);
+    runnerConsole.log(`\n  ${group.name}`);
     for (const c of group.cases) {
+      const restoreConsole = muteConsoleDuringTest();
       try {
         await c.fn();
         pass += 1;
-        console.log(`    ✓ ${c.name}`);
+        restoreConsole();
+        runnerConsole.log(`    ✓ ${c.name}`);
       } catch (err) {
+        restoreConsole();
         fail += 1;
         failures.push({ group: group.name, case: c.name, err });
-        console.log(`    ✗ ${c.name}\n        ${err.message}`);
+        runnerConsole.log(`    ✗ ${c.name}\n        ${err.message}`);
       }
     }
   }
 
-  console.log(`\n  ${pass} passed, ${fail} failed`);
+  runnerConsole.log(`\n  ${pass} passed, ${fail} failed`);
   return fail === 0 ? 0 : 1;
+}
+
+function muteConsoleDuringTest() {
+  if (VERBOSE_TEST_CONSOLE) return () => {};
+  const previous = {
+    log: console.log,
+    warn: console.warn,
+    error: console.error
+  };
+  console.log = () => {};
+  console.warn = () => {};
+  console.error = () => {};
+  return () => {
+    console.log = previous.log;
+    console.warn = previous.warn;
+    console.error = previous.error;
+  };
 }
 
 module.exports = { describe, it, expect, run };

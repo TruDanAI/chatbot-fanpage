@@ -6,11 +6,6 @@ const EXPLICIT_DATABASE_URL_ENVS = Object.freeze([
   'CHATBOT_TEST_DATABASE_URL',
   'CHATBOT_STAGING_DATABASE_URL'
 ]);
-const RAILWAY_ENVIRONMENT_ENVS = Object.freeze([
-  'RAILWAY_ENVIRONMENT',
-  'RAILWAY_ENVIRONMENT_NAME'
-]);
-const RAILWAY_STAGING_DATABASE_URL_SOURCE = 'DATABASE_URL_RAILWAY_STAGING';
 
 const PROPOSAL_SQL_PATH = path.join(__dirname, '..', 'db', 'multi-shop-proposal.sql');
 
@@ -83,6 +78,39 @@ const EXPECTED_TABLES = Object.freeze({
       created_at: { dataType: 'timestamp with time zone', nullable: false },
       updated_at: { dataType: 'timestamp with time zone', nullable: false }
     }
+  },
+  shop_page_credentials: {
+    columns: {
+      id: { dataType: 'text', nullable: false },
+      shop_id: { dataType: 'text', nullable: false },
+      page_mapping_id: { dataType: 'text', nullable: false },
+      credential_type: { dataType: 'text', nullable: false },
+      encrypted_value: { dataType: 'text', nullable: false },
+      encryption_key_id: { dataType: 'text', nullable: false },
+      status: { dataType: 'text', nullable: false },
+      metadata_json: { dataType: 'jsonb', nullable: false },
+      created_at: { dataType: 'timestamp with time zone', nullable: false },
+      updated_at: { dataType: 'timestamp with time zone', nullable: false }
+    }
+  },
+  webhook_queue: {
+    columns: {
+      id: { dataType: 'bigint', nullable: false },
+      tenant_id: { dataType: 'text', nullable: false },
+      page_id: { dataType: 'text', nullable: false },
+      status: { dataType: 'text', nullable: false },
+      payload_json: { dataType: 'jsonb', nullable: false },
+      event_json: { dataType: 'jsonb', nullable: false },
+      attempt_count: { dataType: 'integer', nullable: false },
+      max_attempts: { dataType: 'integer', nullable: false },
+      available_at: { dataType: 'timestamp with time zone', nullable: false },
+      locked_at: { dataType: 'timestamp with time zone', nullable: true },
+      locked_by: { dataType: 'text', nullable: false },
+      last_error: { dataType: 'text', nullable: false },
+      created_at: { dataType: 'timestamp with time zone', nullable: false },
+      updated_at: { dataType: 'timestamp with time zone', nullable: false },
+      processed_at: { dataType: 'timestamp with time zone', nullable: true }
+    }
   }
 });
 
@@ -118,6 +146,26 @@ const EXPECTED_INDEXES = Object.freeze({
   shop_assets_product_status_idx: {
     table: 'shop_assets',
     parts: ['product_id', 'status', 'sort_order', 'id', 'where', 'product_id is not null']
+  },
+  shop_page_credentials_active_type_uidx: {
+    table: 'shop_page_credentials',
+    parts: ['unique index', 'shop_id', 'page_mapping_id', 'credential_type', 'where', 'status', 'active']
+  },
+  shop_page_credentials_lookup_idx: {
+    table: 'shop_page_credentials',
+    parts: ['page_mapping_id', 'credential_type', 'status']
+  },
+  webhook_queue_queued_available_idx: {
+    table: 'webhook_queue',
+    parts: ['tenant_id', 'available_at', 'id', 'where', 'status', 'queued']
+  },
+  webhook_queue_status_updated_idx: {
+    table: 'webhook_queue',
+    parts: ['tenant_id', 'status', 'updated_at', 'id']
+  },
+  webhook_queue_page_status_idx: {
+    table: 'webhook_queue',
+    parts: ['tenant_id', 'page_id', 'status', 'created_at']
   }
 });
 
@@ -134,63 +182,6 @@ function isPostgresUrl(value) {
   }
 }
 
-function getRailwayEnvironmentNames(env = process.env) {
-  return RAILWAY_ENVIRONMENT_ENVS
-    .map(name => normalizeEnvValue(env[name]).toLowerCase())
-    .filter(Boolean);
-}
-
-function isRailwayProductionEnvironment(env = process.env) {
-  return getRailwayEnvironmentNames(env).includes('production');
-}
-
-function isRailwayStagingEnvironment(env = process.env) {
-  return getRailwayEnvironmentNames(env).includes('staging') && !isRailwayProductionEnvironment(env);
-}
-
-function chooseRailwayStagingDatabaseUrl(env, databaseUrl) {
-  if (isRailwayProductionEnvironment(env)) {
-    return {
-      ok: false,
-      skipped: false,
-      reason: 'database_url_railway_production',
-      envName: 'DATABASE_URL',
-      sourceName: 'DATABASE_URL_REJECTED_PRODUCTION',
-      message: 'DATABASE_URL is not allowed in the Railway production environment for multi-shop SQL verification.'
-    };
-  }
-
-  if (!isRailwayStagingEnvironment(env)) {
-    return {
-      ok: false,
-      skipped: false,
-      reason: 'database_url_requires_railway_staging',
-      envName: 'DATABASE_URL',
-      sourceName: 'DATABASE_URL_REJECTED_NON_STAGING',
-      message: 'DATABASE_URL is allowed only when RAILWAY_ENVIRONMENT or RAILWAY_ENVIRONMENT_NAME is staging. The URL value was not printed.'
-    };
-  }
-
-  if (!isPostgresUrl(databaseUrl)) {
-    return {
-      ok: false,
-      skipped: false,
-      reason: 'invalid_railway_staging_database_url',
-      envName: 'DATABASE_URL',
-      sourceName: RAILWAY_STAGING_DATABASE_URL_SOURCE,
-      message: 'DATABASE_URL must be a valid postgres:// or postgresql:// URL in Railway staging. The URL value was not printed.'
-    };
-  }
-
-  return {
-    ok: true,
-    skipped: false,
-    envName: 'DATABASE_URL',
-    sourceName: RAILWAY_STAGING_DATABASE_URL_SOURCE,
-    value: databaseUrl
-  };
-}
-
 function chooseVerificationDatabaseUrl(env = process.env) {
   const databaseUrl = normalizeEnvValue(env.DATABASE_URL);
   const explicit = EXPLICIT_DATABASE_URL_ENVS
@@ -198,24 +189,15 @@ function chooseVerificationDatabaseUrl(env = process.env) {
     .find(item => item.value);
 
   if (!explicit) {
-    if (!databaseUrl) {
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'missing_database_url',
-        message: 'Skipped multi-shop SQL verification: set CHATBOT_TEST_DATABASE_URL, CHATBOT_STAGING_DATABASE_URL, or run inside the Railway staging environment with DATABASE_URL.'
-      };
-    }
-
-    return chooseRailwayStagingDatabaseUrl(env, databaseUrl);
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'missing_explicit_database_url',
+      message: 'Skipped multi-shop SQL verification: set CHATBOT_TEST_DATABASE_URL or CHATBOT_STAGING_DATABASE_URL to an explicit non-production PostgreSQL database. DATABASE_URL is intentionally ignored.'
+    };
   }
 
   if (databaseUrl && explicit.value === databaseUrl) {
-    const railwayStagingDatabaseUrl = chooseRailwayStagingDatabaseUrl(env, databaseUrl);
-    if (explicit.name === 'CHATBOT_STAGING_DATABASE_URL' && railwayStagingDatabaseUrl.ok) {
-      return railwayStagingDatabaseUrl;
-    }
-
     return {
       ok: false,
       skipped: false,
@@ -227,11 +209,6 @@ function chooseVerificationDatabaseUrl(env = process.env) {
   }
 
   if (!isPostgresUrl(explicit.value)) {
-    const railwayStagingDatabaseUrl = chooseRailwayStagingDatabaseUrl(env, databaseUrl);
-    if (explicit.name === 'CHATBOT_STAGING_DATABASE_URL' && databaseUrl && railwayStagingDatabaseUrl.ok) {
-      return railwayStagingDatabaseUrl;
-    }
-
     return {
       ok: false,
       skipped: false,
@@ -412,8 +389,21 @@ async function verifyConstraints(client, schemaName) {
   assertCondition(assetChecks.some(def => def.includes('storage_provider') && def.includes('public_url') && def.includes('object_storage')), 'Missing shop_assets storage_provider CHECK constraint.');
   assertCondition(assetChecks.some(def => def.includes('status') && def.includes('active') && def.includes('hidden') && def.includes('archived')), 'Missing shop_assets status CHECK constraint.');
 
+  const credentialChecks = (byTable.get('shop_page_credentials') || []).filter(item => item.type === 'c').map(item => item.definition);
+  assertCondition(credentialChecks.some(def => def.includes('id') && def.includes('<>')), 'Missing shop_page_credentials id non-empty CHECK constraint.');
+  assertCondition(credentialChecks.some(def => def.includes('credential_type') && def.includes('fb_page_token')), 'Missing shop_page_credentials credential_type CHECK constraint.');
+  assertCondition(credentialChecks.some(def => def.includes('encrypted_value') && def.includes('<>')), 'Missing shop_page_credentials encrypted_value non-empty CHECK constraint.');
+  assertCondition(credentialChecks.some(def => def.includes('status') && def.includes('active') && def.includes('paused') && def.includes('archived')), 'Missing shop_page_credentials status CHECK constraint.');
+
+  const queueChecks = (byTable.get('webhook_queue') || []).filter(item => item.type === 'c').map(item => item.definition);
+  assertCondition(queueChecks.some(def => def.includes('tenant_id') && def.includes('<>')), 'Missing webhook_queue tenant_id non-empty CHECK constraint.');
+  assertCondition(queueChecks.some(def => def.includes('page_id') && def.includes('<>')), 'Missing webhook_queue page_id non-empty CHECK constraint.');
+  assertCondition(queueChecks.some(def => def.includes('status') && def.includes('queued') && def.includes('processing') && def.includes('done') && def.includes('failed')), 'Missing webhook_queue status CHECK constraint.');
+  assertCondition(queueChecks.some(def => def.includes('attempt_count') && def.includes('>=') && def.includes('0')), 'Missing webhook_queue attempt_count CHECK constraint.');
+  assertCondition(queueChecks.some(def => def.includes('max_attempts') && def.includes('>') && def.includes('0')), 'Missing webhook_queue max_attempts CHECK constraint.');
+
   const allForeignKeys = result.rows.filter(row => row.contype === 'f');
-  assertCondition(allForeignKeys.length >= 5, `Expected at least 5 foreign key constraints, found ${allForeignKeys.length}.`);
+  assertCondition(allForeignKeys.length >= 7, `Expected at least 7 foreign key constraints, found ${allForeignKeys.length}.`);
 }
 
 async function verifyMultiShopProposal({ databaseUrl, schemaName = createVerificationSchemaName(), Client } = {}) {
@@ -490,13 +480,9 @@ if (require.main === module) {
 
 module.exports = {
   EXPLICIT_DATABASE_URL_ENVS,
-  RAILWAY_DATABASE_URL_SOURCE: RAILWAY_STAGING_DATABASE_URL_SOURCE,
   chooseVerificationDatabaseUrl,
   createVerificationSchemaName,
-  getRailwayEnvironmentNames,
   isPostgresUrl,
-  isRailwayProductionEnvironment,
-  isRailwayStagingEnvironment,
   main,
   quoteIdentifier,
   sanitizeMessage,

@@ -33,6 +33,10 @@ const {
 const { createReminderService } = require('./core/reminder-service');
 const { createWebhook } = require('./core/webhook');
 const {
+  createWebhookQueueRepository,
+  createWebhookQueueService
+} = require('./core/webhook-queue');
+const {
   applyBotModeConfig,
   isAiFallbackEnabled,
   isFollowUpEnabled
@@ -269,6 +273,11 @@ const GEMINI_TEMPERATURE = envNumber('GEMINI_TEMPERATURE', 0.3, { min: 0, max: 1
 const GEMINI_MAX_OUTPUT_TOKENS = Math.floor(envNumber('GEMINI_MAX_OUTPUT_TOKENS', 500, { min: 1, max: 2048 }));
 const WEBHOOK_RATE_LIMIT_WINDOW_MS = envPositiveNumber('WEBHOOK_RATE_LIMIT_WINDOW_MS', 60 * 1000);
 const WEBHOOK_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('WEBHOOK_RATE_LIMIT_MAX', 300)));
+const WEBHOOK_QUEUE_ENABLED = envBoolean('WEBHOOK_QUEUE_ENABLED', false);
+const WEBHOOK_QUEUE_BATCH_SIZE = Math.max(1, Math.floor(envPositiveNumber('WEBHOOK_QUEUE_BATCH_SIZE', 10)));
+const WEBHOOK_QUEUE_WORKER_INTERVAL_MS = envPositiveNumber('WEBHOOK_QUEUE_WORKER_INTERVAL_MS', 1000);
+const WEBHOOK_QUEUE_MAX_ATTEMPTS = Math.max(1, Math.floor(envPositiveNumber('WEBHOOK_QUEUE_MAX_ATTEMPTS', 5)));
+const WEBHOOK_QUEUE_RETRY_DELAY_MS = envPositiveNumber('WEBHOOK_QUEUE_RETRY_DELAY_MS', 15 * 1000);
 const ADMIN_RATE_LIMIT_WINDOW_MS = envPositiveNumber('ADMIN_RATE_LIMIT_WINDOW_MS', 5 * 60 * 1000);
 const ADMIN_RATE_LIMIT_MAX = Math.max(1, Math.floor(envPositiveNumber('ADMIN_RATE_LIMIT_MAX', 60)));
 const ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS = envPositiveNumber('ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS', 5 * 60 * 1000);
@@ -675,7 +684,18 @@ const {
   }
 });
 
-const { registerWebhookRoutes } = createWebhook({
+let webhookQueueRepository = null;
+let webhookQueueService = null;
+if (WEBHOOK_QUEUE_ENABLED) {
+  webhookQueueRepository = createWebhookQueueRepository({
+    db: getMultiShopDbPool(),
+    tenantId: process.env.TENANT_ID || 'default',
+    maxAttempts: WEBHOOK_QUEUE_MAX_ATTEMPTS,
+    retryDelayMs: WEBHOOK_QUEUE_RETRY_DELAY_MS
+  });
+}
+
+const webhook = createWebhook({
   storage,
   shopConfig,
   fbVerifyToken: FB_VERIFY_TOKEN,
@@ -722,8 +742,22 @@ const { registerWebhookRoutes } = createWebhook({
   trackEvent,
   maybeResetTimedOutSession,
   redactSensitiveText,
-  resolveRuntimeForPage: MULTI_SHOP_DB_CONFIG_ENABLED ? resolveDbShopRuntimeForPage : undefined
+  resolveRuntimeForPage: MULTI_SHOP_DB_CONFIG_ENABLED ? resolveDbShopRuntimeForPage : undefined,
+  webhookQueue: webhookQueueRepository,
+  webhookQueueEnabled: WEBHOOK_QUEUE_ENABLED
 });
+const { registerWebhookRoutes, processQueuedWebhookJob } = webhook;
+
+if (WEBHOOK_QUEUE_ENABLED) {
+  webhookQueueService = createWebhookQueueService({
+    repository: webhookQueueRepository,
+    workerId: safeLogValue(process.env.WEBHOOK_QUEUE_WORKER_ID || `webhook-${process.pid}`),
+    batchSize: WEBHOOK_QUEUE_BATCH_SIZE,
+    intervalMs: WEBHOOK_QUEUE_WORKER_INTERVAL_MS,
+    retryDelayMs: WEBHOOK_QUEUE_RETRY_DELAY_MS,
+    processJob: processQueuedWebhookJob
+  });
+}
 registerWebhookRoutes(app);
 
 function buildHealthPayload() {
@@ -763,6 +797,7 @@ function shutdown(signal) {
   console.log(`🛑 Nhận ${signal}, đang dừng server...`);
   stopAbandonedCartReminderWorker();
   stopEngagedFollowUpReminderWorker();
+  webhookQueueService?.stop?.();
   stopImageService();
   if (!server) process.exit(0);
 
@@ -791,6 +826,9 @@ async function startServer() {
     startSheetOutboxWorker();
     startAbandonedCartReminderWorker();
     startEngagedFollowUpReminderWorker();
+    if (WEBHOOK_QUEUE_ENABLED) {
+      webhookQueueService.start({ intervalMs: WEBHOOK_QUEUE_WORKER_INTERVAL_MS });
+    }
   });
 }
 

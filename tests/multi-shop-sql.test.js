@@ -5,7 +5,6 @@ const {
   chooseVerificationDatabaseUrl,
   createVerificationSchemaName,
   isPostgresUrl,
-  RAILWAY_DATABASE_URL_SOURCE,
   sanitizeMessage
 } = require('../scripts/verify-multi-shop-sql');
 
@@ -52,7 +51,7 @@ describe('multi-shop SQL proposal', () => {
     }
   });
 
-  it('creates the six multi-shop tables including page credentials', () => {
+  it('creates the seven multi-shop tables including page credentials and webhook queue', () => {
     const normalized = normalizeSql(readSql());
 
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shops\b/i);
@@ -61,7 +60,8 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_products\b/i);
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_assets\b/i);
     expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_page_credentials\b/i);
-    expect((normalized.match(/\bCREATE TABLE IF NOT EXISTS\b/gi) || []).length).toBe(6);
+    expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS webhook_queue\b/i);
+    expect((normalized.match(/\bCREATE TABLE IF NOT EXISTS\b/gi) || []).length).toBe(7);
   });
 
   it('defines non-empty identity fields and core status constraints', () => {
@@ -84,6 +84,10 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toContain("CHECK (storage_key <> '' OR public_url <> '')");
     expect(normalized).toContain("CHECK (credential_type IN ('fb_page_token'))");
     expect(normalized).toContain("CHECK (encrypted_value <> '')");
+    expect(normalized).toContain("CHECK (status IN ('queued', 'processing', 'done', 'failed'))");
+    expect(normalized).toContain("CHECK (attempt_count >= 0)");
+    expect(normalized).toContain("CHECK (max_attempts > 0)");
+    expect(normalized).toContain("CHECK (attempt_count <= max_attempts)");
   });
 
   it('defines the key lookup and partial uniqueness indexes', () => {
@@ -99,25 +103,28 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toMatch(/\bCREATE UNIQUE INDEX IF NOT EXISTS shop_page_credentials_active_type_uidx\b/i);
     expect(normalized).toMatch(/shop_page_credentials_active_type_uidx ON shop_page_credentials \(shop_id, page_mapping_id, credential_type\) WHERE status = 'active'/i);
     expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS shop_page_credentials_lookup_idx\b/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_queued_available_idx\b/i);
+    expect(normalized).toMatch(/webhook_queue_queued_available_idx ON webhook_queue \(tenant_id, available_at, id\) WHERE status = 'queued'/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_status_updated_idx\b/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_page_status_idx\b/i);
   });
 });
 
 describe('multi-shop SQL verifier safety', () => {
-  it('rejects DATABASE_URL outside a known Railway staging environment', () => {
+  it('ignores DATABASE_URL when an explicit verification URL is missing', () => {
     const url = 'postgres://prod:secret@example.test/prod';
     const result = chooseVerificationDatabaseUrl({
       DATABASE_URL: url
     });
 
     expect(result.ok).toBeFalse();
-    expect(result.skipped).toBeFalse();
-    expect(result.reason).toBe('database_url_requires_railway_staging');
+    expect(result.skipped).toBeTrue();
+    expect(result.reason).toBe('missing_explicit_database_url');
     expect(result.message.includes(url)).toBeFalse();
-    expect(result.message).toContain('RAILWAY_ENVIRONMENT');
-    expect(result.message).toContain('staging');
+    expect(result.message).toContain('DATABASE_URL is intentionally ignored');
   });
 
-  it('rejects DATABASE_URL in Railway production without printing the URL', () => {
+  it('does not select DATABASE_URL in Railway production without printing the URL', () => {
     const url = 'postgres://prod:secret@example.test/prod';
     const result = chooseVerificationDatabaseUrl({
       DATABASE_URL: url,
@@ -125,25 +132,25 @@ describe('multi-shop SQL verifier safety', () => {
     });
 
     expect(result.ok).toBeFalse();
-    expect(result.skipped).toBeFalse();
-    expect(result.reason).toBe('database_url_railway_production');
+    expect(result.skipped).toBeTrue();
+    expect(result.reason).toBe('missing_explicit_database_url');
     expect(result.message.includes(url)).toBeFalse();
   });
 
-  it('allows DATABASE_URL only in Railway staging', () => {
+  it('does not select DATABASE_URL in Railway staging', () => {
     const url = 'postgres://stage-user:stage-pass@example.test/stagedb';
     const result = chooseVerificationDatabaseUrl({
       DATABASE_URL: url,
       RAILWAY_ENVIRONMENT_NAME: 'staging'
     });
 
-    expect(result.ok).toBeTrue();
-    expect(result.envName).toBe('DATABASE_URL');
-    expect(result.sourceName).toBe(RAILWAY_DATABASE_URL_SOURCE);
-    expect(result.value).toBe(url);
+    expect(result.ok).toBeFalse();
+    expect(result.skipped).toBeTrue();
+    expect(result.reason).toBe('missing_explicit_database_url');
+    expect(result.message.includes(url)).toBeFalse();
   });
 
-  it('rejects invalid Railway staging DATABASE_URL without printing the URL', () => {
+  it('does not validate or print invalid DATABASE_URL when explicit URL is missing', () => {
     const url = 'not-a-postgres-url-with-secret';
     const result = chooseVerificationDatabaseUrl({
       DATABASE_URL: url,
@@ -151,8 +158,8 @@ describe('multi-shop SQL verifier safety', () => {
     });
 
     expect(result.ok).toBeFalse();
-    expect(result.skipped).toBeFalse();
-    expect(result.reason).toBe('invalid_railway_staging_database_url');
+    expect(result.skipped).toBeTrue();
+    expect(result.reason).toBe('missing_explicit_database_url');
     expect(result.message.includes(url)).toBeFalse();
   });
 
@@ -183,7 +190,7 @@ describe('multi-shop SQL verifier safety', () => {
     expect(result.value).toBe('postgresql://stage-user:stage-pass@example.test/stagedb');
   });
 
-  it('falls back to Railway staging DATABASE_URL when the staging override is unusable', () => {
+  it('rejects invalid staging override without falling back to DATABASE_URL', () => {
     const databaseUrl = 'postgres://database-user:database-pass@example.test/database';
     const invalidStagingUrl = 'railway-reference-that-is-not-a-url';
     const result = chooseVerificationDatabaseUrl({
@@ -192,10 +199,12 @@ describe('multi-shop SQL verifier safety', () => {
       RAILWAY_ENVIRONMENT: 'staging'
     });
 
-    expect(result.ok).toBeTrue();
-    expect(result.envName).toBe('DATABASE_URL');
-    expect(result.sourceName).toBe(RAILWAY_DATABASE_URL_SOURCE);
-    expect(result.value).toBe(databaseUrl);
+    expect(result.ok).toBeFalse();
+    expect(result.skipped).toBeFalse();
+    expect(result.reason).toBe('invalid_explicit_database_url');
+    expect(result.envName).toBe('CHATBOT_STAGING_DATABASE_URL');
+    expect(result.message.includes(databaseUrl)).toBeFalse();
+    expect(result.message.includes(invalidStagingUrl)).toBeFalse();
   });
 
   it('rejects an explicit URL that equals DATABASE_URL without printing the URL', () => {
