@@ -418,6 +418,35 @@ Readiness blockers before production enablement:
 - Queue production rollout remains out of scope; keep
   `WEBHOOK_QUEUE_ENABLED=false`.
 
+## Production DB Patch Checkpoint - 2026-05-15
+
+The targeted production DB patch
+`db/production-missing-multishop-tables-patch.sql` has been applied to
+production PostgreSQL. The apply output reported two table creations and five
+index creations.
+
+Post-apply count-only verification passed:
+
+- `shops`: 1 row.
+- `shop_pages`: 1 row.
+- `shop_settings`: 1 row.
+- `shop_products`: 14 rows.
+- `shop_assets`: 16 rows.
+- `shop_page_credentials`: created, 0 rows.
+- `webhook_queue`: created, 0 rows.
+
+Post-apply structure verification passed:
+
+- `shop_page_credentials` indexes and constraints exist.
+- `webhook_queue` indexes and constraints exist.
+
+No deploy, production environment change, authenticated production smoke, or
+production `/data` touch was performed during this checkpoint. No additional
+production writes should be run as part of post-apply cleanup.
+
+Next step: deploy the latest reviewed code with dangerous flags still off, or
+prepare the credential/environment gate separately.
+
 ## Safety Rules
 
 - Do not write production PostgreSQL before a fresh backup exists and is
