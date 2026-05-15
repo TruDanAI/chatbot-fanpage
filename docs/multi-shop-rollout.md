@@ -245,6 +245,149 @@ Expected post-rollout product checks:
 - There is no active duplicate smoke code.
 - Product CRUD audit delta matches the approved smoke steps.
 
+## Production Readiness Checkpoint - 2026-05-15
+
+This checkpoint records local rollout-readiness review plus read-only
+production metadata and public endpoint checks. It is not approval to deploy,
+change production environment variables, write production PostgreSQL, touch
+production `/data`, or run authenticated production smoke. No deploy, env
+change, production DB write, production `/data` touch, or authenticated smoke
+was performed during this checkpoint.
+
+Local verification from this checkpoint:
+
+- `git status --short --untracked-files=all`: clean before this doc update.
+- `git rev-list --left-right --count origin/main...HEAD`: `0 0`.
+- `npm test`: `504 passed, 0 failed`.
+- `npm audit --omit=dev`: `found 0 vulnerabilities`.
+
+Read-only production metadata verified for this checkpoint:
+
+- Railway latest production deployment:
+  `bc1bc015-6205-4c3d-9c28-0e50dc988da8`.
+- Deployment status: `SUCCESS`.
+- Deployment commit: `fb415af`.
+- Deployment message:
+  `Deploy fb415af sequential webhook event processing hotfix`.
+- Deployment created at: `2026-05-14T14:43:45.954Z`.
+- Public `GET /healthz` passed earlier:
+  `ok=true`, `storage.adapter=postgres`, `storage.ready=true`,
+  `messenger.dryRun=false`.
+- Public `GET /admin/login` passed earlier:
+  HTTP `200`, title `Admin Login`, form present `true`.
+
+Origin `main` contains newer safety commits through `0b45f6d` that are not
+deployed to production yet:
+
+- `0b45f6d Add per-shop health admin API phase 1`
+- `d47c3e2 Add durable webhook queue phase 1`
+- `29f03d7 Add feature flag facade for runtime rule toggles`
+- `179953e Add atomic MID idempotency`
+- `117e745 Add per-page credential resolution`
+
+Schema required before enabling DB-backed multi-shop in production:
+
+- `db/multi-shop-proposal.sql` applied successfully and idempotently:
+  `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
+  `shop_page_credentials`, and `webhook_queue`, plus the expected indexes.
+- `db/admin-auth-rbac-audit-proposal.sql` present and applied if production
+  does not already have the audit schema.
+- Existing storage tables remain intact; do not reset or rewrite production
+  runtime data.
+- `adult-shop` seeded from the current production catalog/config into
+  `shops`, `shop_pages`, `shop_settings`, `shop_products`, and `shop_assets`.
+- Encrypted active `shop_page_credentials` seeded only after the secret
+  handling gate is approved. Do not print token plaintext, encrypted values,
+  or the master key.
+- Count-only verification after schema/seed for:
+  `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
+  `shop_page_credentials`, `webhook_queue`, `admin_roles`, `admin_users`,
+  `admin_user_roles`, and `admin_audit_log`.
+
+Environment required or expected before enabling DB-backed multi-shop:
+
+- Existing production storage remains `STORAGE_ADAPTER=postgres` with
+  `ALLOW_PRODUCTION_DB_WRITES=true`.
+- `ADMIN_AUDIT_LOG_ENABLED=true` remains available before product/admin writes.
+- `CREDENTIAL_MASTER_KEY` is set only after separate environment approval; do
+  not rotate it without a credential re-encryption plan.
+- `MULTI_SHOP_DB_CONFIG_ENABLED=true` is set only after schema, seed,
+  credential, deploy, and rollback gates are approved.
+- `RUNTIME_ALLOWED_SHOP_IDS` should initially restrict rollout to the intended
+  production shop, for example `adult-shop`.
+- `RUNTIME_ALLOWED_PAGE_IDS` is optional and only a post-resolution transition
+  override; it does not allow unknown pages to fall back.
+- `WEBHOOK_QUEUE_ENABLED=false` remains the production default until a separate
+  queue rollout approves worker behavior, retry visibility, and rollback.
+- `SESSION_SECRET`, `ADMIN_PUBLIC_BASE_URL`, `ADMIN_SESSION_COOKIE_NAME`,
+  `ADMIN_EXPORT_TOKEN`, `ADMIN_ROLES`, `ADMIN_PRINCIPAL_ID`, and
+  `ADMIN_PRINCIPAL_DISPLAY_NAME` should be verified by metadata only; do not
+  print secret values.
+
+Safe smoke checks that do not require authenticated admin access:
+
+- Railway deployment metadata was verified read-only in this checkpoint; future
+  re-checks should report commit/status only.
+- Public `GET /healthz` was checked earlier in this checkpoint; future
+  re-checks should report only `ok`, `storage.adapter`, `storage.ready`, and
+  `messenger.dryRun`.
+- Public `GET /admin/login` was checked earlier in this checkpoint; future
+  re-checks should report HTTP status, title, and form presence only.
+
+Smoke checks that need separate approval:
+
+- Any authenticated admin route, including `/admin/dashboard`,
+  `/admin/audit`, `/admin/api/shops`, `/admin/shops/:shopId`, and
+  `/admin/api/shops/:shopId/health`, because audit logging can write
+  `admin_audit_log` rows.
+- Any product create/update/status/archive smoke, because it writes business
+  data and audit rows.
+- Any production internal-notes smoke, because reads write audit rows and POST
+  writes business data.
+- Any live webhook/Messenger smoke, because it can write runtime state and may
+  send customer-visible replies.
+- Any queue rollout smoke with `WEBHOOK_QUEUE_ENABLED=true`, because it writes
+  `webhook_queue` rows and changes webhook processing behavior.
+
+Rollback plan:
+
+- If DB-backed runtime is unsafe, disable `MULTI_SHOP_DB_CONFIG_ENABLED` after
+  production environment approval, restart or redeploy as needed, and keep the
+  file-backed config path available.
+- If runtime admission blocks the intended shop/page, adjust
+  `RUNTIME_ALLOWED_SHOP_IDS` or `RUNTIME_ALLOWED_PAGE_IDS` only after
+  environment approval; prefer shop IDs as the primary control.
+- If credential resolution fails, disable DB-backed runtime rather than falling
+  back to another page token. Do not rotate `CREDENTIAL_MASTER_KEY` without a
+  re-encryption plan.
+- If queue behavior is unsafe after a separately approved queue rollout,
+  disable `WEBHOOK_QUEUE_ENABLED` after environment approval and leave additive
+  queue rows in place.
+- If product write smoke is unsafe, stop the smoke immediately, redeploy the
+  previous known-good commit if needed, and do not delete product or audit rows.
+- Leave additive tables in place unless a destructive cleanup has a fresh
+  backup, reviewed rollback plan, and explicit approval.
+- Archive only approved smoke products when cleanup is in scope.
+
+Readiness blockers before production enablement:
+
+- Latest Railway production deployment, public `/healthz`, and public
+  `/admin/login` have been verified read-only, but this does not approve or
+  replace any deployment, backup, schema, seed, env, authenticated smoke, or
+  production write gate.
+- Origin `main` contains newer safety commits through `0b45f6d` that are not
+  deployed to production yet.
+- A fresh production PostgreSQL backup has not been created for this rollout.
+- Production multi-shop schema and credential schema have not been applied in
+  this checkpoint.
+- `adult-shop` production seed and encrypted page credential seed are not yet
+  approved or verified.
+- Production `CREDENTIAL_MASTER_KEY` and `MULTI_SHOP_DB_CONFIG_ENABLED` are
+  not approved for change.
+- Authenticated admin/shop/product smokes are not approved for this checkpoint.
+- Queue production rollout remains out of scope; keep
+  `WEBHOOK_QUEUE_ENABLED=false`.
+
 ## Safety Rules
 
 - Do not write production PostgreSQL before a fresh backup exists and is
