@@ -9,9 +9,15 @@ const {
 } = require('../scripts/verify-multi-shop-sql');
 
 const SQL_PATH = path.join(__dirname, '..', 'db', 'multi-shop-proposal.sql');
+const PRODUCTION_MISSING_TABLES_PATCH_PATH = path.join(
+  __dirname,
+  '..',
+  'db',
+  'production-missing-multishop-tables-patch.sql'
+);
 
-function readSql() {
-  return fs.readFileSync(SQL_PATH, 'utf8');
+function readSql(filePath = SQL_PATH) {
+  return fs.readFileSync(filePath, 'utf8');
 }
 
 function stripSqlComments(sql) {
@@ -84,6 +90,8 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toContain("CHECK (storage_key <> '' OR public_url <> '')");
     expect(normalized).toContain("CHECK (credential_type IN ('fb_page_token'))");
     expect(normalized).toContain("CHECK (encrypted_value <> '')");
+    expect(normalized).toContain('key_version INTEGER NOT NULL DEFAULT 1');
+    expect(normalized).toContain('CHECK (key_version > 0)');
     expect(normalized).toContain("CHECK (status IN ('queued', 'processing', 'done', 'failed'))");
     expect(normalized).toContain("CHECK (attempt_count >= 0)");
     expect(normalized).toContain("CHECK (max_attempts > 0)");
@@ -107,6 +115,72 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toMatch(/webhook_queue_queued_available_idx ON webhook_queue \(tenant_id, available_at, id\) WHERE status = 'queued'/i);
     expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_status_updated_idx\b/i);
     expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_page_status_idx\b/i);
+  });
+});
+
+describe('production missing multi-shop tables SQL patch', () => {
+  function readPatchSql() {
+    return readSql(PRODUCTION_MISSING_TABLES_PATCH_PATH);
+  }
+
+  it('exists in db/production-missing-multishop-tables-patch.sql', () => {
+    expect(fs.existsSync(PRODUCTION_MISSING_TABLES_PATCH_PATH)).toBeTrue();
+  });
+
+  it('does not contain destructive SQL', () => {
+    const normalized = normalizeSql(stripSqlComments(readPatchSql()));
+    const destructive = /\b(?:DROP|TRUNCATE|DELETE|UPDATE|INSERT|ALTER)\b/i;
+
+    expect(destructive.test(normalized)).toBeFalse();
+  });
+
+  it('creates exactly the two production-missing tables', () => {
+    const normalized = normalizeSql(readPatchSql());
+    const tableCreates = [...normalized.matchAll(/\bCREATE TABLE IF NOT EXISTS ([a-z_]+)\b/gi)]
+      .map(match => match[1])
+      .sort();
+
+    expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS shop_page_credentials\b/i);
+    expect(normalized).toMatch(/\bCREATE TABLE IF NOT EXISTS webhook_queue\b/i);
+    expect(tableCreates).toEqual(['shop_page_credentials', 'webhook_queue']);
+  });
+
+  it('does not create or alter the five existing production multi-shop tables', () => {
+    const sql = stripSqlComments(readPatchSql());
+    const existingTables = ['shops', 'shop_pages', 'shop_settings', 'shop_products', 'shop_assets'];
+
+    for (const tableName of existingTables) {
+      expect(new RegExp(`\\bCREATE TABLE IF NOT EXISTS ${tableName}\\b`, 'i').test(sql)).toBeFalse();
+      expect(new RegExp(`\\bCREATE (?:UNIQUE )?INDEX IF NOT EXISTS [a-z_]+\\s+ON ${tableName}\\b`, 'i').test(sql)).toBeFalse();
+      expect(new RegExp(`\\bALTER TABLE ${tableName}\\b`, 'i').test(sql)).toBeFalse();
+    }
+  });
+
+  it('defines the expected patch indexes only on the two missing tables', () => {
+    const normalized = normalizeSql(readPatchSql());
+
+    expect(normalized).toMatch(/\bCREATE UNIQUE INDEX IF NOT EXISTS shop_page_credentials_active_type_uidx\b/i);
+    expect(normalized).toMatch(/shop_page_credentials_active_type_uidx ON shop_page_credentials \(shop_id, page_mapping_id, credential_type\) WHERE status = 'active'/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS shop_page_credentials_lookup_idx\b/i);
+    expect(normalized).toMatch(/shop_page_credentials_lookup_idx ON shop_page_credentials \(page_mapping_id, credential_type, status\)/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_queued_available_idx\b/i);
+    expect(normalized).toMatch(/webhook_queue_queued_available_idx ON webhook_queue \(tenant_id, available_at, id\) WHERE status = 'queued'/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_status_updated_idx\b/i);
+    expect(normalized).toMatch(/webhook_queue_status_updated_idx ON webhook_queue \(tenant_id, status, updated_at, id\)/i);
+    expect(normalized).toMatch(/\bCREATE INDEX IF NOT EXISTS webhook_queue_page_status_idx\b/i);
+    expect(normalized).toMatch(/webhook_queue_page_status_idx ON webhook_queue \(tenant_id, page_id, status, created_at\)/i);
+    expect((normalized.match(/\bCREATE (?:UNIQUE )?INDEX IF NOT EXISTS\b/gi) || []).length).toBe(5);
+  });
+
+  it('keeps credential and queue status CHECK constraints', () => {
+    const normalized = normalizeSql(readPatchSql());
+
+    expect(normalized).toContain("CHECK (status IN ('active', 'paused', 'archived'))");
+    expect(normalized).toContain("CHECK (status IN ('queued', 'processing', 'done', 'failed'))");
+    expect(normalized).toContain("CHECK (credential_type IN ('fb_page_token'))");
+    expect(normalized).toContain('key_version INTEGER NOT NULL DEFAULT 1');
+    expect(normalized).toContain('CHECK (key_version > 0)');
+    expect(normalized).toContain("CHECK (attempt_count <= max_attempts)");
   });
 });
 

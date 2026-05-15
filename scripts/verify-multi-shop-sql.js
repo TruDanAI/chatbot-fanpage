@@ -87,6 +87,7 @@ const EXPECTED_TABLES = Object.freeze({
       credential_type: { dataType: 'text', nullable: false },
       encrypted_value: { dataType: 'text', nullable: false },
       encryption_key_id: { dataType: 'text', nullable: false },
+      key_version: { dataType: 'integer', nullable: false },
       status: { dataType: 'text', nullable: false },
       metadata_json: { dataType: 'jsonb', nullable: false },
       created_at: { dataType: 'timestamp with time zone', nullable: false },
@@ -393,6 +394,7 @@ async function verifyConstraints(client, schemaName) {
   assertCondition(credentialChecks.some(def => def.includes('id') && def.includes('<>')), 'Missing shop_page_credentials id non-empty CHECK constraint.');
   assertCondition(credentialChecks.some(def => def.includes('credential_type') && def.includes('fb_page_token')), 'Missing shop_page_credentials credential_type CHECK constraint.');
   assertCondition(credentialChecks.some(def => def.includes('encrypted_value') && def.includes('<>')), 'Missing shop_page_credentials encrypted_value non-empty CHECK constraint.');
+  assertCondition(credentialChecks.some(def => def.includes('key_version') && def.includes('>') && def.includes('0')), 'Missing shop_page_credentials key_version CHECK constraint.');
   assertCondition(credentialChecks.some(def => def.includes('status') && def.includes('active') && def.includes('paused') && def.includes('archived')), 'Missing shop_page_credentials status CHECK constraint.');
 
   const queueChecks = (byTable.get('webhook_queue') || []).filter(item => item.type === 'c').map(item => item.definition);

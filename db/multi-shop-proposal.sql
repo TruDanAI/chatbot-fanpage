@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS shop_page_credentials (
   credential_type TEXT NOT NULL DEFAULT 'fb_page_token',
   encrypted_value TEXT NOT NULL,
   encryption_key_id TEXT NOT NULL DEFAULT 'default',
+  key_version INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'active',
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -110,6 +111,7 @@ CREATE TABLE IF NOT EXISTS shop_page_credentials (
   CHECK (credential_type IN ('fb_page_token')),
   CHECK (encrypted_value <> ''),
   CHECK (encryption_key_id <> ''),
+  CHECK (key_version > 0),
   CHECK (status IN ('active', 'paused', 'archived')),
   CHECK (jsonb_typeof(metadata_json) = 'object')
 );

@@ -200,41 +200,63 @@ production environment variables, or write production data.
 Production rollout needs separate approval for each production-impacting gate.
 Approval for one gate does not imply approval for later gates.
 
+Production currently has a partial multi-shop schema from the verified backup
+`20260515-162718-multi-shop-predeploy`:
+
+- `shops`: 1 row.
+- `shop_pages`: 1 row.
+- `shop_settings`: 1 row.
+- `shop_products`: 14 rows.
+- `shop_assets`: 16 rows.
+- `shop_page_credentials`: missing.
+- `webhook_queue`: missing.
+
+Because production already has the first five multi-shop tables, the preferred
+schema path is the targeted additive patch
+`db/production-missing-multishop-tables-patch.sql`. Do not re-apply the full
+`db/multi-shop-proposal.sql` to production as the default path for this state.
+Any production DB write, including this targeted patch, still needs fresh
+approval in the same session before it is run.
+
 1. Re-check git state, latest production deployment, and public `/healthz`.
 2. Create a fresh production PostgreSQL backup outside this repository.
 3. Verify backup SHA256 and count-only summaries.
-4. Review `db/multi-shop-proposal.sql`; confirm it is additive and
+4. Confirm whether production still has the partial multi-shop schema above.
+5. If only `shop_page_credentials` and `webhook_queue` are missing, review and
+   apply `db/production-missing-multishop-tables-patch.sql` after explicit
+   production DB write approval.
+6. Review `db/multi-shop-proposal.sql` only as the full baseline reference; do
+   not use it as the preferred production apply path while the first five
+   tables already exist.
+7. Review `db/admin-auth-rbac-audit-proposal.sql`; confirm it is additive and
    idempotent.
-5. Apply the multi-shop schema to production PostgreSQL.
-6. Review `db/admin-auth-rbac-audit-proposal.sql`; confirm it is additive and
-   idempotent.
-7. Apply the admin audit schema to production PostgreSQL if production does
+8. Apply the admin audit schema to production PostgreSQL if production does
    not already have it.
-8. Seed `adult-shop` into production PostgreSQL from the current production
+9. Seed `adult-shop` into production PostgreSQL from the current production
    file-backed catalog/config.
-9. Seed encrypted `shop_page_credentials` only after separate production secret
+10. Seed encrypted `shop_page_credentials` only after separate production secret
    handling/env approval. Do not print token plaintext, encrypted values, or
    `CREDENTIAL_MASTER_KEY`.
-10. Verify count-only table state:
+11. Verify count-only table state:
    `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
    `shop_page_credentials`, `webhook_queue`, `admin_roles`, `admin_users`,
    `admin_user_roles`, and `admin_audit_log`.
-11. Deploy the reviewed runtime/dashboard commit only after deploy approval.
-12. Set `CREDENTIAL_MASTER_KEY` only after separate production environment
+12. Deploy the reviewed runtime/dashboard commit only after deploy approval.
+13. Set `CREDENTIAL_MASTER_KEY` only after separate production environment
     approval.
-13. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
+14. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
     environment approval.
-14. Keep `WEBHOOK_QUEUE_ENABLED=false` until a separate queue rollout approval
+15. Keep `WEBHOOK_QUEUE_ENABLED=false` until a separate queue rollout approval
     covers worker behavior, retry visibility, rollback, and production DB
     write expectations.
-15. Smoke public `/healthz` without auth.
-16. Smoke admin shops read routes only after approval, because authenticated
+16. Smoke public `/healthz` without auth.
+17. Smoke admin shops read routes only after approval, because authenticated
     admin reads can write audit rows.
-17. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
+18. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
     after explicit production DB write approval.
-18. Archive the smoke product as cleanup and verify there is no duplicate
+19. Archive the smoke product as cleanup and verify there is no duplicate
     active smoke code.
-19. Verify count-only audit delta and product counts. Do not print raw audit,
+20. Verify count-only audit delta and product counts. Do not print raw audit,
     product, customer, order, or message rows.
 
 Expected post-rollout product checks:
@@ -287,9 +309,17 @@ deployed to production yet:
 
 Schema required before enabling DB-backed multi-shop in production:
 
-- `db/multi-shop-proposal.sql` applied successfully and idempotently:
-  `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
-  `shop_page_credentials`, and `webhook_queue`, plus the expected indexes.
+- Production currently has a partial multi-shop schema: `shops`,
+  `shop_pages`, `shop_settings`, `shop_products`, and `shop_assets` exist with
+  the count-only state recorded above, while `shop_page_credentials` and
+  `webhook_queue` are missing.
+- `db/production-missing-multishop-tables-patch.sql` is the preferred targeted
+  production patch for this partial state. It creates only
+  `shop_page_credentials` and `webhook_queue`, plus their expected indexes and
+  CHECK constraints.
+- `db/multi-shop-proposal.sql` remains the full baseline reference and staging
+  proposal. Applying the full file to production is no longer the preferred
+  path while production already has the first five multi-shop tables.
 - `db/admin-auth-rbac-audit-proposal.sql` present and applied if production
   does not already have the audit schema.
 - Existing storage tables remain intact; do not reset or rewrite production
