@@ -175,22 +175,28 @@ without an audit record.
 This section is an engineering roadmap, not approval to deploy, change
 production environment variables, or write production data.
 
-1. Per-page credential resolution: local phase 1 done.
-   store encrypted page credentials by shop/page and make Messenger sends select
-   the resolved page token. Keep `FB_PAGE_TOKEN` only as the legacy file-backed
-   fallback.
-2. Atomic message idempotency: local phase 1 done.
+1. Per-page credential resolution: phase 1 deployed in
+   `67efcbef921f5bf326f4e78120ea0c1d70c0295c` but gated.
+   It stores encrypted page credentials by shop/page and makes Messenger sends
+   select the resolved page token. Keep `FB_PAGE_TOKEN` only as the legacy
+   file-backed fallback.
+2. Atomic message idempotency: phase 1 deployed in
+   `67efcbef921f5bf326f4e78120ea0c1d70c0295c`.
    Runtime awaits `tryMarkMid()` before processing. PostgreSQL uses
    `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage preserves the
    previous behavior behind the same interface.
-3. Feature flag facade: local phase 1 done.
+3. Feature flag facade: phase 1 deployed in
+   `67efcbef921f5bf326f4e78120ea0c1d70c0295c`.
    Runtime bot-mode helpers now use the facade bridge and keep existing
    defaults/overrides before any schema migration.
-4. Durable webhook queue: local phase 1 done.
+4. Durable webhook queue: phase 1 deployed in
+   `67efcbef921f5bf326f4e78120ea0c1d70c0295c` but disabled.
    PostgreSQL queue rows, bounded retry, `FOR UPDATE SKIP LOCKED`, and the
-   opt-in `WEBHOOK_QUEUE_ENABLED=false` default are implemented locally. Redis
-   is not needed for the current 5-20 shop target.
-5. Per-shop health: local phase 1 done.
+   opt-in `WEBHOOK_QUEUE_ENABLED=false` default are implemented. Redis is not
+   needed for the current 5-20 shop target.
+5. Per-shop health: phase 1 deployed in
+   `67efcbef921f5bf326f4e78120ea0c1d70c0295c` but not authenticated-smoked in
+   production.
    `GET /admin/api/shops/:shopId/health` exposes last webhook, last successful
    send, send error rate, active handoffs, queue counts, and credential status
    without raw tokens, raw page IDs, customer rows, messages, or orders.
@@ -444,8 +450,45 @@ No deploy, production environment change, authenticated production smoke, or
 production `/data` touch was performed during this checkpoint. No additional
 production writes should be run as part of post-apply cleanup.
 
-Next step: deploy the latest reviewed code with dangerous flags still off, or
-prepare the credential/environment gate separately.
+Next step completed by the production deploy checkpoint below. Remaining
+credential, environment, authenticated smoke, and flag-enable gates still need
+separate approval.
+
+## Production Deploy Checkpoint - 2026-05-15
+
+Production was deployed with the safety foundation present and dangerous flags
+still off.
+
+- Production deployed commit:
+  `67efcbef921f5bf326f4e78120ea0c1d70c0295c`.
+- Railway deployment:
+  `5fe6036a-d728-4271-9f17-0572e6d79c8f`.
+- Deployment status: `SUCCESS`.
+- Deployment created at: `2026-05-15T10:23:06.761Z`.
+- Deployment message: `Deploy 67efcbe safety foundation flags off`.
+- The first `railway up` attempt timed out and created no deployment; the
+  retry succeeded.
+
+Post-deploy public checks passed:
+
+- Public `GET /healthz`: HTTP `200`, `ok=true`, `shop=adult-shop`,
+  `products=13`, `storage.adapter=postgres`, `storage.ready=true`,
+  `messenger.dryRun=false`.
+- Public `GET /admin/login`: HTTP `200`, `Admin Login` present, form action
+  `/admin/login` present, password input `adminToken` present.
+
+Safety boundary for this checkpoint:
+
+- No production environment changes.
+- No DB schema, data, or seed commands.
+- No production `/data` access.
+- No authenticated production smoke.
+- No flag changes.
+- No credential key changes.
+
+Next step: treat the code deploy as complete, but keep DB-backed multi-shop,
+credential seeding, queue rollout, environment changes, authenticated admin
+smoke, and product CRUD smoke behind separate approvals.
 
 ## Safety Rules
 

@@ -35,14 +35,18 @@ These rules apply to every future phase:
 
 ## Current baseline
 
-Last verified baseline from May 12, 2026:
+Last verified baseline updated May 15, 2026:
 
 - Production Railway project: `graceful-harmony`
 - Production service: `chatbot-fanpage`
 - Production Postgres service: `Postgres-TQuc`
 - Production storage: PostgreSQL
-- Production runtime health: `ok=true`, `storage.adapter=postgres`,
-  `storage.ready=true`, `messenger.dryRun=false`
+- Production runtime health after the latest deploy: HTTP `200`, `ok=true`,
+  `shop=adult-shop`, `products=13`, `storage.adapter=postgres`,
+  `storage.ready=true`, `messenger.dryRun=false`.
+- Production public admin login after the latest deploy: HTTP `200`,
+  `Admin Login` present, form action `/admin/login` present, password input
+  `adminToken` present.
 - Production admin audit schema: applied.
 - Production admin audit logging: `ADMIN_AUDIT_LOG_ENABLED=true`.
 - Latest production admin audit count after approved login/session smoke and
@@ -70,12 +74,21 @@ Last verified baseline from May 12, 2026:
   200, visible smoke note, correct form visibility for the current
   Bearer/admin role, and `internal_notes` remained `1 -> 1`.
 - Latest verified Railway deployment:
-  `a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS` at commit
-  `fae7c7f Fix user detail internal notes UI contract`
+  `5fe6036a-d728-4271-9f17-0572e6d79c8f SUCCESS`, created
+  `2026-05-15T10:23:06.761Z`, at commit
+  `67efcbef921f5bf326f4e78120ea0c1d70c0295c`.
+- Latest Railway deploy message:
+  `Deploy 67efcbe safety foundation flags off`.
+- The first `railway up` attempt timed out and created no deployment; retry
+  succeeded.
 - Latest pushed/code commit:
-  `d47c3e2 Add durable webhook queue phase 1`
+  `67efcbe Update rollout checkpoint after production DB patch`.
 - Latest git state: must be re-checked before production work. Per-shop health
-  phase 1 is local-only until a separate commit/push is approved.
+  phase 1 code is included in the latest production deployment, but no
+  authenticated production smoke was run for it.
+- Latest deploy safety boundary: no production environment changes, no DB
+  schema/data/seed commands, no production `/data` access, no authenticated
+  smoke, no flag changes, and no credential key changes.
 - Latest production internal_notes schema apply:
   `db/internal-notes-proposal.sql` has been applied to production PostgreSQL.
 - Backup used before internal_notes schema apply/read smoke:
@@ -226,8 +239,8 @@ Last verified baseline from May 12, 2026:
   safe SQL verifier exists via `npm run verify:internal-notes-sql`;
   live local PostgreSQL SQL verification passed in an isolated schema using
   `CHATBOT_TEST_DATABASE_URL`;
-  create service exists local-only in `core/admin/internal-notes.js`;
-  read/list model exists local-only in `core/admin/internal-notes.js`;
+  create service exists in `core/admin/internal-notes.js`;
+  read/list model exists in `core/admin/internal-notes.js`;
   `GET /admin/api/internal-notes` read API is implemented and deployed;
   `POST /admin/api/internal-notes` create API is implemented and deployed;
   production `internal_notes` schema is applied and verified;
@@ -291,8 +304,11 @@ Status as of branch `feature/multi-shop-dashboard` at commit
 - Local checks before the commit passed: `node --check`, `npm test`
   (`422 passed`), `npm audit --omit=dev` (`0 vulnerabilities`), and
   `git diff --check`.
-- Production has not been deployed, changed, written, or smoked for this
-  multi-shop branch.
+- Production has since deployed commit
+  `67efcbef921f5bf326f4e78120ea0c1d70c0295c` with safety foundation flags off.
+  That deploy made no production environment changes, ran no DB schema, data,
+  or seed commands, did not access production `/data`, ran no authenticated
+  smoke, changed no flags, and changed no credential keys.
 
 Production rollout for this MVP must follow `docs/multi-shop-rollout.md`.
 
@@ -614,9 +630,12 @@ Avoid initially:
 ### Phase 5: multi-tenant SaaS foundation
 
 Status: multi-shop MVP is staging-verified on
-`feature/multi-shop-dashboard`; production rollout is pending backup,
-approval, schema apply, seed, deploy, env enable, and approved smoke. The
-current rollout record is `docs/multi-shop-rollout.md`.
+`feature/multi-shop-dashboard`; production has deployed commit
+`67efcbef921f5bf326f4e78120ea0c1d70c0295c` with safety foundation flags off.
+Remaining rollout gates still need separate approval for backup, any further
+schema/data/seed work, credential seed, env enable, authenticated smoke, and
+product CRUD smoke. The current rollout record is
+`docs/multi-shop-rollout.md`.
 
 Goal: support multiple pages/shops cleanly without increasing blast radius for
 the existing `adult-shop` runtime.
@@ -627,21 +646,25 @@ Current safety foundation:
   for unsupported DB modes.
 - Runtime admission can be restricted with `RUNTIME_ALLOWED_SHOP_IDS` and
   `RUNTIME_ALLOWED_PAGE_IDS`.
-- Per-page credential resolution phase 1 is implemented locally: encrypted
-  `shop_page_credentials`, `CREDENTIAL_MASTER_KEY` crypto service, DB runtime
-  page-token selection, missing credential fail-closed behavior, and legacy
-  file-backed `FB_PAGE_TOKEN` fallback.
-- Atomic message idempotency phase 1 is implemented locally: storage exposes
+- Per-page credential resolution phase 1 is included in the latest production
+  deploy but remains gated by DB-backed runtime, credential seed, and
+  `CREDENTIAL_MASTER_KEY`: encrypted `shop_page_credentials`,
+  `CREDENTIAL_MASTER_KEY` crypto service, DB runtime page-token selection,
+  missing credential fail-closed behavior, and legacy file-backed
+  `FB_PAGE_TOKEN` fallback.
+- Atomic message idempotency phase 1 is included in the latest production
+  deploy: storage exposes
   `tryMarkMid()`, PostgreSQL marks message IDs with
   `INSERT ... ON CONFLICT DO NOTHING RETURNING`, duplicate MIDs skip the
   webhook event, and MID storage errors fail closed without sending a customer
   reply.
-- Feature flag facade phase 1 is implemented locally:
+- Feature flag facade phase 1 is included in the latest production deploy:
   `core/shops/feature-flags.js` provides `getFeatureFlag()` and
   `getRuleToggle()` so runtime bot-mode decisions use a single bridge for
   rule toggles and legacy `botMode` options. No schema migration, plan billing,
   or adult-shop behavior change was added in this phase.
-- Durable webhook queue phase 1 is implemented locally:
+- Durable webhook queue phase 1 is included in the latest production deploy,
+  but queue rollout remains disabled:
   `db/multi-shop-proposal.sql` defines additive/idempotent `webhook_queue`
   rows with `queued`, `processing`, `done`, and `failed` states,
   `payload_json`/`event_json`, bounded attempts, availability timestamps, lock
@@ -649,7 +672,8 @@ Current safety foundation:
   provides enqueue, `FOR UPDATE SKIP LOCKED` claim, mark-done, and bounded
   retry/fail behavior. `WEBHOOK_QUEUE_ENABLED=false` keeps the current webhook
   path unchanged by default.
-- Per-shop health phase 1 is implemented locally:
+- Per-shop health phase 1 is included in the latest production deploy but has
+  not had authenticated production smoke:
   `GET /admin/api/shops/:shopId/health` uses existing admin auth/RBAC and the
   read-only dashboard reader to return shop status, page mapping status counts,
   last webhook timestamp, last successful bot send timestamp when available,
@@ -664,21 +688,23 @@ Current safety foundation:
 
 Multi-shop safety track before shop #2:
 
-1. Per-page credential resolution. Local phase 1 done: add encrypted shop/page credentials and make
-   Messenger sends use the resolved page token; keep `FB_PAGE_TOKEN` as the
-   legacy file-backed fallback.
-2. Atomic message idempotency. Local phase 1 done: runtime now awaits
-   `tryMarkMid()` before processing; PostgreSQL uses
+1. Per-page credential resolution. Phase 1 is deployed in 67efcbe but gated:
+   add encrypted shop/page credentials and make Messenger sends use the
+   resolved page token; keep `FB_PAGE_TOKEN` as the legacy file-backed
+   fallback.
+2. Atomic message idempotency. Phase 1 is deployed in 67efcbe: runtime now
+   awaits `tryMarkMid()` before processing; PostgreSQL uses
    `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage preserves the
    previous in-memory dedupe behavior behind the same interface.
-3. Feature flag facade. Local phase 1 done: runtime bot-mode helpers use
-   `getFeatureFlag()`/`getRuleToggle()` bridge defaults and overrides before
-   any schema migration.
-4. Durable webhook queue. Local phase 1 done: PostgreSQL queue rows use
-   bounded retry and `FOR UPDATE SKIP LOCKED`; runtime integration is opt-in
-   behind `WEBHOOK_QUEUE_ENABLED=false`.
-5. Per-shop health. Local phase 1 done: show last webhook, last successful
-   send, send error rate, active handoffs, queue counts, and credential status
+3. Feature flag facade. Phase 1 is deployed in 67efcbe: runtime bot-mode
+   helpers use `getFeatureFlag()`/`getRuleToggle()` bridge defaults and
+   overrides before any schema migration.
+4. Durable webhook queue. Phase 1 is deployed in 67efcbe but disabled:
+   PostgreSQL queue rows use bounded retry and `FOR UPDATE SKIP LOCKED`;
+   runtime integration is opt-in behind `WEBHOOK_QUEUE_ENABLED=false`.
+5. Per-shop health. Phase 1 is deployed in 67efcbe but not
+   authenticated-smoked in production: show last webhook, last successful send,
+   send error rate, active handoffs, queue counts, and credential status
    without raw secrets, raw page IDs, or customer data.
 
 Later SaaS/multi-tenant direction:
