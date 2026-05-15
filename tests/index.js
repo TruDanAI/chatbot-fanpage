@@ -17,6 +17,7 @@ require('./feature-flags.test');
 require('./db-shop-config.test');
 require('./page-credentials.test');
 require('./page-credential-seed-script.test');
+require('./seed-test-shop-canary.test');
 require('./migration-plan.test');
 require('./admin-auth.test');
 require('./admin-internal-notes.test');
