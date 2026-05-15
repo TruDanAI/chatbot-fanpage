@@ -40,6 +40,25 @@ function isMissingMultiShopSchemaError(err) {
   return err && ['42P01', '42703'].includes(String(err.code || ''));
 }
 
+function createStatusSummary(rows = [], statuses = []) {
+  const summary = { total: 0, byStatus: {} };
+  for (const status of statuses) summary.byStatus[status] = 0;
+  for (const row of rows || []) {
+    const status = String(row.status || 'unknown').trim() || 'unknown';
+    const total = Number(row.total || 0);
+    summary.total += total;
+    summary.byStatus[status] = (summary.byStatus[status] || 0) + total;
+  }
+  return summary;
+}
+
+function createUnavailableSection(reason = 'schema_not_ready') {
+  return {
+    available: false,
+    reason
+  };
+}
+
 function createPageMeta({ page = 1, limit = 25, offset = 0, total = 0 } = {}) {
   const safeTotal = Number(total || 0);
   const safeLimit = Number(limit || 1);
@@ -81,6 +100,23 @@ function createDashboardRepository({
         summary: {},
         rows: []
       },
+      message
+    };
+  }
+
+  function createEmptyShopHealthModel(message = 'Multi-shop schema is not ready.') {
+    return {
+      schemaReady: false,
+      shop: null,
+      pageMappings: {
+        available: false,
+        total: 0,
+        byStatus: {},
+        message
+      },
+      activity: createUnavailableSection('multi_shop_schema_not_ready'),
+      queue: createUnavailableSection('multi_shop_schema_not_ready'),
+      credentials: createUnavailableSection('multi_shop_schema_not_ready'),
       message
     };
   }
@@ -235,6 +271,181 @@ function createDashboardRepository({
     } catch (err) {
       if (!isMissingMultiShopSchemaError(err)) throw err;
       return createEmptyShopDetailModel();
+    }
+  }
+
+  async function getShopHealth(client, shopId) {
+    const normalizedShopId = String(shopId || '').trim().slice(0, 160);
+    if (!normalizedShopId) {
+      return {
+        schemaReady: true,
+        shop: null,
+        pageMappings: {
+          available: true,
+          total: 0,
+          byStatus: {}
+        },
+        activity: createUnavailableSection('shop_not_found'),
+        queue: createUnavailableSection('shop_not_found'),
+        credentials: createUnavailableSection('shop_not_found')
+      };
+    }
+
+    try {
+      const shopResult = await client.query(`
+        SELECT id, slug, name, status, updated_at
+        FROM shops
+        WHERE id = $1 OR slug = $1
+        ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
+        LIMIT 1
+      `, [normalizedShopId]);
+      const shop = shopResult.rows[0] || null;
+      if (!shop) {
+        return {
+          schemaReady: true,
+          shop: null,
+          pageMappings: {
+            available: true,
+            total: 0,
+            byStatus: {}
+          },
+          activity: createUnavailableSection('shop_not_found'),
+          queue: createUnavailableSection('shop_not_found'),
+          credentials: createUnavailableSection('shop_not_found')
+        };
+      }
+
+      const pageStatusResult = await client.query(`
+        SELECT status, COUNT(*)::int AS total
+        FROM shop_pages
+        WHERE shop_id = $1
+        GROUP BY status
+        ORDER BY status ASC
+      `, [shop.id]);
+      const pageIdsResult = await client.query(`
+        SELECT DISTINCT page_id
+        FROM shop_pages
+        WHERE shop_id = $1
+          AND page_id <> ''
+      `, [shop.id]);
+      const pageIds = (pageIdsResult.rows || []).map(row => String(row.page_id || '')).filter(Boolean);
+      const pageMappings = {
+        available: true,
+        ...createStatusSummary(pageStatusResult.rows, ['active', 'paused', 'archived'])
+      };
+
+      let activity = {
+        available: true,
+        last_webhook_received_at: null,
+        last_successful_send_at: null,
+        send_error_rate_1h: null,
+        send_errors_1h: 0,
+        successful_sends_1h: 0,
+        active_handoff_count: 0
+      };
+      try {
+        const activityResult = await client.query(`
+          SELECT
+            (SELECT MAX(event_at)
+             FROM events
+             WHERE tenant_id = $1
+               AND page_id = ANY($2::text[])
+               AND type = 'message_received') AS last_webhook_received_at,
+            (SELECT MAX(created_at)
+             FROM messages
+             WHERE tenant_id = $1
+               AND page_id = ANY($2::text[])
+               AND role IN ('model', 'bot')) AS last_successful_send_at,
+            (SELECT COUNT(*)::int
+             FROM events
+             WHERE tenant_id = $1
+               AND page_id = ANY($2::text[])
+               AND event_at >= now() - interval '1 hour'
+               AND type IN ('send_failed', 'send_error', 'message_send_failed', 'messenger_send_failed', 'messenger_send_error')) AS send_errors_1h,
+            (SELECT COUNT(*)::int
+             FROM messages
+             WHERE tenant_id = $1
+               AND page_id = ANY($2::text[])
+               AND created_at >= now() - interval '1 hour'
+               AND role IN ('model', 'bot')) AS successful_sends_1h,
+            (SELECT COUNT(*)::int
+             FROM conversations
+             WHERE tenant_id = $1
+               AND page_id = ANY($2::text[])
+               AND handoff_until > now()) AS active_handoff_count
+        `, [tenantId, pageIds]);
+        const row = activityResult.rows[0] || {};
+        const sendErrors = Number(row.send_errors_1h || 0);
+        const successfulSends = Number(row.successful_sends_1h || 0);
+        const denominator = sendErrors + successfulSends;
+        activity = {
+          available: true,
+          last_webhook_received_at: row.last_webhook_received_at || null,
+          last_successful_send_at: row.last_successful_send_at || null,
+          send_error_rate_1h: denominator > 0 ? sendErrors / denominator : null,
+          send_errors_1h: sendErrors,
+          successful_sends_1h: successfulSends,
+          active_handoff_count: Number(row.active_handoff_count || 0)
+        };
+      } catch (err) {
+        if (!isMissingMultiShopSchemaError(err)) throw err;
+        activity = createUnavailableSection('runtime_schema_not_ready');
+      }
+
+      let queue = createUnavailableSection('webhook_queue_schema_not_ready');
+      try {
+        const queueResult = await client.query(`
+          SELECT q.status, COUNT(*)::int AS total
+          FROM webhook_queue q
+          JOIN (
+            SELECT DISTINCT page_id
+            FROM shop_pages
+            WHERE shop_id = $1
+              AND page_id <> ''
+          ) sp ON sp.page_id = q.page_id
+          WHERE q.tenant_id = $2
+          GROUP BY q.status
+          ORDER BY q.status ASC
+        `, [shop.id, tenantId]);
+        queue = {
+          available: true,
+          ...createStatusSummary(queueResult.rows, ['queued', 'processing', 'done', 'failed'])
+        };
+      } catch (err) {
+        if (!isMissingMultiShopSchemaError(err)) throw err;
+      }
+
+      let credentials = createUnavailableSection('shop_page_credentials_schema_not_ready');
+      try {
+        const credentialResult = await client.query(`
+          SELECT c.status, c.credential_type, COUNT(*)::int AS total
+          FROM shop_page_credentials c
+          JOIN shop_pages sp ON sp.id = c.page_mapping_id AND sp.shop_id = c.shop_id
+          WHERE c.shop_id = $1
+          GROUP BY c.status, c.credential_type
+          ORDER BY c.status ASC, c.credential_type ASC
+        `, [shop.id]);
+        const byStatus = createStatusSummary(credentialResult.rows, ['active', 'paused', 'archived']);
+        credentials = {
+          available: true,
+          total: byStatus.total,
+          byStatus: byStatus.byStatus
+        };
+      } catch (err) {
+        if (!isMissingMultiShopSchemaError(err)) throw err;
+      }
+
+      return {
+        schemaReady: true,
+        shop,
+        pageMappings,
+        activity,
+        queue,
+        credentials
+      };
+    } catch (err) {
+      if (!isMissingMultiShopSchemaError(err)) throw err;
+      return createEmptyShopHealthModel();
     }
   }
 
@@ -577,6 +788,7 @@ function createDashboardRepository({
 
   return {
     getAuditLog,
+    getShopHealth,
     getShopDetail,
     getShops,
     getOverview,

@@ -394,6 +394,57 @@ function presentShopAssetsSummary(summary = {}) {
   };
 }
 
+function presentHealthStatusSummary(section = {}, statuses = []) {
+  const byStatus = {};
+  for (const status of statuses) {
+    byStatus[status] = Number(section.byStatus?.[status] || 0);
+  }
+  return {
+    available: section.available !== false,
+    total: Number(section.total || 0),
+    byStatus,
+    ...(section.reason ? { reason: limitText(section.reason, 80) } : {}),
+    ...(section.message ? { message: limitText(section.message, 160) } : {})
+  };
+}
+
+function presentShopHealthApi(model = {}) {
+  const shop = model.shop ? {
+    id: model.shop.id || '',
+    slug: model.shop.slug || '',
+    name: limitText(model.shop.name, 120),
+    status: model.shop.status || '',
+    updated_at: model.shop.updated_at || ''
+  } : null;
+  const activity = model.activity || {};
+  const credentialSummary = presentHealthStatusSummary(model.credentials || {}, ['active', 'paused', 'archived']);
+  if ((model.credentials || {}).available === false) {
+    credentialSummary.available = false;
+    credentialSummary.reason = limitText(model.credentials.reason || 'schema_not_ready', 80);
+  }
+
+  return {
+    schemaReady: model.schemaReady !== false,
+    shop,
+    pageMappings: presentHealthStatusSummary(model.pageMappings || {}, ['active', 'paused', 'archived']),
+    activity: activity.available === false ? {
+      available: false,
+      reason: limitText(activity.reason || 'schema_not_ready', 80)
+    } : {
+      available: true,
+      last_webhook_received_at: activity.last_webhook_received_at || null,
+      last_successful_send_at: activity.last_successful_send_at || null,
+      send_error_rate_1h: activity.send_error_rate_1h == null ? null : Number(activity.send_error_rate_1h),
+      send_errors_1h: Number(activity.send_errors_1h || 0),
+      successful_sends_1h: Number(activity.successful_sends_1h || 0),
+      active_handoff_count: Number(activity.active_handoff_count || 0)
+    },
+    queue: presentHealthStatusSummary(model.queue || {}, ['queued', 'processing', 'done', 'failed']),
+    credentials: credentialSummary,
+    ...(model.message ? { message: limitText(model.message, 160) } : {})
+  };
+}
+
 function presentShopsApi(model = {}) {
   return {
     schemaReady: model.schemaReady !== false,
@@ -477,6 +528,7 @@ module.exports = {
   presentShopSettingsReadApi,
   presentShopSettingsWriteApi,
   presentShopDetailApi,
+  presentShopHealthApi,
   presentShopsApi,
   presentUserDetailApi
 };

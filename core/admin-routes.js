@@ -485,6 +485,7 @@ function registerAdminRoutes(app, {
     sendInternalNotesApi,
     sendShopDetail,
     sendShopDetailApi,
+    sendShopHealthApi,
     sendShopSettingsApi,
     sendShops,
     sendShopsApi,
@@ -1050,6 +1051,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/dashboard/users/:senderId', sendUserDetailApi);
   app.get('/admin/api/shops', sendShopsApi);
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
+  app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);

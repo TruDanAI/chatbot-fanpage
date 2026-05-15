@@ -73,9 +73,9 @@ Last verified baseline from May 12, 2026:
   `a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS` at commit
   `fae7c7f Fix user detail internal notes UI contract`
 - Latest pushed/code commit:
-  `29f03d7 Add feature flag facade for runtime rule toggles`
-- Latest git state: must be re-checked before production work. Durable webhook
-  queue phase 1 is local-only until a separate commit/push is approved.
+  `d47c3e2 Add durable webhook queue phase 1`
+- Latest git state: must be re-checked before production work. Per-shop health
+  phase 1 is local-only until a separate commit/push is approved.
 - Latest production internal_notes schema apply:
   `db/internal-notes-proposal.sql` has been applied to production PostgreSQL.
 - Backup used before internal_notes schema apply/read smoke:
@@ -649,10 +649,18 @@ Current safety foundation:
   provides enqueue, `FOR UPDATE SKIP LOCKED` claim, mark-done, and bounded
   retry/fail behavior. `WEBHOOK_QUEUE_ENABLED=false` keeps the current webhook
   path unchanged by default.
+- Per-shop health phase 1 is implemented locally:
+  `GET /admin/api/shops/:shopId/health` uses existing admin auth/RBAC and the
+  read-only dashboard reader to return shop status, page mapping status counts,
+  last webhook timestamp, last successful bot send timestamp when available,
+  1h send error rate, active handoff count, queue counts, and credential status
+  counts. The response omits raw page IDs, tokens, encrypted credential values,
+  customer rows, message bodies, and raw order rows. Missing additive queue or
+  credential schema is returned as an unavailable section.
 - Runtime logs use `page_ref=p:<hash>` for page correlation instead of raw
   `page_id`.
 - Latest local safety-foundation test baseline: `npm test` passed with
-  `499 passed, 0 failed`.
+  `504 passed, 0 failed`.
 
 Multi-shop safety track before shop #2:
 
@@ -669,9 +677,9 @@ Multi-shop safety track before shop #2:
 4. Durable webhook queue. Local phase 1 done: PostgreSQL queue rows use
    bounded retry and `FOR UPDATE SKIP LOCKED`; runtime integration is opt-in
    behind `WEBHOOK_QUEUE_ENABLED=false`.
-5. Per-shop health. Show last webhook, last successful send, send error rate,
-   active handoffs, and credential status without raw secrets, raw page IDs, or
-   customer data.
+5. Per-shop health. Local phase 1 done: show last webhook, last successful
+   send, send error rate, active handoffs, queue counts, and credential status
+   without raw secrets, raw page IDs, or customer data.
 
 Later SaaS/multi-tenant direction:
 
@@ -746,9 +754,9 @@ A phase is done only when:
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
 session. Per-page credential resolution phase 1, atomic message idempotency
-phase 1, feature flag facade phase 1, and durable webhook queue phase 1 are
-complete locally. The current multi-shop safety order is now per-shop
-health/credential status, then approved queue rollout planning.
+phase 1, feature flag facade phase 1, durable webhook queue phase 1, and
+per-shop health phase 1 are complete locally. The current multi-shop safety
+order is now approved queue rollout planning, then deeper health UI/alerts.
 Any production rollout still follows `docs/multi-shop-rollout.md` and needs
 separate approval for deploy, env changes, DB writes, credential seeding, and
 authenticated smoke.

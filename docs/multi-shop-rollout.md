@@ -106,6 +106,26 @@ Latest local durable webhook queue phase 1 update:
 - Production deploy/env/DB/data remain untouched; production queue rollout has
   not started.
 
+Latest local per-shop health phase 1 update:
+
+- `GET /admin/api/shops/:shopId/health` is implemented as a JSON-only admin
+  read endpoint using existing admin auth/RBAC and the read-only dashboard
+  reader.
+- The health response returns shop status, page mapping status counts, last
+  webhook timestamp, last successful bot send timestamp when message data is
+  available, 1h send error rate when event/message counters are available,
+  active handoff count, webhook queue status counts, and credential status
+  counts.
+- The response does not return raw page IDs, tokens, encrypted credential
+  values, customer rows, message bodies, or raw order rows.
+- Missing additive `webhook_queue` or `shop_page_credentials` schema is handled
+  as an unavailable section instead of a 500. Missing multi-shop schema returns
+  `schemaReady=false`.
+- Latest local verification for this update: `npm test` passed with
+  `504 passed, 0 failed`.
+- Production deploy/env/DB/data remain untouched; authenticated production
+  smoke was not run.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -170,9 +190,10 @@ production environment variables, or write production data.
    PostgreSQL queue rows, bounded retry, `FOR UPDATE SKIP LOCKED`, and the
    opt-in `WEBHOOK_QUEUE_ENABLED=false` default are implemented locally. Redis
    is not needed for the current 5-20 shop target.
-5. Per-shop health:
-   expose last webhook, last successful send, send error rate, and credential
-   status without raw tokens, raw page IDs, customer rows, messages, or orders.
+5. Per-shop health: local phase 1 done.
+   `GET /admin/api/shops/:shopId/health` exposes last webhook, last successful
+   send, send error rate, active handoffs, queue counts, and credential status
+   without raw tokens, raw page IDs, customer rows, messages, or orders.
 
 ## Production Rollout Order
 

@@ -57,6 +57,15 @@ Mục tiêu sản phẩm:
   webhook route chỉ dùng queue khi `WEBHOOK_QUEUE_ENABLED=true`, default false
   giữ current behavior; latest local verification `npm test` = 499 passed,
   0 failed.
+- Per-shop health phase 1 đã hoàn tất local-only:
+  `GET /admin/api/shops/:shopId/health` dùng admin auth/RBAC hiện có và
+  read-only dashboard reader; trả shop status, page mapping status counts,
+  last webhook, last successful bot send khi có message data, send error rate
+  1h, active handoff count, queue counts, credential status counts; không trả
+  raw page_id, token, encrypted_value, customer rows, message body, raw orders;
+  missing `webhook_queue` hoặc `shop_page_credentials` trả section unavailable,
+  missing multi-shop schema trả `schemaReady=false`; latest local verification
+  `npm test` = 504 passed, 0 failed.
   Không deploy, không đổi production env, không ghi production DB, không đụng
   production /data.
 
@@ -108,12 +117,12 @@ Trạng thái production mới nhất đã biết:
   a4155bae-5a11-476c-8cf0-f77931565b2c SUCCESS ở commit fae7c7f
   Fix user detail internal notes UI contract
 - Latest pushed/code commit:
-  29f03d7 Add feature flag facade for runtime rule toggles
+  d47c3e2 Add durable webhook queue phase 1
 - Latest git state:
   Must be re-checked at the start of the next session with `git status` and
   `git rev-list --left-right --count origin/main...HEAD`. Do not assume the
   previous clean state still holds after handoff/docs/runtime safety updates.
-  Durable webhook queue phase 1 is local-only until a separate commit/push is
+  Per-shop health phase 1 is local-only until a separate commit/push is
   approved.
 - Latest production internal_notes schema apply:
   db/internal-notes-proposal.sql đã apply thành công vào production
@@ -164,8 +173,7 @@ Trạng thái production mới nhất đã biết:
 - Không apply schema trong lúc POST/GET smoke.
 - Không đụng production /data.
 - Latest local test coverage baseline:
-  `npm test` passed with 499 passed, 0 failed after durable webhook queue
-  phase 1.
+  `npm test` passed with 504 passed, 0 failed after per-shop health phase 1.
   Tests cover internal-notes validation/RBAC/transaction/audit fail-closed
   behavior, SQL verifier guardrails, read model behavior, webhook log
   redaction, multi-shop runtime admission, page credential encryption/decryption,
@@ -1252,20 +1260,20 @@ production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Phase 4 internal
 notes v1 backend/API/UI đã complete và production-smoked theo các giới hạn an
 toàn ở trên. Multi-shop staging MVP đã pass, và runtime admission guard đã được
 thêm để giảm blast radius. Per-page credential resolution phase 1, atomic
-message idempotency phase 1, feature flag facade phase 1, và durable webhook
-queue phase 1 đã hoàn tất local-only. Trọng tâm tiếp theo là per-shop
-health/credential status và queue rollout planning, không phải production
-rollout.
+message idempotency phase 1, feature flag facade phase 1, durable webhook
+queue phase 1, và per-shop health phase 1 đã hoàn tất local-only. Trọng tâm
+tiếp theo là queue rollout planning hoặc deeper health UI/alerts, không phải
+production rollout.
 
 Next recommended task:
-- Làm per-shop health/credential status:
-  - last webhook, last successful send, send error rate, active handoffs,
-    credential status
-  - không expose raw token, raw page_id, customer rows, messages, orders
 - Nếu quay lại queue rollout planning:
   - giữ `WEBHOOK_QUEUE_ENABLED=false` ở production cho tới khi có backup,
     schema apply, worker/runbook/rollback và approval riêng
   - queue SQL hiện chỉ là proposal local trong `db/multi-shop-proposal.sql`
+- Nếu mở rộng per-shop health:
+  - thêm UI nhẹ hoặc alert thresholds cho queue failed/error rate
+  - tiếp tục không expose raw token, raw page_id, customer rows, messages,
+    orders
 - Production multi-shop rollout vẫn phải theo docs/multi-shop-rollout.md và cần
   approval riêng cho từng gate: backup, schema apply, credential seed,
   `CREDENTIAL_MASTER_KEY` env, deploy, env enable, authenticated smoke, product
@@ -1299,14 +1307,15 @@ Việc nên làm đầu phiên tới:
    - admin_user_roles
    - admin_audit_log
 7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline
-   coverage mới nhất đã biết: `npm test` 499 passed, 0 failed sau durable
-   webhook queue phase 1; tests cover validation, RBAC, transaction/audit
+   coverage mới nhất đã biết: `npm test` 504 passed, 0 failed sau per-shop
+   health phase 1; tests cover validation, RBAC, transaction/audit
    fail-closed behavior, static SQL checks, verifier guardrails, read model
    behavior, webhook log redaction, multi-shop admission, credential
    encryption/decryption, DB-backed credential token selection, missing
    credential fail-closed, legacy `FB_PAGE_TOKEN`, atomic MID duplicate skips,
    PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe,
    feature flag facade behavior, queue enqueue/claim/done/retry/fail,
+   per-shop health safe shape/missing schema/read-only queries,
    menu_code_handoff facade regression coverage, and no raw token/page_id/
    customer-error logging.
 
@@ -1325,7 +1334,8 @@ Code-only hướng khác:
   - feature flag facade phase 1 đã hoàn tất và đã push ở `29f03d7`
   - durable webhook queue phase 1 đã hoàn tất local-only; flag mặc định
     `WEBHOOK_QUEUE_ENABLED=false`, chưa rollout production
-  - per-shop health/credential status là bước tiếp theo
+  - per-shop health phase 1 đã hoàn tất local-only; endpoint JSON là
+    `/admin/api/shops/:shopId/health`, chưa rollout production
 - Phase 4 internal notes:
   - v1 backend/API/UI đã complete
   - internal notes design/create service/read-list model/test baseline đã có

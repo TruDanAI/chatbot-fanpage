@@ -464,6 +464,63 @@ function createDashboardReaderStub() {
           }]
         }
       };
+    },
+    async getShopHealth(shopId) {
+      calls += 1;
+      return {
+        schemaReady: true,
+        shop: {
+          id: shopId,
+          slug: 'adult-shop',
+          name: 'Adult Shop',
+          status: 'active',
+          updated_at: '2026-05-12T00:00:00.000Z',
+          encrypted_value: 'do-not-return',
+          page_access_token: 'do-not-return'
+        },
+        pageMappings: {
+          available: true,
+          total: 2,
+          byStatus: {
+            active: 1,
+            paused: 1,
+            archived: 0
+          },
+          raw_page_id: 'page_1'
+        },
+        activity: {
+          available: true,
+          last_webhook_received_at: '2026-05-15T01:00:00.000Z',
+          last_successful_send_at: '2026-05-15T01:01:00.000Z',
+          send_error_rate_1h: 0.25,
+          send_errors_1h: 1,
+          successful_sends_1h: 3,
+          active_handoff_count: 2,
+          message_body: 'do-not-return'
+        },
+        queue: {
+          available: true,
+          total: 4,
+          byStatus: {
+            queued: 1,
+            processing: 1,
+            done: 1,
+            failed: 1
+          },
+          payload_json: { text: 'do-not-return' }
+        },
+        credentials: {
+          available: true,
+          total: 1,
+          byStatus: {
+            active: 1,
+            paused: 0,
+            archived: 0
+          },
+          encrypted_value: 'do-not-return',
+          access_token: 'do-not-return'
+        }
+      };
     }
   };
 }
@@ -2322,6 +2379,127 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('0987654321')).toBeFalse();
   });
 
+  it('shop health API returns safe per-shop health shape without raw page IDs or secrets', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId/health'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.schemaReady).toBeTrue();
+    expect(body.shop).toEqual({
+      id: 'adult-shop',
+      slug: 'adult-shop',
+      name: 'Adult Shop',
+      status: 'active',
+      updated_at: '2026-05-12T00:00:00.000Z'
+    });
+    expect(body.pageMappings.total).toBe(2);
+    expect(body.pageMappings.byStatus.active).toBe(1);
+    expect(body.activity.last_webhook_received_at).toBe('2026-05-15T01:00:00.000Z');
+    expect(body.activity.last_successful_send_at).toBe('2026-05-15T01:01:00.000Z');
+    expect(body.activity.send_error_rate_1h).toBe(0.25);
+    expect(body.activity.active_handoff_count).toBe(2);
+    expect(body.queue.byStatus.failed).toBe(1);
+    expect(body.credentials.byStatus.active).toBe(1);
+    expect(bodyText.includes('page_1')).toBeFalse();
+    expect(bodyText.includes('raw_page_id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('message_body')).toBeFalse();
+    expect(bodyText.includes('payload_json')).toBeFalse();
+  });
+
+  it('shop health API handles missing optional queue and credential schema gracefully', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    reader.getShopHealth = async shopId => ({
+      schemaReady: true,
+      shop: {
+        id: shopId,
+        slug: 'adult-shop',
+        name: 'Adult Shop',
+        status: 'active',
+        updated_at: '2026-05-12T00:00:00.000Z'
+      },
+      pageMappings: {
+        available: true,
+        total: 1,
+        byStatus: { active: 1 }
+      },
+      activity: {
+        available: true,
+        last_webhook_received_at: null,
+        last_successful_send_at: null,
+        send_error_rate_1h: null,
+        send_errors_1h: 0,
+        successful_sends_1h: 0,
+        active_handoff_count: 0
+      },
+      queue: {
+        available: false,
+        reason: 'webhook_queue_schema_not_ready'
+      },
+      credentials: {
+        available: false,
+        reason: 'shop_page_credentials_schema_not_ready'
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId/health'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.schemaReady).toBeTrue();
+    expect(body.queue.available).toBeFalse();
+    expect(body.queue.reason).toBe('webhook_queue_schema_not_ready');
+    expect(body.credentials.available).toBeFalse();
+    expect(body.credentials.reason).toBe('shop_page_credentials_schema_not_ready');
+  });
+
+  it('shop health API requires admin auth', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId/health'](createReq({
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(401);
+  });
+
   it('shop detail HTML render product search/filter controls, badges, and archive confirmation', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -3129,6 +3307,7 @@ describe('admin dashboard PostgreSQL reader', () => {
     await reader.getUserDetail('sender_1');
     await reader.getShops();
     await reader.getShopDetail('adult-shop');
+    await reader.getShopHealth('adult-shop');
 
     if (!queries.length) throw new Error('expected dashboard reader to query database');
     for (const { sql } of queries) {
@@ -3320,6 +3499,134 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(detail.products).toEqual([]);
     expect(JSON.stringify(list).includes('postgres://secret')).toBeFalse();
     expect(JSON.stringify(detail).includes('relation')).toBeFalse();
+  });
+
+  it('reader shop health returns safe summaries and no raw page IDs or secrets', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        queries.push({ sql, params });
+        if (sql.includes('FROM shops') && sql.includes('WHERE id = $1 OR slug = $1')) {
+          expect(params).toEqual(['adult-shop']);
+          return {
+            rows: [{
+              id: 'adult-shop',
+              slug: 'adult-shop',
+              name: 'Adult Shop',
+              status: 'active',
+              updated_at: '2026-05-12T00:00:00.000Z'
+            }]
+          };
+        }
+        if (sql.includes('FROM shop_pages') && sql.includes('GROUP BY status')) {
+          expect(params).toEqual(['adult-shop']);
+          return { rows: [{ status: 'active', total: 1 }, { status: 'paused', total: 1 }] };
+        }
+        if (sql.includes('last_webhook_received_at')) {
+          expect(params).toEqual(['default', ['raw-page-id-1', 'raw-page-id-2']]);
+          return {
+            rows: [{
+              last_webhook_received_at: '2026-05-15T01:00:00.000Z',
+              last_successful_send_at: '2026-05-15T01:01:00.000Z',
+              send_errors_1h: 1,
+              successful_sends_1h: 3,
+              active_handoff_count: 2
+            }]
+          };
+        }
+        if (sql.includes('FROM webhook_queue')) {
+          expect(params).toEqual(['adult-shop', 'default']);
+          return { rows: [{ status: 'queued', total: 2 }, { status: 'failed', total: 1 }] };
+        }
+        if (sql.includes('SELECT DISTINCT page_id')) {
+          expect(params).toEqual(['adult-shop']);
+          return { rows: [{ page_id: 'raw-page-id-1' }, { page_id: 'raw-page-id-2' }] };
+        }
+        if (sql.includes('FROM shop_page_credentials')) {
+          expect(params).toEqual(['adult-shop']);
+          return { rows: [{ status: 'active', credential_type: 'fb_page_token', total: 1 }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'legacy-page',
+      Client: FakeClient
+    });
+
+    const model = await reader.getShopHealth('adult-shop');
+    const text = JSON.stringify(model);
+
+    expect(model.schemaReady).toBeTrue();
+    expect(model.shop.id).toBe('adult-shop');
+    expect(model.pageMappings.total).toBe(2);
+    expect(model.pageMappings.byStatus.active).toBe(1);
+    expect(model.activity.last_webhook_received_at).toBe('2026-05-15T01:00:00.000Z');
+    expect(model.activity.send_error_rate_1h).toBe(0.25);
+    expect(model.activity.active_handoff_count).toBe(2);
+    expect(model.queue.byStatus.queued).toBe(2);
+    expect(model.queue.byStatus.failed).toBe(1);
+    expect(model.credentials.byStatus.active).toBe(1);
+    expect(text.includes('raw-page-id')).toBeFalse();
+    expect(text.includes('encrypted_value')).toBeFalse();
+    expect(text.toLowerCase().includes('token')).toBeFalse();
+    for (const { sql } of queries) {
+      expect(sql.trim()).toMatch(/^SELECT/i);
+    }
+  });
+
+  it('reader shop health handles missing queue and credential schema gracefully', async () => {
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        if (sql.includes('FROM shops') && sql.includes('WHERE id = $1 OR slug = $1')) {
+          return {
+            rows: [{
+              id: 'adult-shop',
+              slug: 'adult-shop',
+              name: 'Adult Shop',
+              status: 'active',
+              updated_at: '2026-05-12T00:00:00.000Z'
+            }]
+          };
+        }
+        if (sql.includes('FROM shop_pages') && sql.includes('GROUP BY status')) {
+          return { rows: [{ status: 'active', total: 1 }] };
+        }
+        if (sql.includes('last_webhook_received_at')) {
+          return { rows: [{ send_errors_1h: 0, successful_sends_1h: 0, active_handoff_count: 0 }] };
+        }
+        if (sql.includes('FROM webhook_queue') || sql.includes('FROM shop_page_credentials')) {
+          const err = new Error('relation missing at postgres://secret');
+          err.code = '42P01';
+          throw err;
+        }
+        if (sql.includes('SELECT DISTINCT page_id')) {
+          return { rows: [{ page_id: 'raw-page-id-1' }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'legacy-page',
+      Client: FakeClient
+    });
+
+    const model = await reader.getShopHealth('adult-shop');
+
+    expect(model.schemaReady).toBeTrue();
+    expect(model.queue.available).toBeFalse();
+    expect(model.queue.reason).toBe('webhook_queue_schema_not_ready');
+    expect(model.credentials.available).toBeFalse();
+    expect(model.credentials.reason).toBe('shop_page_credentials_schema_not_ready');
+    expect(JSON.stringify(model).includes('postgres://secret')).toBeFalse();
   });
 
   it('reader shops dùng SELECT read-only và parameterized detail lookup', async () => {

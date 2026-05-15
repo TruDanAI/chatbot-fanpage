@@ -167,8 +167,14 @@ function createPostgresDashboardReader({
     return withClient(client => repository.getShopDetail(client, normalizedShopId));
   }
 
+  async function getShopHealth(shopId) {
+    const normalizedShopId = String(shopId || '').trim().slice(0, 160);
+    return withClient(client => repository.getShopHealth(client, normalizedShopId));
+  }
+
   return {
     getOverview,
+    getShopHealth,
     getShopDetail,
     getShops,
     getUserDetail,

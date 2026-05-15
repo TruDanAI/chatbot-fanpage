@@ -7,6 +7,7 @@ const {
   presentDashboardApi,
   presentInternalNotesApi,
   presentShopDetailApi,
+  presentShopHealthApi,
   presentShopSettingsReadApi,
   presentShopsApi,
   presentUserDetailApi
@@ -489,6 +490,41 @@ function createAdminReadHandlers({
     }
   }
 
+  async function sendShopHealthApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: PERMISSIONS.DASHBOARD_READ,
+      resourceType: 'shop_health_api',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const model = await reader.getShopHealth(shopId);
+      const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop_health_api',
+        resourceId: shopId,
+        outcome: statusCode === 404 ? 'error' : 'success',
+        metadata: { schemaReady: model.schemaReady !== false, statusCode }
+      });
+      return res.status(statusCode).json(presentShopHealthApi(model));
+    } catch (err) {
+      await recordAdminAudit(req, {
+        principal,
+        action: PERMISSIONS.DASHBOARD_READ,
+        resourceType: 'shop_health_api',
+        resourceId: shopId,
+        outcome: 'error',
+        metadata: { statusCode: err.statusCode || 500 }
+      });
+      return res.status(err.statusCode || 500).json({ error: 'shop_health_read_failed' });
+    }
+  }
+
   async function sendShopSettingsApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -683,6 +719,7 @@ function createAdminReadHandlers({
     sendInternalNotesApi,
     sendShopDetail,
     sendShopDetailApi,
+    sendShopHealthApi,
     sendShopSettingsApi,
     sendShops,
     sendShopsApi,
