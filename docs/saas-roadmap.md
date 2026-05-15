@@ -630,20 +630,26 @@ Current safety foundation:
   `shop_page_credentials`, `CREDENTIAL_MASTER_KEY` crypto service, DB runtime
   page-token selection, missing credential fail-closed behavior, and legacy
   file-backed `FB_PAGE_TOKEN` fallback.
+- Atomic message idempotency phase 1 is implemented locally: storage exposes
+  `tryMarkMid()`, PostgreSQL marks message IDs with
+  `INSERT ... ON CONFLICT DO NOTHING RETURNING`, duplicate MIDs skip the
+  webhook event, and MID storage errors fail closed without sending a customer
+  reply.
 - Runtime logs use `page_ref=p:<hash>` for page correlation instead of raw
   `page_id`.
 - Latest local safety-foundation test baseline: `npm test` passed with
-  `479 passed, 0 failed`.
+  `481 passed, 0 failed`.
 
 Multi-shop safety track before shop #2:
 
 1. Per-page credential resolution. Local phase 1 done: add encrypted shop/page credentials and make
    Messenger sends use the resolved page token; keep `FB_PAGE_TOKEN` as the
    legacy file-backed fallback.
-2. Atomic message idempotency. Replace `seenMid()` plus async `markMid()` with
-   `tryMarkMid()`, using PostgreSQL `INSERT ... ON CONFLICT DO NOTHING
-   RETURNING` when available.
-3. Feature flag facade. Add `getFeatureFlag(shopConfig/shopId, key)` before
+2. Atomic message idempotency. Local phase 1 done: runtime now awaits
+   `tryMarkMid()` before processing; PostgreSQL uses
+   `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage preserves the
+   previous in-memory dedupe behavior behind the same interface.
+3. Feature flag facade. Next: add `getFeatureFlag(shopConfig/shopId, key)` before
    migrating schema, so runtime code stops reading `settings_json.ruleToggles`
    directly.
 4. Durable webhook queue. Build this only after credential isolation and
@@ -725,9 +731,10 @@ A phase is done only when:
 ## Recommended next session
 
 Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
-session. Per-page credential resolution phase 1 is complete locally. The
-current multi-shop safety order is now: atomic `tryMarkMid()`, feature flag
-facade, durable webhook queue, then per-shop health/credential status. Do not
-jump to the queue before idempotency is stable. Any production rollout still
-follows `docs/multi-shop-rollout.md` and needs separate approval for deploy,
-env changes, DB writes, credential seeding, and authenticated smoke.
+session. Per-page credential resolution phase 1 and atomic message idempotency
+phase 1 are complete locally. The current multi-shop safety order is now:
+feature flag facade, durable webhook queue, then per-shop health/credential
+status. Do not jump to the queue before the feature flag facade is in place.
+Any production rollout still follows `docs/multi-shop-rollout.md` and needs
+separate approval for deploy, env changes, DB writes, credential seeding, and
+authenticated smoke.

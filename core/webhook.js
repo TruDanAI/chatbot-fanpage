@@ -412,8 +412,21 @@ function createWebhook({
 
     // Dedup theo message id (Meta có thể retry)
     const mid = event.message?.mid;
-    if (mid && storage.seenMid(mid)) return;
-    if (mid) storage.markMid(mid);
+    if (mid) {
+      const pageId = getEventPageId(event, options);
+      try {
+        if (typeof storage.tryMarkMid !== 'function') {
+          throw new Error('storage_tryMarkMid_unavailable');
+        }
+        const marked = await storage.tryMarkMid(mid, { senderId, pageId });
+        if (!marked) return;
+      } catch (err) {
+        console.error(
+          `[webhook] MID idempotency fail-closed page_ref=${pageRef(pageId)} sender=${senderId}: ${err.message}`
+        );
+        return;
+      }
+    }
 
     const runtime = await resolveEventRuntime(event, options);
     if (runtime.failClosed) return;

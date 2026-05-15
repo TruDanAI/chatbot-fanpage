@@ -22,6 +22,15 @@ class FakePgClient {
     this.ended = false;
     this.queryCalls = [];
     this.nextOrderId = 1;
+    this.processedMids = new Set(this.seed.mids.map(row => this.processedMidKey(
+      row.tenant_id || 'tenant_test',
+      row.page_id || 'page_test',
+      row.mid
+    )));
+  }
+
+  processedMidKey(tenantId, pageId, mid) {
+    return [tenantId, pageId, mid].map(value => String(value || '')).join('\u0000');
   }
 
   async connect() {
@@ -59,6 +68,13 @@ class FakePgClient {
       const id = this.nextOrderId;
       this.nextOrderId += 1;
       return { rows: [{ id }] };
+    }
+    if (normalized.startsWith('INSERT INTO processed_mids')) {
+      const key = this.processedMidKey(values[0], values[1], values[2]);
+      const mid = String(values[2] || '');
+      if (this.processedMids.has(key)) return { rows: [] };
+      this.processedMids.add(key);
+      return { rows: [{ mid }] };
     }
 
     return { rows: [] };
@@ -138,7 +154,7 @@ describe('postgres storage adapter', () => {
     expect(storage.getLastProductCode('sender_1')).toBe('MÃ8');
     expect(storage.getSessionState('sender_1')).toBe('READY_TO_CONFIRM');
     expect(storage.inHandoff('sender_1')).toBeTrue();
-    expect(storage.seenMid('mid-1')).toBeTrue();
+    expect(await storage.tryMarkMid('mid-1')).toBeFalse();
     expect(storage.getUserProfile('sender_1').name).toBe('Nguyễn An');
     expect(storage.getHistory('sender_1')).toEqual([{ role: 'user', parts: [{ text: 'mã 8' }] }]);
     expect(storage.getOrderDraft('sender_1').cartItems).toEqual([
@@ -159,12 +175,31 @@ describe('postgres storage adapter', () => {
       phone: '0987654321',
       cartItems: [{ code: 'MÃ10', name: 'MÃ10', qty: 1 }]
     });
-    storage.markMid('mid-2');
+    expect(await storage.tryMarkMid('mid-2', { senderId: 'sender_2' })).toBeTrue();
+    expect(await storage.tryMarkMid('mid-2', { senderId: 'sender_2' })).toBeFalse();
     await storage.flush();
 
     const sql = client.queryCalls.map(call => String(call.sql).replace(/\s+/g, ' ').trim());
     expect(sql.some(item => item.startsWith('INSERT INTO conversations'))).toBeTrue();
     expect(sql.some(item => item.startsWith('INSERT INTO orders'))).toBeTrue();
     expect(sql.some(item => item.startsWith('INSERT INTO processed_mids'))).toBeTrue();
+    expect(sql.some(item => item.includes('ON CONFLICT (tenant_id, page_id, mid) DO NOTHING RETURNING mid'))).toBeTrue();
+  });
+
+  it('scopes atomic mid idempotency by details page id', async () => {
+    const client = new FakePgClient();
+    const storage = await createReadyPostgresAdapter({
+      dataDir: makeTempDataDir('chatbot-postgres-storage-page-scope'),
+      client
+    });
+
+    expect(await storage.tryMarkMid('same-mid', { senderId: 'sender_3', pageId: 'page_a' })).toBeTrue();
+    expect(await storage.tryMarkMid('same-mid', { senderId: 'sender_3', pageId: 'page_a' })).toBeFalse();
+    expect(await storage.tryMarkMid('same-mid', { senderId: 'sender_3', pageId: 'page_b' })).toBeTrue();
+
+    const pageIds = client.queryCalls
+      .filter(call => String(call.sql).replace(/\s+/g, ' ').trim().startsWith('INSERT INTO processed_mids'))
+      .map(call => call.values[1]);
+    expect(pageIds.slice(-3)).toEqual(['page_a', 'page_a', 'page_b']);
   });
 });

@@ -254,9 +254,8 @@ function runStorageAdapterContract({ name, createAdapter }) {
     it('deduplicates message ids', async () => {
       const storage = await createAdapter({ dataDir: makeTempDataDir('chatbot-storage-contract-mids') });
 
-      expect(storage.seenMid('mid-1')).toBeFalse();
-      storage.markMid('mid-1');
-      expect(storage.seenMid('mid-1')).toBeTrue();
+      expect(await storage.tryMarkMid('mid-1')).toBeTrue();
+      expect(await storage.tryMarkMid('mid-1')).toBeFalse();
     });
 
     it('appends customers CSV and event JSONL records', async () => {

@@ -18,6 +18,7 @@ function makeStorage() {
   const context = new Map();
   const handoff = new Map();
   const mids = new Set();
+  const midMarks = [];
   const customers = [];
   const events = [];
 
@@ -31,6 +32,8 @@ function makeStorage() {
     _customers: customers,
     _events: events,
     _handoff: handoff,
+    _mids: mids,
+    _midMarks: midMarks,
     getHistory: userId => entry(userId).history || [],
     setHistory: (userId, history) => {
       entry(userId).history = history;
@@ -65,8 +68,14 @@ function makeStorage() {
       delete entry(userId).orderDraft;
       delete entry(userId).sessionState;
     },
-    seenMid: mid => mids.has(mid),
-    markMid: mid => mids.add(mid),
+    tryMarkMid: (mid, details = {}) => {
+      const normalized = String(mid || '').trim();
+      if (!normalized) return false;
+      if (mids.has(normalized)) return false;
+      mids.add(normalized);
+      midMarks.push({ mid: normalized, ...details });
+      return true;
+    },
     appendCustomer: customer => customers.push(customer),
     appendEvent: event => events.push(event)
   };
@@ -315,6 +324,51 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent[1].url).toContain('menu1.png');
     expect(h.sent[2].url).toContain('menu2.png');
+  });
+
+  it('marks a new message id before processing and skips duplicates', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'atomic_mid_user';
+
+    await h.handleText('chào shop', senderId, 'm_atomic_mid', 'page_atomic');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.storage._midMarks).toEqual([{
+      mid: 'm_atomic_mid',
+      senderId,
+      pageId: 'page_atomic'
+    }]);
+
+    await h.handleText('cho xem MÃ8', senderId, 'm_atomic_mid', 'page_atomic');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.storage.inHandoff(senderId)).toBeFalse();
+  });
+
+  it('fails closed without sending when message id storage fails', async () => {
+    const storage = makeStorage();
+    storage.tryMarkMid = () => {
+      throw new Error('mid store down');
+    };
+    const errors = [];
+    const originalError = console.error;
+    console.error = message => errors.push(String(message));
+    try {
+      const h = createWebhookHarness(undefined, {
+        storage,
+        throwOnLeadParse: true
+      });
+
+      await h.handleText('chào shop', 'mid_storage_error', 'm_storage_error', 'page_error');
+
+      expect(h.sent.length).toBe(0);
+      const errorText = errors.join('\n');
+      expect(errorText).toContain('MID idempotency fail-closed');
+      expect(errorText).toContain('page_ref=');
+      expect(errorText.includes('page_error')).toBeFalse();
+    } finally {
+      console.error = originalError;
+    }
   });
 
   it('uses DB runtime config when resolver returns a page config', async () => {

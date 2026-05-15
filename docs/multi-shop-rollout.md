@@ -57,6 +57,20 @@ Latest local per-page credential phase 1 update:
   `479 passed, 0 failed`; `git diff --check` passed.
 - Production deploy/env/DB/data remain untouched.
 
+Latest local atomic message idempotency phase 1 update:
+
+- Storage adapters now expose `tryMarkMid()` instead of the
+  `seenMid()`/`markMid()` pair.
+- PostgreSQL idempotency uses one atomic
+  `INSERT ... ON CONFLICT DO NOTHING RETURNING` against `processed_mids`.
+- Runtime webhook awaits MID marking before processing; duplicate MIDs skip the
+  event, and MID storage errors fail closed without sending a customer reply.
+- File storage preserves the previous in-memory MID dedupe behavior behind the
+  new interface.
+- Latest local verification for this update: `npm test` passed with
+  `481 passed, 0 failed`.
+- Production deploy/env/DB/data remain untouched.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -106,10 +120,10 @@ production environment variables, or write production data.
    store encrypted page credentials by shop/page and make Messenger sends select
    the resolved page token. Keep `FB_PAGE_TOKEN` only as the legacy file-backed
    fallback.
-2. Atomic message idempotency:
-   replace `seenMid()` plus async `markMid()` with `tryMarkMid()`. PostgreSQL
-   should use `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage can
-   preserve current behavior behind the same interface.
+2. Atomic message idempotency: local phase 1 done.
+   Runtime awaits `tryMarkMid()` before processing. PostgreSQL uses
+   `INSERT ... ON CONFLICT DO NOTHING RETURNING`; file storage preserves the
+   previous behavior behind the same interface.
 3. Feature flag facade:
    add `getFeatureFlag(shopConfig/shopId, key)` before any schema migration so
    runtime code stops depending directly on `settings_json.ruleToggles.X`.

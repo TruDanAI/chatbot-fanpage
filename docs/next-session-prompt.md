@@ -35,7 +35,13 @@ Mục tiêu sản phẩm:
   `shop_page_credentials` additive SQL proposal, credential service mã hóa/giải
   mã bằng `CREDENTIAL_MASTER_KEY`, DB-backed runtime chọn đúng page token,
   missing credential fail-closed, legacy file-backed runtime vẫn dùng
-  `FB_PAGE_TOKEN`; latest local verification `npm test` = 479 passed, 0 failed.
+  `FB_PAGE_TOKEN`.
+- Atomic message idempotency phase 1 đã hoàn tất local-only:
+  storage expose `tryMarkMid()`, PostgreSQL dùng atomic
+  `INSERT ... ON CONFLICT DO NOTHING RETURNING`, duplicate MID skip event,
+  MID storage error fail-closed rõ ràng không gửi customer reply, file adapter
+  giữ behavior MID dedupe hiện tại sau cùng interface; latest local
+  verification `npm test` = 481 passed, 0 failed.
   Không deploy, không đổi production env, không ghi production DB, không đụng
   production /data.
 
@@ -140,12 +146,15 @@ Trạng thái production mới nhất đã biết:
 - Không apply schema trong lúc POST/GET smoke.
 - Không đụng production /data.
 - Latest local test coverage baseline:
-  `npm test` passed with 479 passed, 0 failed after per-page credential phase 1.
+  `npm test` passed with 481 passed, 0 failed after atomic message
+  idempotency phase 1.
   Tests cover internal-notes validation/RBAC/transaction/audit fail-closed
   behavior, SQL verifier guardrails, read model behavior, webhook log
   redaction, multi-shop runtime admission, page credential encryption/decryption,
   DB-backed credential token selection, missing credential fail-closed behavior,
-  legacy `FB_PAGE_TOKEN` fallback, and no raw token/page_id logging.
+  legacy `FB_PAGE_TOKEN` fallback, atomic MID `tryMarkMid()` duplicate skips,
+  PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe, and
+  no raw token/page_id logging.
 - Latest Phase 4 internal notes live local SQL verification:
   npm run verify:internal-notes-sql passed using local Docker Postgres
   container chatbot-fanpage-internal-notes-pg, bound to
@@ -1218,15 +1227,11 @@ production smoke đã pass và ADMIN_EXPORT_TOKEN đã rotate. Phase 4 internal
 notes v1 backend/API/UI đã complete và production-smoked theo các giới hạn an
 toàn ở trên. Multi-shop staging MVP đã pass, và runtime admission guard đã được
 thêm để giảm blast radius. Per-page credential resolution phase 1 đã hoàn tất
-local-only. Trọng tâm tiếp theo là atomic message idempotency trước khi rollout
-production rộng hơn.
+local-only. Atomic message idempotency phase 1 đã hoàn tất local-only. Trọng
+tâm tiếp theo là feature flag facade trước khi rollout production rộng hơn.
 
 Next recommended task:
-- Làm atomic message idempotency:
-  - thay `seenMid()` + async `markMid()` bằng `tryMarkMid()`
-  - PostgreSQL dùng `INSERT ... ON CONFLICT DO NOTHING RETURNING`
-  - file adapter giữ behavior hiện tại sau cùng interface
-- Sau đó làm feature flag facade:
+- Làm feature flag facade:
   - tạo `getFeatureFlag(shopConfig/shopId, key)`
   - runtime đọc facade, không đọc trực tiếp `settings_json.ruleToggles.X` rải rác
   - chưa migrate schema nếu chưa cần
@@ -1270,13 +1275,14 @@ Việc nên làm đầu phiên tới:
    - admin_user_roles
    - admin_audit_log
 7. Chạy npm test và npm audit --omit=dev nếu có code/script thay đổi. Baseline
-   coverage mới nhất đã biết: `npm test` 479 passed, 0 failed sau per-page
-   credential phase 1; tests cover validation, RBAC, transaction/audit
+   coverage mới nhất đã biết: `npm test` 481 passed, 0 failed sau atomic
+   message idempotency phase 1; tests cover validation, RBAC, transaction/audit
    fail-closed behavior, static SQL checks, verifier guardrails, read model
    behavior, webhook log redaction, multi-shop admission, credential
    encryption/decryption, DB-backed credential token selection, missing
-   credential fail-closed, legacy `FB_PAGE_TOKEN`, and no raw token/page_id
-   logging.
+   credential fail-closed, legacy `FB_PAGE_TOKEN`, atomic MID duplicate skips,
+   PostgreSQL `ON CONFLICT DO NOTHING RETURNING`, file adapter MID dedupe, and
+   no raw token/page_id logging.
 
 Phase 3 browser cookie smoke:
 - Đã hoàn tất ngày 2026-05-11 sau backup và xác nhận riêng.
@@ -1289,8 +1295,8 @@ Code-only hướng khác:
   - tách HTML view helpers nhỏ hơn nếu cần test sâu hơn
 - Multi-shop safety foundation:
   - per-page credential resolution phase 1 đã hoàn tất local-only
-  - atomic `tryMarkMid()` là bước tiếp theo
-  - feature flag facade đứng sau idempotency
+  - atomic `tryMarkMid()` phase 1 đã hoàn tất local-only
+  - feature flag facade là bước tiếp theo
   - durable queue đứng sau token isolation và idempotency, không làm trước
   - per-shop health/credential status đứng sau queue/credential validation
 - Phase 4 internal notes:

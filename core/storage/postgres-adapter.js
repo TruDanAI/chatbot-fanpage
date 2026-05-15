@@ -261,6 +261,16 @@ function createPostgresStorageAdapter(options = {}) {
     return writeQueue;
   }
 
+  function enqueueRequiredWrite(label, fn) {
+    const operation = writeQueue
+      .then(() => ready)
+      .then(fn);
+    writeQueue = operation.catch(err => {
+      console.error(`Lỗi ghi PostgreSQL storage (${label}):`, err.message);
+    });
+    return operation;
+  }
+
   async function loadState() {
     const conversations = await client.query(
       `
@@ -1063,29 +1073,37 @@ function createPostgresStorageAdapter(options = {}) {
       return { ...next };
     },
 
-    seenMid(mid) {
-      assertReady();
-      return mids.has(mid);
-    },
-
-    markMid(mid) {
+    async tryMarkMid(mid, details = {}) {
       assertReady();
       const normalized = trimText(mid);
-      if (!normalized) return;
-      mids.add(normalized);
-      if (mids.size > MID_LIMIT) {
-        const arr = [...mids];
-        mids.clear();
-        arr.slice(-MID_LIMIT).forEach(m => mids.add(m));
-      }
-      void enqueueWrite('processed_mid', () => client.query(
+      if (!normalized) return false;
+      const scopedPageId = normalizeIdentifier(details.pageId, pageId);
+
+      const result = await enqueueRequiredWrite('processed_mid', () => client.query(
         `
           INSERT INTO processed_mids (tenant_id, page_id, mid, sender_id, first_seen_at, meta)
-          VALUES ($1, $2, $3, '', now(), '{}'::jsonb)
+          VALUES ($1, $2, $3, $4, now(), $5::jsonb)
           ON CONFLICT (tenant_id, page_id, mid) DO NOTHING
+          RETURNING mid
         `,
-        [tenantId, pageId, normalized]
+        [
+          tenantId,
+          scopedPageId,
+          normalized,
+          trimText(details.senderId),
+          JSON.stringify(normalizeJsonObject(details.meta))
+        ]
       ));
+      const inserted = Boolean(result.rows && result.rows.length);
+      if (inserted) {
+        mids.add(normalized);
+        if (mids.size > MID_LIMIT) {
+          const arr = [...mids];
+          mids.clear();
+          arr.slice(-MID_LIMIT).forEach(m => mids.add(m));
+        }
+      }
+      return inserted;
     },
 
     appendCustomer(customer) {

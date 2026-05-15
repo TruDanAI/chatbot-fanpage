@@ -534,18 +534,18 @@ return {
     return { ...next };
   },
 
-  seenMid(mid) {
-    return mids.has(mid);
-  },
-
-  markMid(mid) {
-    mids.add(mid);
+  tryMarkMid(mid) {
+    const normalized = trimText(mid);
+    if (!normalized) return false;
+    if (mids.has(normalized)) return false;
+    mids.add(normalized);
     if (mids.size > MID_LIMIT) {
       const arr = [...mids];
       mids.clear();
       arr.slice(-MID_LIMIT).forEach(m => mids.add(m));
     }
     scheduleSave();
+    return true;
   },
 
   appendCustomer(customer) {
