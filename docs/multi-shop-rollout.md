@@ -241,28 +241,31 @@ approval in the same session before it is run.
 9. Seed `adult-shop` into production PostgreSQL from the current production
    file-backed catalog/config.
 10. Seed encrypted `shop_page_credentials` only after separate production secret
-   handling/env approval. Do not print token plaintext, encrypted values, or
-   `CREDENTIAL_MASTER_KEY`.
-11. Verify count-only table state:
+    handling/env approval. Do not print token plaintext, encrypted values, or
+    `CREDENTIAL_MASTER_KEY`.
+11. Keep `MULTI_SHOP_DB_CONFIG_ENABLED=false` while preparing and validating
+    credentials. Do not enable DB-backed runtime until the credential seed and
+    validation gates below pass.
+12. Verify count-only table state:
    `shops`, `shop_pages`, `shop_settings`, `shop_products`, `shop_assets`,
    `shop_page_credentials`, `webhook_queue`, `admin_roles`, `admin_users`,
    `admin_user_roles`, and `admin_audit_log`.
-12. Deploy the reviewed runtime/dashboard commit only after deploy approval.
-13. Set `CREDENTIAL_MASTER_KEY` only after separate production environment
+13. Deploy the reviewed runtime/dashboard commit only after deploy approval.
+14. Set `CREDENTIAL_MASTER_KEY` only after separate production environment
     approval.
-14. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
+15. Enable `MULTI_SHOP_DB_CONFIG_ENABLED=true` only after separate production
     environment approval.
-15. Keep `WEBHOOK_QUEUE_ENABLED=false` until a separate queue rollout approval
+16. Keep `WEBHOOK_QUEUE_ENABLED=false` until a separate queue rollout approval
     covers worker behavior, retry visibility, rollback, and production DB
     write expectations.
-16. Smoke public `/healthz` without auth.
-17. Smoke admin shops read routes only after approval, because authenticated
+17. Smoke public `/healthz` without auth.
+18. Smoke admin shops read routes only after approval, because authenticated
     admin reads can write audit rows.
-18. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
+19. Smoke product CRUD with a test product code such as `ZB-SMOKE-001` only
     after explicit production DB write approval.
-19. Archive the smoke product as cleanup and verify there is no duplicate
+20. Archive the smoke product as cleanup and verify there is no duplicate
     active smoke code.
-20. Verify count-only audit delta and product counts. Do not print raw audit,
+21. Verify count-only audit delta and product counts. Do not print raw audit,
     product, customer, order, or message rows.
 
 Expected post-rollout product checks:
@@ -524,6 +527,73 @@ Safety boundary for this checkpoint:
 - No raw secrets, env values, tokens, customer data, message payloads, or raw
   page IDs printed.
 - No commit or push performed.
+
+## Adult-Shop Credential Seed Preparation - 2026-05-15
+
+This section is a local preparation plan only. It is not approval to set
+`CREDENTIAL_MASTER_KEY`, seed production credentials, enable DB-backed runtime,
+deploy, touch production `/data`, or run authenticated smoke.
+
+Exact `shop_page_credentials` write target:
+
+- `shop_id`: active `shops.id`, expected `adult-shop` for the first rollout.
+- `page_mapping_id`: active `shop_pages.id` for the intended page mapping.
+- `credential_type`: `fb_page_token`.
+- `encrypted_value`: AES-GCM envelope from
+  `core/credentials/page-credentials.js`; never print this value.
+- `encryption_key_id`: default `default` unless a rotation plan chooses a
+  different safe label.
+- `key_version`: positive integer, default `1`.
+- `status`: `active`.
+- `metadata_json`: safe object metadata only; no tokens, raw page IDs, or
+  customer data.
+
+Local/staging helper:
+
+```bash
+node scripts/prepare-page-credential-seed.js --dry-run --shop-id adult-shop --page-id <page-id>
+```
+
+The helper uses `CHATBOT_TEST_DATABASE_URL` or `CHATBOT_STAGING_DATABASE_URL`
+outside production. It intentionally ignores `DATABASE_URL` unless an approved
+production apply is explicitly requested. It requires `CREDENTIAL_MASTER_KEY`
+and a token from `PAGE_CREDENTIAL_TOKEN` or `FB_PAGE_TOKEN`, but prints neither
+the token nor the encrypted value.
+
+Safe seed flow for adult-shop:
+
+1. Confirm a fresh production PostgreSQL backup exists and was verified.
+2. Confirm `MULTI_SHOP_DB_CONFIG_ENABLED=false` remains the safe production
+   runtime state.
+3. Confirm `shop_page_credentials` exists and has no active credential for the
+   intended active `adult-shop` page mapping.
+4. Resolve exactly one active shop/page mapping with a count/query-safe lookup:
+   active `shops.id = adult-shop`, active `shop_pages.page_id = <page-id>`.
+5. Refuse to continue if the shop/page mapping is missing or ambiguous.
+6. Refuse to continue if an active `fb_page_token` credential already exists.
+   Rotation needs a separate explicit rotate mode/runbook; the initial helper
+   is fail-safe and does not archive or replace existing credentials.
+7. Encrypt the page token with `CREDENTIAL_MASTER_KEY` locally in process.
+8. Insert exactly one active `shop_page_credentials` row only after explicit
+   production DB write approval.
+9. Print only safe summary fields: shop found, page found, active credential
+   exists, credential inserted or dry-run no write.
+10. Do not print token plaintext, encrypted value, `CREDENTIAL_MASTER_KEY`,
+    `DATABASE_URL`, raw page ID, customer rows, messages, orders, or audit rows.
+
+Approved production apply shape, for a future session only:
+
+```bash
+CONFIRM_PRODUCTION_WRITE="seed adult-shop page credential" \
+node scripts/prepare-page-credential-seed.js --production --apply --shop-id adult-shop --page-id <page-id>
+```
+
+Do not run the production command until there is explicit approval for all of:
+fresh backup, production secret handling, production DB write, and follow-up
+count-only validation. After the seed, keep
+`MULTI_SHOP_DB_CONFIG_ENABLED=false` until `CREDENTIAL_MASTER_KEY` is set,
+credential resolution is validated, rollback is ready, and enabling the
+DB-backed runtime has separate production environment approval.
 
 ## Safety Rules
 
