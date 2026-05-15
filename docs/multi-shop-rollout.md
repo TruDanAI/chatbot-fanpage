@@ -490,6 +490,41 @@ Next step: treat the code deploy as complete, but keep DB-backed multi-shop,
 credential seeding, queue rollout, environment changes, authenticated admin
 smoke, and product CRUD smoke behind separate approvals.
 
+## Production Incident Recovery Checkpoint - 2026-05-15
+
+Railway production logs showed DB-backed multi-shop credential fail-closed
+events after the safety foundation deploy. Adult-shop was restored by disabling
+the DB-backed runtime flag and returning runtime page credentials to the safe
+legacy fallback path.
+
+- Changed production environment variable:
+  `MULTI_SHOP_DB_CONFIG_ENABLED=false`.
+- No credential master key was added.
+- No credential rows were seeded.
+- Webhook queue was not enabled.
+- Railway deployment after the env change:
+  `e5413261-87a9-4556-a5c4-53ab65f05666`.
+- Deployment status: `SUCCESS`.
+- Deployment created at: `2026-05-15T10:53:07.077Z`.
+
+Post-recovery public checks passed:
+
+- Public `GET /healthz`: HTTP `200`, `ok=true`, `shop=adult-shop`,
+  `products=13`, `storage.adapter=postgres`, `storage.ready=true`,
+  `messenger.dryRun=false`.
+- Public `GET /admin/login`: HTTP `200`, login form present.
+- Filtered Railway logs since the recovery deployment showed
+  `credential_master_key_missing` count `0`.
+
+Safety boundary for this checkpoint:
+
+- No production DB writes.
+- No production `/data` access.
+- No authenticated production admin smoke.
+- No raw secrets, env values, tokens, customer data, message payloads, or raw
+  page IDs printed.
+- No commit or push performed.
+
 ## Safety Rules
 
 - Do not write production PostgreSQL before a fresh backup exists and is
