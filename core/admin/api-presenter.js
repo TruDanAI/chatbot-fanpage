@@ -2,6 +2,7 @@ const {
   maskAddress,
   maskPhone
 } = require('./views');
+const { pageRef } = require('../utils/log-refs');
 
 function limitText(value = '', max = 240) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -325,9 +326,11 @@ function presentShopListItem(shop = {}) {
 }
 
 function presentShopPage(page = {}) {
+  const rawPageId = page.page_id || '';
   return {
     id: page.id || '',
-    page_id: page.page_id || '',
+    shop_id: page.shop_id || '',
+    page_ref: page.page_ref || (rawPageId ? pageRef(rawPageId) : ''),
     page_name: limitText(page.page_name, 120),
     status: page.status || '',
     created_at: page.created_at || '',
@@ -499,6 +502,15 @@ function presentShopSettingsWriteApi(model = {}) {
   };
 }
 
+function presentPageMappingWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    page: presentShopPage(model.page || {})
+  };
+}
+
 function presentShopWriteApi(model = {}) {
   return {
     ok: true,
@@ -543,6 +555,7 @@ module.exports = {
   presentDashboardApi,
   presentInternalNotesApi,
   presentOperations,
+  presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopSettingsReadApi,
   presentShopSettingsWriteApi,

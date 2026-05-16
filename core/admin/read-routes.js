@@ -43,6 +43,9 @@ const ASSET_FLASH_MESSAGES = {
   disabled: { type: 'success', text: 'Asset disabled.' },
   archived: { type: 'success', text: 'Asset archived. No asset was deleted.' }
 };
+const PAGE_FLASH_MESSAGES = {
+  created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' }
+};
 
 function createAdminReadHandlers({
   reader,
@@ -118,6 +121,11 @@ function createAdminReadHandlers({
   function resolveAssetFlash(query = {}) {
     const key = String(query.assetMessage || '').trim().toLowerCase();
     return ASSET_FLASH_MESSAGES[key] || {};
+  }
+
+  function resolvePageFlash(query = {}) {
+    const key = String(query.pageMessage || '').trim().toLowerCase();
+    return PAGE_FLASH_MESSAGES[key] || {};
   }
 
   function isMissingInternalNotesSchemaError(err) {
@@ -400,6 +408,7 @@ function createAdminReadHandlers({
       };
       presented.productFlash = resolveProductFlash(req.query || {});
       presented.assetFlash = resolveAssetFlash(req.query || {});
+      presented.pageFlash = resolvePageFlash(req.query || {});
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,

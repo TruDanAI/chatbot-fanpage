@@ -1,4 +1,5 @@
 const { normalizeRuleToggles } = require('../rule-toggles');
+const { pageRef } = require('../utils/log-refs');
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -630,6 +631,16 @@ function renderProductAddForm(shopId = '') {
   </form>`;
 }
 
+function renderPageMappingAddForm(shopId = '') {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/pages`;
+  return `<form class="product-form" method="post" action="${escapeHtml(action)}">
+    <h3>Add page mapping</h3>
+    <label>Page ID <span class="required">required</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"></label>
+    <label>Page name<input name="page_name" maxlength="180"></label>
+    <div class="form-actions"><button type="submit">Add mapping</button><span class="meta">Creates an active page mapping only. Credentials are not handled here.</span></div>
+  </form>`;
+}
+
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
@@ -815,9 +826,11 @@ function renderShopDetailHtml(model = {}) {
       </tbody></table>
 
       <h2>Page Mappings</h2>
-      ${renderTable(['page id', 'name', 'status', 'updated'], model.pages || [], page => `
+      ${renderProductFlash(model.pageFlash || {})}
+      ${renderPageMappingAddForm(shop.id)}
+      ${renderTable(['page ref', 'name', 'status', 'updated'], model.pages || [], page => `
         <tr>
-          <td><code>${escapeHtml(page.page_id)}</code></td>
+          <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
           <td>${escapeHtml(page.page_name)}</td>
           <td>${renderStatus(page.status)}</td>
           <td>${escapeHtml(formatDate(page.updated_at))}</td>

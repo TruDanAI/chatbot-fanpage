@@ -6,6 +6,7 @@ const {
 const { createPostgresAuditLogger } = require('./admin/audit');
 const {
   presentAssetWriteApi,
+  presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopSettingsWriteApi,
   presentShopWriteApi
@@ -23,6 +24,10 @@ const {
   createPostgresProductWriteService,
   isMissingProductWriteSchemaError
 } = require('./admin/product-writes');
+const {
+  createPostgresPageMappingWriteService,
+  isMissingPageMappingWriteSchemaError
+} = require('./admin/page-mapping-writes');
 const {
   createPostgresShopSettingsWriteService,
   isMissingShopSettingsWriteSchemaError
@@ -384,6 +389,62 @@ function presentShopWriteTextError(err) {
   };
 }
 
+function presentPageMappingWriteError(err) {
+  if (isMissingPageMappingWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    invalid_page_id: ['invalid_page_id', 'Page id is invalid.', 400],
+    invalid_page_mapping_status: ['invalid_page_mapping_status', 'Page mapping status is invalid.', 400],
+    duplicate_active_page_id: ['duplicate_active_page_id', 'Page id already has an active mapping.', 409],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    permission_denied: ['permission_denied', 'Page mapping write permission is required.', 403],
+    database_url_required: ['page_mapping_write_unavailable', 'Page mapping writes are unavailable.', 503],
+    page_mapping_commit_failed: ['page_mapping_commit_failed', 'Page mapping write could not be committed.', 500],
+    page_mapping_persist_failed: ['page_mapping_create_failed', 'Page mapping could not be created.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'page_mapping_write_failed',
+      message: 'Page mapping write could not be completed.'
+    }
+  };
+}
+
+function presentPageMappingWriteTextError(err) {
+  const response = presentPageMappingWriteError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Page mapping write could not be completed.'
+  };
+}
+
 function presentAssetWriteError(err) {
   if (isMissingAssetWriteSchemaError(err)) {
     return {
@@ -452,6 +513,7 @@ function registerAdminRoutes(app, {
   dashboardReader,
   internalNoteService,
   assetWriteService,
+  pageMappingWriteService,
   productWriteService,
   shopSettingsWriteService,
   shopWriteService,
@@ -489,6 +551,9 @@ function registerAdminRoutes(app, {
     pageId
   });
   const assetWrites = assetWriteService || createPostgresAssetWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const pageMappingWrites = pageMappingWriteService || createPostgresPageMappingWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const productWrites = productWriteService || createPostgresProductWriteService({
@@ -696,6 +761,60 @@ function registerAdminRoutes(app, {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
     return safeMessage ? `${base}?productMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  function shopPageMappingRedirect(shopId = '', message = '') {
+    const base = `/admin/shops/${encodeURIComponent(shopId)}`;
+    const safeMessage = String(message || '').trim();
+    return safeMessage ? `${base}?pageMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  async function createPageMappingApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_page.create',
+      resourceType: 'shop_page',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageMappingWrites.createPageMapping({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentPageMappingWriteApi(result));
+    } catch (err) {
+      const response = presentPageMappingWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function createPageMappingHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_page.create',
+      resourceType: 'shop_page',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await pageMappingWrites.createPageMapping({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopPageMappingRedirect(shopId, 'created'));
+    } catch (err) {
+      const response = presentPageMappingWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
   }
 
   async function createProductApi(req, res) {
@@ -1180,6 +1299,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
+  app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
@@ -1206,6 +1326,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/shops/new', sendNewShopForm);
   app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
+  app.post('/admin/shops/:shopId/pages', createPageMappingHtml);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
   app.post('/admin/shops/:shopId/products', createProductHtml);
   app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
@@ -1238,6 +1359,7 @@ module.exports = {
   createPostgresAuditLogger,
   createPostgresAssetWriteService,
   createPostgresDashboardReader,
+  createPostgresPageMappingWriteService,
   createPostgresProductWriteService,
   createPostgresShopSettingsWriteService,
   createPostgresShopWriteService,

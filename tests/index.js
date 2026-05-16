@@ -23,6 +23,7 @@ require('./admin-auth.test');
 require('./admin-internal-notes.test');
 require('./internal-notes-sql-verifier.test');
 require('./multi-shop-sql.test');
+require('./page-mapping-writes.test');
 require('./product-writes.test');
 require('./asset-writes.test');
 require('./admin-routes.test');

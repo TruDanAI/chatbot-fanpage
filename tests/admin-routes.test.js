@@ -770,6 +770,33 @@ function createShopWriteServiceStub({ failWith, createdShop } = {}) {
   };
 }
 
+function createPageMappingWriteServiceStub({ failWith, createdPage } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async createPageMapping(input = {}) {
+      calls.push({ method: 'createPageMapping', input });
+      if (failWith) throw failWith;
+      const body = input.body || {};
+      const pageId = String(body.page_id || body.pageId || 'page_new').trim();
+      return createdPage || {
+        shopId: input.shopId || 'adult-shop',
+        page: {
+          id: 'page-map-new',
+          shop_id: input.shopId || 'adult-shop',
+          page_id: pageId,
+          page_ref: 'p:safe-page',
+          page_name: String(body.page_name || body.pageName || 'New Page').trim(),
+          status: 'active',
+          created_at: '2026-05-16T00:00:00.000Z',
+          updated_at: '2026-05-16T00:00:00.000Z',
+          page_access_token: 'do-not-return'
+        }
+      };
+    }
+  };
+}
+
 function createInternalNoteRouteFakeClientClass({
   failAudit = false,
   failNoteCode = '',
@@ -2409,7 +2436,8 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(body.schemaReady).toBeTrue();
     expect(body.shop.id).toBe('adult-shop');
-    expect(body.pages[0].page_id).toBe('page_1');
+    expect(body.pages[0].page_id).toBe(undefined);
+    expect(body.pages[0].page_ref.startsWith('p:')).toBeTrue();
     expect(body.settings.bot_mode).toBe('menu_code_handoff');
     expect(body.settings.settings_json.minAge).toBe(18);
     expect(body.products[0].code).toBe('DB1');
@@ -2417,6 +2445,7 @@ describe('admin dashboard routes', () => {
     expect(body.assets.summary.product_image).toBe(1);
     expect(body.assets.summary.shop_image).toBe(undefined);
     expect(body.assets.rows[0].public_url).toBe('https://cdn.example.test/db1.jpg');
+    expect(bodyText.includes('page_1')).toBeFalse();
     expect(bodyText.includes('do-not-return')).toBeFalse();
     expect(bodyText.includes('page_access_token')).toBeFalse();
     expect(bodyText.includes('secret_note')).toBeFalse();
@@ -2821,6 +2850,116 @@ describe('admin dashboard routes', () => {
     }
   });
 
+  it('page mapping create API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const pageMappingWrites = createPageMappingWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageMappingWriteService: pageMappingWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages'](createReq({
+        params: { shopId: 'adult-shop' },
+        body: { page_id: 'page_new', page_name: 'New Page' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { page_id: 'page_new', page_name: 'New Page' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageMappingWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_page.create');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('page mapping create API returns sanitized mapping without credential fields', async () => {
+    const app = createApp();
+    const pageMappingWrites = createPageMappingWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageMappingWriteService: pageMappingWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { page_id: 'page_new', page_name: 'New Page' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(201);
+    expect(body.ok).toBeTrue();
+    expect(body.shop_id).toBe('adult-shop');
+    expect(body.page.id).toBe('page-map-new');
+    expect(body.page.shop_id).toBe('adult-shop');
+    expect(body.page.page_id).toBe(undefined);
+    expect(body.page.page_ref).toBe('p:safe-page');
+    expect(pageMappingWrites.calls[0].method).toBe('createPageMapping');
+    expect(pageMappingWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(pageMappingWrites.calls[0].input.body.page_id).toBe('page_new');
+    expect(bodyText.includes('page_new')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('page_access_token')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page mapping create API maps validation and duplicate errors safely', async () => {
+    for (const item of [
+      { code: 'invalid_page_id', status: 400, error: 'invalid_page_id' },
+      { code: 'duplicate_active_page_id', status: 409, error: 'duplicate_active_page_id' },
+      { code: 'shop_not_found', status: 404, error: 'shop_not_found' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shop_pages" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageMappingWriteService: createPageMappingWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { page_id: 'page_new', page_name: 'New Page' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
   it('shop detail HTML filters products by code/name and status without exposing secrets', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -2844,6 +2983,10 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('Hidden Product');
     expect(res.body).toContain('1 of 3 products');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/pages"');
+    expect(res.body).toContain('name="page_id"');
+    expect(res.body).toContain('p:');
+    expect(res.body.includes('page_1')).toBeFalse();
     expect(res.body.includes('DB Product')).toBeFalse();
     expect(res.body.includes('Archived Product')).toBeFalse();
     expect(res.body.includes('do-not-return')).toBeFalse();
