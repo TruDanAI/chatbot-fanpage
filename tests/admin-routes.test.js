@@ -7,6 +7,7 @@ const {
   createAdminRouteAuthorizer,
   createPostgresAuditLogger,
   createPostgresDashboardReader,
+  createPostgresShopWriteService,
   parseAdminRoles,
   registerAdminRoutes,
   setAdminNoStoreHeaders
@@ -716,6 +717,53 @@ function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) 
             nested: { api_secret: 'do-not-return' }
           },
           updated_at: '2026-05-12T06:00:00.000Z'
+        }
+      };
+    }
+  };
+}
+
+function createShopWriteServiceStub({ failWith, createdShop } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async createShop(input = {}) {
+      calls.push({ method: 'createShop', input });
+      if (failWith) throw failWith;
+      const body = input.body || {};
+      const shopId = String(body.shop_id || body.shopId || body.slug || 'new-shop').trim();
+      const name = String(body.display_name || body.displayName || body.name || 'New Shop').trim();
+      return createdShop || {
+        shopId,
+        shop: {
+          id: shopId,
+          slug: shopId,
+          name,
+          status: String(body.status || 'active').trim(),
+          default_locale: String(body.locale || body.default_locale || 'vi-VN').trim(),
+          timezone: String(body.timezone || 'Asia/Ho_Chi_Minh').trim(),
+          created_at: '2026-05-16T00:00:00.000Z',
+          updated_at: '2026-05-16T00:00:00.000Z',
+          page_access_token: 'do-not-return'
+        },
+        settings: {
+          shop_id: shopId,
+          bot_mode: String(body.bot_mode || 'menu_code_handoff').trim(),
+          handoff_enabled: true,
+          handoff_message: '',
+          menu_intro_text: '',
+          fallback_text: '',
+          settings_json: {
+            ruleToggles: {
+              productCodeLookupEnabled: true,
+              menuSendingEnabled: true,
+              postProductHandoffEnabled: true,
+              fallbackEnabled: true,
+              leadCaptureEnabled: false
+            },
+            accessToken: 'do-not-return'
+          },
+          updated_at: '2026-05-16T00:00:00.000Z'
         }
       };
     }
@@ -2603,6 +2651,176 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('api_secret')).toBeFalse();
   });
 
+  it('shops HTML shows create link for write-capable admin and renders create form defaults', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const listRes = createRes();
+    await app.routes['/admin/shops'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), listRes);
+    expect(listRes.statusCode).toBe(200);
+    expect(listRes.body).toContain('href="/admin/shops/new"');
+    expect(listRes.body).toContain('Create shop');
+
+    const formRes = createRes();
+    await app.routes['/admin/shops/new'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), formRes);
+    expect(formRes.statusCode).toBe(200);
+    expect(formRes.body).toContain('Create Admin Shop');
+    expect(formRes.body).toContain('action="/admin/shops"');
+    expect(formRes.body).toContain('name="shop_id"');
+    expect(formRes.body).toContain('name="display_name"');
+    expect(formRes.body).toContain('value="menu_code_handoff" selected');
+    expect(formRes.body).toContain('value="vi-VN"');
+    expect(formRes.body).toContain('value="Asia/Ho_Chi_Minh"');
+    expect(formRes.body).toContain('Page mapping and credentials are separate phases.');
+  });
+
+  it('shop create API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const shopWrites = createShopWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopWriteService: shopWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops'](createReq({
+        body: { shop_id: 'new-shop', display_name: 'New Shop' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        body: { shop_id: 'new-shop', display_name: 'New Shop' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(shopWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop.create');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('shop create API returns sanitized created shop and settings', async () => {
+    const app = createApp();
+    const shopWrites = createShopWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopWriteService: shopWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      body: {
+        shop_id: 'new-shop',
+        display_name: 'New Shop',
+        status: 'active',
+        bot_mode: 'menu_code_handoff',
+        locale: 'vi-VN',
+        timezone: 'Asia/Ho_Chi_Minh'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(201);
+    expect(body.ok).toBeTrue();
+    expect(body.shop_id).toBe('new-shop');
+    expect(body.shop.id).toBe('new-shop');
+    expect(body.settings.bot_mode).toBe('menu_code_handoff');
+    expect(shopWrites.calls[0].method).toBe('createShop');
+    expect(shopWrites.calls[0].input.principal.roles).toEqual(['maintainer']);
+    expect(shopWrites.calls[0].input.body.shop_id).toBe('new-shop');
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('page_access_token')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('shop create HTML redirects to created shop detail', async () => {
+    const app = createApp();
+    const shopWrites = createShopWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopWriteService: shopWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      body: {
+        shop_id: 'new-shop',
+        display_name: 'New Shop',
+        status: 'active',
+        bot_mode: 'menu_code_handoff'
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/new-shop');
+    expect(shopWrites.calls.length).toBe(1);
+  });
+
+  it('shop create API maps duplicate and invalid input safely', async () => {
+    for (const item of [
+      { code: 'duplicate_shop', status: 409, error: 'duplicate_shop' },
+      { code: 'invalid_shop_id', status: 400, error: 'invalid_shop_input' },
+      { code: 'invalid_bot_mode', status: 400, error: 'invalid_bot_mode' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shops" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopWriteService: createShopWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        body: { shop_id: 'new-shop', display_name: 'New Shop' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
   it('shop detail HTML filters products by code/name and status without exposing secrets', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -3866,6 +4084,206 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(queries.some(item => /^DELETE\b/i.test(item.sql))).toBeFalse();
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+  });
+
+  it('shop create service inserts shop, default settings, and audit in one transaction only', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN') return { rows: [] };
+        if (normalized === 'COMMIT') return { rows: [], command: 'COMMIT' };
+        if (normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          expect(params).toEqual(['new-shop']);
+          return { rows: [] };
+        }
+        if (/^INSERT INTO shops/i.test(normalized)) {
+          expect(params).toEqual([
+            'new-shop',
+            'new-shop',
+            'New Shop',
+            'active',
+            'vi-VN',
+            'Asia/Ho_Chi_Minh'
+          ]);
+          return {
+            rows: [{
+              id: params[0],
+              slug: params[1],
+              name: params[2],
+              status: params[3],
+              default_locale: params[4],
+              timezone: params[5],
+              created_at: '2026-05-16T00:00:00.000Z',
+              updated_at: '2026-05-16T00:00:00.000Z'
+            }]
+          };
+        }
+        if (/^INSERT INTO shop_settings/i.test(normalized)) {
+          expect(params[0]).toBe('new-shop');
+          expect(params[1]).toBe('menu_code_handoff');
+          expect(params[2]).toBe(true);
+          const settingsJson = JSON.parse(params[3]);
+          expect(settingsJson.ruleToggles).toEqual({
+            productCodeLookupEnabled: true,
+            menuSendingEnabled: true,
+            postProductHandoffEnabled: true,
+            fallbackEnabled: true,
+            leadCaptureEnabled: false
+          });
+          return {
+            rows: [{
+              shop_id: params[0],
+              bot_mode: params[1],
+              handoff_enabled: params[2],
+              handoff_message: '',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: settingsJson,
+              updated_at: '2026-05-16T00:00:00.000Z'
+            }]
+          };
+        }
+        if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+          const metadata = JSON.parse(params[12]);
+          expect(params[5]).toBe('admin.shop.create');
+          expect(params[6]).toBe('shop');
+          expect(params[7]).toBe('new-shop');
+          expect(metadata.shop_id).toBe('new-shop');
+          expect(metadata.slug).toBe('new-shop');
+          expect(metadata.bot_mode).toBe('menu_code_handoff');
+          expect(metadata.display_name_length).toBe('New Shop'.length);
+          expect(JSON.stringify(metadata).includes('token')).toBeFalse();
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresShopWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    const result = await service.createShop({
+      principal: {
+        id: 'admin-1',
+        roles: ['maintainer'],
+        tenantId: 'default',
+        pageId: 'page',
+        authMethod: 'static_bearer'
+      },
+      body: {
+        shop_id: 'new-shop',
+        display_name: 'New Shop',
+        status: 'active',
+        bot_mode: 'menu_code_handoff',
+        locale: 'vi-VN',
+        timezone: 'Asia/Ho_Chi_Minh'
+      }
+    });
+
+    expect(result.shopId).toBe('new-shop');
+    expect(result.shop.id).toBe('new-shop');
+    expect(result.settings.bot_mode).toBe('menu_code_handoff');
+    expect(queries.some(item => /^INSERT INTO shop_pages/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_products/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_assets/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeFalse();
+  });
+
+  it('shop create service rejects duplicate shop before inserting shell rows', async () => {
+    const queries = [];
+    class FakeClient {
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        const normalized = String(sql || '').trim();
+        queries.push({ sql: normalized, params });
+        if (normalized === 'BEGIN' || normalized === 'ROLLBACK') return { rows: [] };
+        if (normalized.includes('FROM shops')) {
+          return { rows: [{ id: 'new-shop', slug: 'new-shop' }] };
+        }
+        throw new Error(`unexpected query: ${normalized}`);
+      }
+    }
+    const service = createPostgresShopWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.createShop({
+        principal: { id: 'admin-1', roles: ['maintainer'] },
+        body: { shop_id: 'new-shop', display_name: 'New Shop' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('duplicate_shop');
+    expect(queries.some(item => /^INSERT INTO shops/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_settings/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('shop create service rejects invalid slug before opening transaction', async () => {
+    let constructed = false;
+    class FakeClient {
+      constructor() {
+        constructed = true;
+      }
+    }
+    const service = createPostgresShopWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.createShop({
+        principal: { id: 'admin-1', roles: ['maintainer'] },
+        body: { shop_id: 'Bad Shop', display_name: 'Bad Shop' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('invalid_shop_id');
+    expect(constructed).toBeFalse();
+  });
+
+  it('shop create service rejects principals without write permission', async () => {
+    let constructed = false;
+    class FakeClient {
+      constructor() {
+        constructed = true;
+      }
+    }
+    const service = createPostgresShopWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: FakeClient
+    });
+
+    let err = null;
+    try {
+      await service.createShop({
+        principal: { id: 'viewer-1', roles: ['viewer'] },
+        body: { shop_id: 'new-shop', display_name: 'New Shop' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('permission_denied');
+    expect(constructed).toBeFalse();
   });
 
   it('shop settings write service validates bot mode before UPDATE', async () => {

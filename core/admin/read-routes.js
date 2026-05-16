@@ -361,7 +361,9 @@ function createAdminReadHandlers({
         outcome: 'success',
         metadata: { schemaReady: model.schemaReady !== false }
       });
-      return res.type('html').send(renderShopsHtml(presentShopsApi(model)));
+      const presented = presentShopsApi(model);
+      presented.canCreateShop = hasPermission(principal, PERMISSIONS.PRODUCT_WRITE);
+      return res.type('html').send(renderShopsHtml(presented));
     } catch (err) {
       await recordAdminAudit(req, {
         principal,

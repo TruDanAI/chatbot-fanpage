@@ -499,6 +499,25 @@ function presentShopSettingsWriteApi(model = {}) {
   };
 }
 
+function presentShopWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || model.shop?.id || '',
+    shop: model.shop ? {
+      id: model.shop.id || '',
+      slug: model.shop.slug || '',
+      name: limitText(model.shop.name, 120),
+      status: model.shop.status || '',
+      default_locale: model.shop.default_locale || '',
+      timezone: model.shop.timezone || '',
+      created_at: model.shop.created_at || '',
+      updated_at: model.shop.updated_at || ''
+    } : null,
+    settings: presentShopSettings(model.settings || {})
+  };
+}
+
 function presentAssetWriteApi(model = {}) {
   return {
     ok: true,
@@ -527,6 +546,7 @@ module.exports = {
   presentProductWriteApi,
   presentShopSettingsReadApi,
   presentShopSettingsWriteApi,
+  presentShopWriteApi,
   presentShopDetailApi,
   presentShopHealthApi,
   presentShopsApi,

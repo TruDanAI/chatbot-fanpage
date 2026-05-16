@@ -7,7 +7,8 @@ const { createPostgresAuditLogger } = require('./admin/audit');
 const {
   presentAssetWriteApi,
   presentProductWriteApi,
-  presentShopSettingsWriteApi
+  presentShopSettingsWriteApi,
+  presentShopWriteApi
 } = require('./admin/api-presenter');
 const {
   INTERNAL_NOTE_ACTION,
@@ -26,6 +27,10 @@ const {
   createPostgresShopSettingsWriteService,
   isMissingShopSettingsWriteSchemaError
 } = require('./admin/shop-settings-writes');
+const {
+  createPostgresShopWriteService,
+  isMissingShopWriteSchemaError
+} = require('./admin/shop-writes');
 const { createAdminLegacyHandlers } = require('./admin/legacy-routes');
 const {
   assertReadOnlySql,
@@ -43,7 +48,8 @@ const {
 } = require('./admin/session');
 const {
   maskAddress,
-  maskPhone
+  maskPhone,
+  renderShopCreateHtml
 } = require('./admin/views');
 
 function parsePositiveInteger(value, fallback) {
@@ -318,6 +324,66 @@ function presentShopSettingsWriteTextError(err) {
   };
 }
 
+function presentShopWriteError(err) {
+  if (isMissingShopWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    invalid_shop_id: ['invalid_shop_input', 'Shop id/slug is invalid.', 400],
+    invalid_shop_name: ['invalid_shop_input', 'Display name is required.', 400],
+    invalid_shop_status: ['invalid_shop_status', 'Shop status is invalid.', 400],
+    invalid_shop_locale: ['invalid_shop_input', 'Shop locale is invalid.', 400],
+    invalid_shop_timezone: ['invalid_shop_input', 'Shop timezone is invalid.', 400],
+    invalid_bot_mode: ['invalid_bot_mode', 'Bot mode is invalid.', 400],
+    duplicate_shop: ['duplicate_shop', 'Shop id/slug already exists.', 409],
+    permission_denied: ['permission_denied', 'Shop write permission is required.', 403],
+    database_url_required: ['shop_write_unavailable', 'Shop writes are unavailable.', 503],
+    shop_create_commit_failed: ['shop_create_commit_failed', 'Shop create could not be committed.', 500],
+    shop_persist_failed: ['shop_create_failed', 'Shop could not be created.', 500],
+    shop_settings_persist_failed: ['shop_create_failed', 'Default shop settings could not be created.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'shop_write_failed',
+      message: 'Shop write could not be completed.'
+    }
+  };
+}
+
+function presentShopWriteTextError(err) {
+  const response = presentShopWriteError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Shop write could not be completed.'
+  };
+}
+
 function presentAssetWriteError(err) {
   if (isMissingAssetWriteSchemaError(err)) {
     return {
@@ -388,6 +454,7 @@ function registerAdminRoutes(app, {
   assetWriteService,
   productWriteService,
   shopSettingsWriteService,
+  shopWriteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
   tenantId = process.env.TENANT_ID || 'default',
   pageId = process.env.PAGE_ID || '',
@@ -428,6 +495,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl
   });
   const shopSettingsWrites = shopSettingsWriteService || createPostgresShopSettingsWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const shopWrites = shopWriteService || createPostgresShopWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const sessionManager = adminSessionManager || createAdminSessionManager({
@@ -564,6 +634,62 @@ function registerAdminRoutes(app, {
 
   function buildProductWriteRequestContext(req) {
     return buildInternalNoteRequestContext(req, getClientIp);
+  }
+
+  async function sendNewShopForm(req, res) {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.create.form',
+      resourceType: 'shop'
+    });
+    if (!principal) return;
+    return res.type('html').send(renderShopCreateHtml());
+  }
+
+  async function createShopApi(req, res) {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.create',
+      resourceType: 'shop'
+    });
+    if (!principal) return;
+    try {
+      const result = await shopWrites.createShop({
+        principal,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentShopWriteApi(result));
+    } catch (err) {
+      const response = presentShopWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function createShopHtml(req, res) {
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.create',
+      resourceType: 'shop'
+    });
+    if (!principal) return;
+    try {
+      const result = await shopWrites.createShop({
+        principal,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, `/admin/shops/${encodeURIComponent(result.shopId)}`);
+    } catch (err) {
+      const response = presentShopWriteTextError(err);
+      return res.status(response.statusCode).type('html').send(renderShopCreateHtml({
+        values: req.body || {},
+        error: response.text
+      }));
+    }
   }
 
   function shopProductRedirect(shopId = '', message = '') {
@@ -1050,6 +1176,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/dashboard', sendDashboardApi);
   app.get('/admin/api/dashboard/users/:senderId', sendUserDetailApi);
   app.get('/admin/api/shops', sendShopsApi);
+  app.post('/admin/api/shops', createShopApi);
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
@@ -1076,6 +1203,8 @@ function registerAdminRoutes(app, {
   app.get('/admin/db', sendDashboard);
   app.get('/admin/dashboard/users/:senderId', sendUserDetail);
   app.get('/admin/shops', sendShops);
+  app.get('/admin/shops/new', sendNewShopForm);
+  app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
   app.post('/admin/shops/:shopId/products', createProductHtml);
@@ -1111,6 +1240,7 @@ module.exports = {
   createPostgresDashboardReader,
   createPostgresProductWriteService,
   createPostgresShopSettingsWriteService,
+  createPostgresShopWriteService,
   createAdminRouteAuthorizer,
   createAdminSessionHandlers,
   createAdminSessionManager,

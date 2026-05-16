@@ -126,6 +126,22 @@ Latest local per-shop health phase 1 update:
 - Production deploy/env/DB/data remain untouched; authenticated production
   smoke was not run.
 
+Latest local admin shop onboarding phase 1 update:
+
+- Admin now has `GET /admin/shops/new` and create actions for a shop shell.
+- `POST /admin/api/shops` and the HTML form post create only a `shops` row,
+  a default `shop_settings` row, and an `admin_audit_log` row in one
+  transaction.
+- The phase intentionally does not create page mappings, page credentials,
+  products, assets, raw tokens, or raw `page_id` values.
+- Create requires the existing admin write permission used by shop/product
+  admin writes. Readers can still list and view shops, but cannot create.
+- The default shell values are `status=active`, `bot_mode=menu_code_handoff`,
+  `locale=vi-VN`, and `timezone=Asia/Ho_Chi_Minh`.
+- Next phase: page mapping management for the created shop.
+- Production deploy/env/DB/data remain untouched; authenticated production
+  smoke was not run.
+
 ## Staging Canary Runtime Smoke Checkpoint - 2026-05-16
 
 This checkpoint is staging-only. It is not approval to deploy, change
@@ -715,7 +731,8 @@ non-destructive:
 
 ## Open TODOs
 
-- Asset upload and asset management UI are still pending.
+- Page mapping management for newly created shop shells is next.
+- Asset upload is still pending.
 - Dashboard UX for multi-shop operations is still basic.
 - Multi-tenant admin identity separation is future work; current auth remains
   the static-token/session bridge.

@@ -131,6 +131,8 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .filters button, .filters a { min-height: 34px; border-radius: 6px; padding: 7px 10px; font-size: 14px; font-weight: 700; text-align: center; box-sizing: border-box; }
     .filters button { border: 1px solid var(--primary); color: #ffffff; background: var(--primary); cursor: pointer; }
     .filters a { border: 1px solid var(--border); color: #334155; background: #ffffff; text-decoration: none; }
+    .button-link { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; padding: 7px 10px; color: #ffffff; background: var(--primary); font-size: 14px; font-weight: 700; text-decoration: none; box-sizing: border-box; }
+    .button-link:hover { text-decoration: none; background: var(--primary-dark); }
     .pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; color: var(--muted); font-size: 13px; }
     .pagination a, .pagination span { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: #ffffff; }
     .pagination span { color: var(--muted); background: #f8fafc; }
@@ -511,10 +513,14 @@ function renderAuditHtml(model) {
 
 function renderShopsHtml(model = {}) {
   const shops = model.shops || [];
+  const createLink = model.canCreateShop
+    ? '<p><a class="button-link" href="/admin/shops/new">Create shop</a></p>'
+    : '';
   const body = `
     <p><a href="/admin/dashboard">Back to dashboard</a></p>
     ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
     <h2>Shops</h2>
+    ${createLink}
     ${renderTable(['shop', 'status', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
       <tr>
         <td><a href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(shop.name || shop.slug || shop.id)}</a><br><span class="meta"><code>${escapeHtml(shop.id)}</code> ${escapeHtml(shop.slug)}</span></td>
@@ -528,6 +534,51 @@ function renderShopsHtml(model = {}) {
     `)}
   `;
   return renderLayout('Admin Shops', body);
+}
+
+function renderShopCreateHtml({ values = {}, error = '' } = {}) {
+  const status = String(values.status || 'active');
+  const botMode = String(values.bot_mode || 'menu_code_handoff');
+  const statusOptions = ['active', 'paused', 'archived']
+    .map(value => `<option value="${escapeHtml(value)}"${status === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+    .join('');
+  const botModeOptions = [
+    ['menu_code_handoff', 'Menu code handoff'],
+    ['menu_only', 'Menu only'],
+    ['handoff_only', 'Handoff only'],
+    ['disabled', 'Disabled']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const body = `
+    <p><a href="/admin/shops">Back to shops</a></p>
+    ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
+    <form class="settings-form" method="post" action="/admin/shops">
+      <label>Shop id / slug <span class="required">required</span>
+        <input name="shop_id" value="${escapeHtml(values.shop_id || values.slug || '')}" maxlength="80" required aria-required="true" autocomplete="off" pattern="[a-z0-9]+(-[a-z0-9]+)*">
+      </label>
+      <label>Display name <span class="required">required</span>
+        <input name="display_name" value="${escapeHtml(values.display_name || values.name || '')}" maxlength="180" required aria-required="true">
+      </label>
+      <label>Status
+        <select name="status">${statusOptions}</select>
+      </label>
+      <label>Bot mode
+        <select name="bot_mode">${botModeOptions}</select>
+      </label>
+      <label>Locale
+        <input name="locale" value="${escapeHtml(values.locale || values.default_locale || 'vi-VN')}" maxlength="40" required aria-required="true">
+      </label>
+      <label>Timezone
+        <input name="timezone" value="${escapeHtml(values.timezone || 'Asia/Ho_Chi_Minh')}" maxlength="80" required aria-required="true">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Create shop</button>
+        <span class="meta">Creates only the shop shell and default settings. Page mapping and credentials are separate phases.</span>
+      </div>
+    </form>
+  `;
+  return renderLayout('Create Admin Shop', body);
 }
 
 function renderJsonBlock(value = {}) {
@@ -908,6 +959,7 @@ module.exports = {
   renderAuditHtml,
   renderDashboardHtml,
   renderLoginHtml,
+  renderShopCreateHtml,
   renderShopDetailHtml,
   renderShopsHtml,
   renderUserDetailHtml
