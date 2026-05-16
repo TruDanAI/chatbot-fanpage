@@ -54,8 +54,8 @@ function formatLabel(value = '') {
 
 function statusClass(value = '') {
   const status = String(value || '').toLowerCase();
-  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active') return 'status status-success';
-  if (status === 'cancelled' || status === 'denied' || status.includes('failed') || status.includes('error')) return 'status status-danger';
+  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'pass' || status === 'ready') return 'status status-success';
+  if (status === 'cancelled' || status === 'denied' || status === 'fail' || status === 'incomplete' || status.includes('failed') || status.includes('error')) return 'status status-danger';
   if (status === 'abandoned' || status === 'hidden') return 'status status-warning';
   if (status === 'archived') return 'status status-danger';
   return 'status status-neutral';
@@ -205,6 +205,11 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .inline-action:last-child { margin-bottom: 0; }
     .inline-action.warning button { border-color: var(--warning); background: var(--warning); }
     .inline-action.danger button { border-color: var(--danger); background: var(--danger); }
+    .checklist-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 16px 0 4px; }
+    .checklist-card h2 { margin-top: 0; }
+    .checklist-table { margin-top: 8px; }
+    .checklist-table td:first-child { width: 42%; }
+    .checklist-table td:nth-child(2) { width: 90px; }
   </style>
 </head>
 <body>
@@ -654,6 +659,29 @@ function renderPageCredentialForm(shopId = '', page = {}) {
   </form>`;
 }
 
+function renderOnboardingChecklist(onboarding = {}) {
+  const rows = Array.isArray(onboarding.checklist) ? onboarding.checklist : [];
+  if (!rows.length) return '';
+  const readyLabel = onboarding.ready ? 'ready' : 'incomplete';
+  return `<section class="checklist-card" aria-label="Onboarding readiness checklist">
+    <h2>Onboarding Readiness</h2>
+    <p class="meta">Status ${renderStatus(readyLabel)}</p>
+    <table class="checklist-table"><thead><tr><th>item</th><th>status</th><th>next action</th></tr></thead><tbody>
+      ${rows.map(row => {
+        const href = String(row.action_href || '').trim();
+        const action = href
+          ? `<a href="${escapeHtml(href)}">${escapeHtml(row.next_action || '')}</a>`
+          : escapeHtml(row.next_action || '');
+        return `<tr>
+          <td>${escapeHtml(row.label || row.key || '')}</td>
+          <td>${renderStatus(row.passed ? 'pass' : 'fail')}</td>
+          <td>${action}</td>
+        </tr>`;
+      }).join('')}
+    </tbody></table>
+  </section>`;
+}
+
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
@@ -829,7 +857,9 @@ function renderShopDetailHtml(model = {}) {
     ${shop.id ? `
       <p class="meta">Shop <code>${escapeHtml(shop.id)}</code> | slug <code>${escapeHtml(shop.slug)}</code> | updated ${escapeHtml(formatDate(shop.updated_at))}</p>
 
-      <h2>Metadata</h2>
+      ${renderOnboardingChecklist(model.onboarding || {})}
+
+      <h2 id="metadata">Metadata</h2>
       <table><tbody>
         <tr><th>Name</th><td>${escapeHtml(shop.name)}</td></tr>
         <tr><th>Status</th><td>${renderStatus(shop.status)}</td></tr>
@@ -838,7 +868,7 @@ function renderShopDetailHtml(model = {}) {
         <tr><th>Created</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
       </tbody></table>
 
-      <h2>Page Mappings</h2>
+      <h2 id="page-mappings">Page Mappings</h2>
       ${renderProductFlash(model.pageFlash || {})}
       ${renderProductFlash(model.credentialFlash || {})}
       ${renderPageMappingAddForm(shop.id)}
@@ -853,7 +883,7 @@ function renderShopDetailHtml(model = {}) {
       `)}
 
       ${renderProductFlash(model.productFlash || {})}
-      <h2>Chat Behavior Settings</h2>
+      <h2 id="settings">Chat Behavior Settings</h2>
       ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
       <table><tbody>
         <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
@@ -872,7 +902,7 @@ function renderShopDetailHtml(model = {}) {
 
       <section class="product-section">
         <div class="product-toolbar">
-          <h2>Products</h2>
+          <h2 id="products">Products</h2>
           <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>
         </div>
         ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
@@ -891,7 +921,7 @@ function renderShopDetailHtml(model = {}) {
       `)}
       </section>
 
-      <h2>Assets</h2>
+      <h2 id="assets">Assets</h2>
       ${renderProductFlash(model.assetFlash || {})}
       ${renderCounts(summary)}
       ${renderAssetAddForm(shop.id, model.products || [])}

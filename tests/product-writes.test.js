@@ -101,6 +101,9 @@ function makeClientClass({
       if (normalized.includes('FROM shop_pages')) return { rows: [] };
       if (normalized.includes('FROM shop_settings')) return { rows: [] };
       if (normalized.includes('FROM shop_assets')) return { rows: [] };
+      if (normalized.includes('FROM shop_page_credentials')) {
+        return { rows: [{ active_fb_page_token_count: 0 }] };
+      }
 
       if (normalized.includes('FROM shop_products') && normalized.includes('WHERE shop_id = $1 AND id = $2')) {
         const [shopId, productId] = params;

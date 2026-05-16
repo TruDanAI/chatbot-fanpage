@@ -446,7 +446,9 @@ function createDashboardReaderStub() {
             total: 2,
             active: 2,
             product_image: 1,
+            product_image_active: 1,
             menu_image: 1,
+            menu_image_active: 1,
             shop_image: 0
           },
           rows: [{
@@ -463,6 +465,12 @@ function createDashboardReaderStub() {
             sort_order: 1,
             updated_at: '2026-05-12T00:00:00.000Z'
           }]
+        },
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return',
+          access_token: 'do-not-return'
         }
       };
     },
@@ -524,6 +532,71 @@ function createDashboardReaderStub() {
       };
     }
   };
+}
+
+function createOnboardingShopDetailModel(overrides = {}) {
+  const base = {
+    schemaReady: true,
+    shop: {
+      id: 'new-shop',
+      slug: 'new-shop',
+      name: 'New Shop',
+      status: 'active',
+      default_locale: 'vi-VN',
+      timezone: 'Asia/Bangkok',
+      created_at: '2026-05-16T00:00:00.000Z',
+      updated_at: '2026-05-16T00:00:00.000Z',
+      page_access_token: 'do-not-return'
+    },
+    pages: [],
+    settings: null,
+    products: [],
+    assets: {
+      summary: {
+        total: 0,
+        active: 0,
+        product_image: 0,
+        product_image_active: 0,
+        menu_image: 0,
+        menu_image_active: 0
+      },
+      rows: []
+    },
+    credentials: {
+      available: true,
+      active_fb_page_token_count: 0,
+      encrypted_value: 'do-not-return',
+      access_token: 'do-not-return'
+    }
+  };
+  const assetOverrides = overrides.assets || {};
+  return {
+    ...base,
+    ...overrides,
+    shop: overrides.shop === null ? null : { ...base.shop, ...(overrides.shop || {}) },
+    assets: {
+      ...base.assets,
+      ...assetOverrides,
+      summary: {
+        ...base.assets.summary,
+        ...(assetOverrides.summary || {})
+      },
+      rows: assetOverrides.rows || base.assets.rows
+    },
+    credentials: {
+      ...base.credentials,
+      ...(overrides.credentials || {})
+    }
+  };
+}
+
+function createShopDetailReader(modelOrFactory) {
+  const reader = createDashboardReaderStub();
+  reader.getShopDetail = async shopId => {
+    if (typeof modelOrFactory === 'function') return modelOrFactory(shopId);
+    return modelOrFactory;
+  };
+  return reader;
 }
 
 function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, createdNote } = {}) {
@@ -2482,6 +2555,235 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('0987654321')).toBeFalse();
   });
 
+  it('shop detail API returns onboarding failures when setup is missing', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: { status: 'paused' }
+      })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const checklist = Object.fromEntries(body.onboarding.checklist.map(item => [item.key, item]));
+
+    expect(res.statusCode).toBe(200);
+    expect(body.onboarding.ready).toBeFalse();
+    expect(checklist.shop_active.passed).toBeFalse();
+    expect(checklist.settings_ready.passed).toBeFalse();
+    expect(checklist.page_mapping_ready.passed).toBeFalse();
+    expect(checklist.credential_ready.passed).toBeFalse();
+    expect(checklist.product_ready.passed).toBeFalse();
+    expect(checklist.menu_assets_ready.passed).toBeFalse();
+    expect(checklist.product_assets_ready.passed).toBeFalse();
+    expect(checklist.settings_ready.next_action).toBe('create settings');
+  });
+
+  it('shop detail API marks settings ready only when settings exist with bot mode', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        settings: {
+          bot_mode: 'menu_code_handoff',
+          handoff_enabled: true,
+          settings_json: {}
+        }
+      })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const checklist = Object.fromEntries(JSON.parse(res.body).onboarding.checklist.map(item => [item.key, item]));
+
+    expect(checklist.settings_ready.passed).toBeTrue();
+    expect(checklist.settings_ready.next_action).toBe('edit settings');
+    expect(checklist.page_mapping_ready.passed).toBeFalse();
+    expect(checklist.credential_ready.passed).toBeFalse();
+  });
+
+  it('shop detail API marks active page mapping ready while credential stays failed', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-1',
+          page_id: 'raw-page-id',
+          page_name: 'New Page',
+          status: 'active'
+        }]
+      })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const checklist = Object.fromEntries(body.onboarding.checklist.map(item => [item.key, item]));
+
+    expect(checklist.page_mapping_ready.passed).toBeTrue();
+    expect(checklist.credential_ready.passed).toBeFalse();
+    expect(body.onboarding.counts.active_page_mapping_count).toBe(1);
+    expect(body.onboarding.counts.active_credential_count).toBe(0);
+  });
+
+  it('shop detail API marks credential ready for active page credential summary', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-1',
+          page_id: 'raw-page-id',
+          page_name: 'New Page',
+          status: 'active'
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return'
+        }
+      })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const checklist = Object.fromEntries(body.onboarding.checklist.map(item => [item.key, item]));
+
+    expect(checklist.credential_ready.passed).toBeTrue();
+    expect(body.onboarding.counts.active_credential_count).toBe(1);
+  });
+
+  it('shop detail API marks product and asset readiness from active counts', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        products: [{
+          id: 'prod-1',
+          code: 'DB1',
+          name: 'DB Product',
+          status: 'active'
+        }],
+        assets: {
+          summary: {
+            total: 2,
+            active: 2,
+            menu_image: 1,
+            menu_image_active: 1,
+            product_image: 1,
+            product_image_active: 1
+          },
+          rows: []
+        }
+      })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const checklist = Object.fromEntries(body.onboarding.checklist.map(item => [item.key, item]));
+
+    expect(checklist.product_ready.passed).toBeTrue();
+    expect(checklist.menu_assets_ready.passed).toBeTrue();
+    expect(checklist.product_assets_ready.passed).toBeTrue();
+    expect(body.onboarding.counts.active_product_count).toBe(1);
+    expect(body.onboarding.counts.active_menu_image_count).toBe(1);
+    expect(body.onboarding.counts.active_product_image_count).toBe(1);
+  });
+
+  it('shop detail API onboarding response does not expose raw page IDs or credential secrets', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-1',
+          page_id: 'raw-page-id',
+          page_name: 'New Page',
+          status: 'active'
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return',
+          access_token: 'do-not-return'
+        }
+      })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const bodyText = res.body;
+
+    expect(res.statusCode).toBe(200);
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('access_token')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+  });
+
+  it('shop detail API keeps unknown shop 404 behavior', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({ shop: null })),
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/api/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'missing-shop' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(404);
+    expect(body.shop).toBe(null);
+  });
+
   it('shop health API returns safe per-shop health shape without raw page IDs or secrets', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -2639,6 +2941,42 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('data-confirm="Archive asset"');
     expect(res.body.includes('storage_key')).toBeFalse();
     expect(res.body.includes('shop_image')).toBeFalse();
+  });
+
+  it('shop detail HTML renders onboarding checklist labels and actions', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Onboarding Readiness');
+    expect(res.body).toContain('Shop active');
+    expect(res.body).toContain('Settings ready');
+    expect(res.body).toContain('Page mapping ready');
+    expect(res.body).toContain('Credential ready');
+    expect(res.body).toContain('Product ready');
+    expect(res.body).toContain('Menu assets ready');
+    expect(res.body).toContain('Product assets ready');
+    expect(res.body).toContain('Health ready');
+    expect(res.body).toContain('edit settings');
+    expect(res.body).toContain('add page mapping');
+    expect(res.body).toContain('add credential');
+    expect(res.body).toContain('add product');
+    expect(res.body).toContain('add menu image');
+    expect(res.body).toContain('add product image');
+    expect(res.body).toContain('view health');
+    expect(res.body).toContain('/admin/api/shops/adult-shop/health');
   });
 
   it('shop detail HTML renders chat behavior settings edit form', async () => {

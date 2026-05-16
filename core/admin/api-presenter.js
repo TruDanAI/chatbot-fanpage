@@ -393,7 +393,59 @@ function presentShopAssetsSummary(summary = {}) {
     total: Number(summary.total || 0),
     active: Number(summary.active || 0),
     product_image: Number(summary.product_image || 0),
-    menu_image: Number(summary.menu_image || 0)
+    product_image_active: Number(summary.product_image_active || 0),
+    menu_image: Number(summary.menu_image || 0),
+    menu_image_active: Number(summary.menu_image_active || 0)
+  };
+}
+
+function activeCount(rows = []) {
+  return (rows || []).filter(row => String(row.status || '').toLowerCase() === 'active').length;
+}
+
+function presentShopOnboarding(model = {}, shop = null) {
+  if (!shop) return null;
+  const settings = model.settings || null;
+  const pages = model.pages || [];
+  const products = model.products || [];
+  const assetsSummary = model.assets?.summary || {};
+  const credentials = model.credentials || {};
+  const shopId = shop.id || '';
+  const shopHref = `/admin/shops/${encodeURIComponent(shopId)}`;
+  const counts = {
+    active_page_mapping_count: activeCount(pages),
+    active_credential_count: credentials.available === false
+      ? 0
+      : Number(credentials.active_fb_page_token_count || 0),
+    active_product_count: activeCount(products),
+    active_menu_image_count: Number(assetsSummary.menu_image_active || 0),
+    active_product_image_count: Number(assetsSummary.product_image_active || 0)
+  };
+  const settingsReady = Boolean(settings && String(settings.bot_mode || '').trim());
+  const item = (key, label, passed, nextAction, href = shopHref) => ({
+    key,
+    label,
+    passed: Boolean(passed),
+    next_action: nextAction,
+    action_href: href
+  });
+  const shopActive = String(shop.status || '').toLowerCase() === 'active';
+  const checklist = [
+    item('shop_active', 'Shop active', shopActive, shopActive ? 'review shop status' : 'activate shop', `${shopHref}#metadata`),
+    item('settings_ready', 'Settings ready', settingsReady, settingsReady ? 'edit settings' : 'create settings', `${shopHref}#settings`),
+    item('page_mapping_ready', 'Page mapping ready', counts.active_page_mapping_count > 0, 'add page mapping', `${shopHref}#page-mappings`),
+    item('credential_ready', 'Credential ready', counts.active_credential_count > 0, 'add credential', `${shopHref}#page-mappings`),
+    item('product_ready', 'Product ready', counts.active_product_count > 0, 'add product', `${shopHref}#products`),
+    item('menu_assets_ready', 'Menu assets ready', counts.active_menu_image_count > 0, 'add menu image', `${shopHref}#assets`),
+    item('product_assets_ready', 'Product assets ready', counts.active_product_image_count > 0, 'add product image', `${shopHref}#assets`),
+    item('health_ready', 'Health ready', Boolean(shop.id), 'view health', `/admin/api/shops/${encodeURIComponent(shopId)}/health`)
+  ];
+
+  return {
+    ready: checklist.every(entry => entry.passed),
+    counts,
+    checklist,
+    ...(credentials.available === false ? { credential_status: 'unavailable' } : {})
   };
 }
 
@@ -480,6 +532,7 @@ function presentShopDetailApi(model = {}) {
         .filter(asset => ['menu_image', 'product_image'].includes(String(asset.asset_type || '')))
         .map(presentShopAsset)
     },
+    onboarding: presentShopOnboarding(model, shop),
     ...(model.message ? { message: limitText(model.message, 160) } : {})
   };
 }

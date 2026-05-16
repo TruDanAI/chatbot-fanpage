@@ -100,6 +100,7 @@ function createDashboardRepository({
         summary: {},
         rows: []
       },
+      credentials: createUnavailableSection('multi_shop_schema_not_ready'),
       message
     };
   }
@@ -175,7 +176,8 @@ function createDashboardRepository({
         pages: [],
         settings: null,
         products: [],
-        assets: { summary: {}, rows: [] }
+        assets: { summary: {}, rows: [] },
+        credentials: createUnavailableSection('shop_not_found')
       };
     }
 
@@ -195,7 +197,8 @@ function createDashboardRepository({
           pages: [],
           settings: null,
           products: [],
-          assets: { summary: {}, rows: [] }
+          assets: { summary: {}, rows: [] },
+          credentials: createUnavailableSection('shop_not_found')
         };
       }
 
@@ -247,14 +250,39 @@ function createDashboardRepository({
         total: 0,
         active: 0,
         product_image: 0,
-        menu_image: 0
+        product_image_active: 0,
+        menu_image: 0,
+        menu_image_active: 0
       };
       for (const row of assetSummaryResult.rows) {
         const type = String(row.asset_type || '');
         const total = Number(row.total || 0);
+        const active = Number(row.active || 0);
         summary.total += total;
-        summary.active += Number(row.active || 0);
+        summary.active += active;
         if (Object.prototype.hasOwnProperty.call(summary, type)) summary[type] = total;
+        if (Object.prototype.hasOwnProperty.call(summary, `${type}_active`)) summary[`${type}_active`] = active;
+      }
+
+      let credentials = createUnavailableSection('shop_page_credentials_schema_not_ready');
+      try {
+        const credentialResult = await client.query(`
+          SELECT
+            COUNT(*) FILTER (
+              WHERE c.status = 'active'
+                AND c.credential_type = 'fb_page_token'
+                AND sp.status = 'active'
+            )::int AS active_fb_page_token_count
+          FROM shop_page_credentials c
+          JOIN shop_pages sp ON sp.id = c.page_mapping_id AND sp.shop_id = c.shop_id
+          WHERE c.shop_id = $1
+        `, params);
+        credentials = {
+          available: true,
+          active_fb_page_token_count: Number(credentialResult.rows[0]?.active_fb_page_token_count || 0)
+        };
+      } catch (err) {
+        if (!isMissingMultiShopSchemaError(err)) throw err;
       }
 
       return {
@@ -266,7 +294,8 @@ function createDashboardRepository({
         assets: {
           summary,
           rows: assetsResult.rows
-        }
+        },
+        credentials
       };
     } catch (err) {
       if (!isMissingMultiShopSchemaError(err)) throw err;
