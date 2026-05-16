@@ -637,6 +637,37 @@ count-only validation. After the seed, keep
 credential resolution is validated, rollback is ready, and enabling the
 DB-backed runtime has separate production environment approval.
 
+## Production DB-Backed Runtime Real-Traffic Checkpoint - 2026-05-16
+
+Production DB-backed runtime is enabled and real adult-shop traffic has been
+observed healthy from the provided production state and log excerpts.
+
+Runtime state for this checkpoint:
+
+- `MULTI_SHOP_DB_CONFIG_ENABLED=true`.
+- `WEBHOOK_QUEUE_ENABLED=false`; webhook processing remains on the inline path.
+- `MESSENGER_DRY_RUN=false`, so production Messenger sends are live.
+- Adult-shop live traffic is working on the DB-backed runtime path.
+
+Observed production logs show the expected customer flow:
+
+- `customer_message` received.
+- Menu reply sent.
+- `adult-shop-asset-menu-1` sent.
+- `adult-shop-asset-menu-2` sent.
+- Product images sent for `MÃ13` and `MÃ10`.
+- Handoff started after product code.
+- Later messages skipped due to handoff.
+
+No visible DB fail-closed event, `page_not_found`, credential error, or
+Messenger send error appeared in the provided logs for this checkpoint.
+
+Rollback remains disabling `MULTI_SHOP_DB_CONFIG_ENABLED=false` after production
+environment approval and restart or redeploy as needed. Keep
+`WEBHOOK_QUEUE_ENABLED=false`; the next production-impacting gate should be
+webhook queue enablement only after separate staging and production readiness
+approval.
+
 ## Safety Rules
 
 - Do not write production PostgreSQL before a fresh backup exists and is
