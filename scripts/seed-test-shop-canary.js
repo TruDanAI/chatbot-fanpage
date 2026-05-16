@@ -25,6 +25,7 @@ const SENSITIVE_ENV_NAMES = Object.freeze([
   'CREDENTIAL_MASTER_KEY',
   'TEST_SHOP_PAGE_ID',
   'TEST_SHOP_PAGE_TOKEN',
+  'FB_PAGE_TOKEN',
   'TEST_SHOP_FB_APP_SECRET',
   'FB_APP_SECRET'
 ]);
@@ -231,7 +232,7 @@ function getSeedInput({ env = process.env, options = {} } = {}) {
     encryptionKeyId: trimText(options.encryptionKeyId || env.CREDENTIAL_KEY_ID || 'default') || 'default',
     keyVersion: Number(options.keyVersion || env.CREDENTIAL_KEY_VERSION || 1),
     masterKey: trimText(env.CREDENTIAL_MASTER_KEY),
-    token: text(env.TEST_SHOP_PAGE_TOKEN)
+    token: text(env.TEST_SHOP_PAGE_TOKEN || env.FB_PAGE_TOKEN)
   };
 }
 

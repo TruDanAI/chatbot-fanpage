@@ -126,6 +126,48 @@ Latest local per-shop health phase 1 update:
 - Production deploy/env/DB/data remain untouched; authenticated production
   smoke was not run.
 
+## Staging Canary Runtime Smoke Checkpoint - 2026-05-16
+
+This checkpoint is staging-only. It is not approval to deploy, change
+production environment variables, write production PostgreSQL, touch
+production `/data`, or run authenticated production smoke.
+
+Staging runtime state for this checkpoint:
+
+- `MULTI_SHOP_DB_CONFIG_ENABLED=true`.
+- `WEBHOOK_QUEUE_ENABLED=false`.
+- `MESSENGER_DRY_RUN=false`, so real Messenger sends are enabled on staging.
+- The test page resolves to `test-shop` through DB-backed runtime config.
+- The `test-shop` minimal catalog and M7/menu assets are seeded.
+- The user observed the Messenger flow as mostly OK from another Facebook
+  account.
+
+Aggregate recent staging logs from a 3h window:
+
+- Webhook `POST /webhook` count: `14`.
+- Reply marker count: `4`.
+- Image marker count: `5`.
+- Menu image marker count: `4`.
+- Product image marker count: `1`.
+- Handoff marker count: `8`.
+- DB config fail-closed count: `0`.
+- `page_not_found` count: `0`.
+- Credential error count: `0`.
+- Messenger send error count: `0`.
+
+Public staging `GET /healthz` passed:
+
+- HTTP `200`, `ok=true`, `storage.adapter=postgres`,
+  `storage.ready=true`, `messenger.dryRun=false`.
+
+Safety boundary:
+
+- No raw page IDs, tokens, database URLs, customer IDs, or message bodies were
+  printed.
+- No production deploy, production environment change, production DB write,
+  production `/data` access, authenticated production smoke, commit, or push
+  was performed.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with

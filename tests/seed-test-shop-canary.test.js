@@ -347,12 +347,23 @@ describe('test-shop canary seed script', () => {
     expect(validationError).toBe('test_page_id_missing');
   });
 
-  it('requires TEST_SHOP_PAGE_TOKEN from env without legacy token fallback', () => {
+  it('uses FB_PAGE_TOKEN when TEST_SHOP_PAGE_TOKEN is missing', () => {
     const input = getSeedInput({
       env: baseEnv({
         TEST_SHOP_PAGE_TOKEN: '',
-        PAGE_CREDENTIAL_TOKEN: 'EAAB-legacy-page-credential-token',
         FB_PAGE_TOKEN: 'EAAB-live-token'
+      })
+    });
+
+    expect(input.token).toBe('EAAB-live-token');
+  });
+
+  it('requires TEST_SHOP_PAGE_TOKEN or FB_PAGE_TOKEN from env without legacy token fallback', () => {
+    const input = getSeedInput({
+      env: baseEnv({
+        TEST_SHOP_PAGE_TOKEN: '',
+        FB_PAGE_TOKEN: '',
+        PAGE_CREDENTIAL_TOKEN: 'EAAB-legacy-page-credential-token',
       })
     });
     let errorMessage = '';
