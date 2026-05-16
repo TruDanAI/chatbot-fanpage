@@ -46,6 +46,10 @@ const ASSET_FLASH_MESSAGES = {
 const PAGE_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' }
 };
+const CREDENTIAL_FLASH_MESSAGES = {
+  created: { type: 'success', text: 'Page credential saved.' },
+  rotated: { type: 'success', text: 'Page credential rotated.' }
+};
 
 function createAdminReadHandlers({
   reader,
@@ -126,6 +130,11 @@ function createAdminReadHandlers({
   function resolvePageFlash(query = {}) {
     const key = String(query.pageMessage || '').trim().toLowerCase();
     return PAGE_FLASH_MESSAGES[key] || {};
+  }
+
+  function resolveCredentialFlash(query = {}) {
+    const key = String(query.credentialMessage || '').trim().toLowerCase();
+    return CREDENTIAL_FLASH_MESSAGES[key] || {};
   }
 
   function isMissingInternalNotesSchemaError(err) {
@@ -409,6 +418,7 @@ function createAdminReadHandlers({
       presented.productFlash = resolveProductFlash(req.query || {});
       presented.assetFlash = resolveAssetFlash(req.query || {});
       presented.pageFlash = resolvePageFlash(req.query || {});
+      presented.credentialFlash = resolveCredentialFlash(req.query || {});
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,

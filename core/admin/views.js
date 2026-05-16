@@ -641,6 +641,19 @@ function renderPageMappingAddForm(shopId = '') {
   </form>`;
 }
 
+function renderPageCredentialForm(shopId = '', page = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/credentials`;
+  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
+    <input type="hidden" name="credential_type" value="fb_page_token">
+    <label>Credential <span class="required">required</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
+    <label class="checkbox-label">
+      <input type="checkbox" name="rotate" value="true">
+      Rotate existing active credential
+    </label>
+    <div class="form-actions"><button type="submit">Save credential</button></div>
+  </form>`;
+}
+
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
@@ -827,13 +840,15 @@ function renderShopDetailHtml(model = {}) {
 
       <h2>Page Mappings</h2>
       ${renderProductFlash(model.pageFlash || {})}
+      ${renderProductFlash(model.credentialFlash || {})}
       ${renderPageMappingAddForm(shop.id)}
-      ${renderTable(['page ref', 'name', 'status', 'updated'], model.pages || [], page => `
+      ${renderTable(['page ref', 'name', 'status', 'updated', 'credential action'], model.pages || [], page => `
         <tr>
           <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
           <td>${escapeHtml(page.page_name)}</td>
           <td>${renderStatus(page.status)}</td>
           <td>${escapeHtml(formatDate(page.updated_at))}</td>
+          <td>${renderPageCredentialForm(shop.id, page)}</td>
         </tr>
       `)}
 

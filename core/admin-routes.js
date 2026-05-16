@@ -6,6 +6,7 @@ const {
 const { createPostgresAuditLogger } = require('./admin/audit');
 const {
   presentAssetWriteApi,
+  presentPageCredentialWriteApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopSettingsWriteApi,
@@ -24,6 +25,10 @@ const {
   createPostgresProductWriteService,
   isMissingProductWriteSchemaError
 } = require('./admin/product-writes');
+const {
+  createPostgresPageCredentialWriteService,
+  isMissingPageCredentialWriteSchemaError
+} = require('./admin/page-credential-writes');
 const {
   createPostgresPageMappingWriteService,
   isMissingPageMappingWriteSchemaError
@@ -60,6 +65,10 @@ const {
 function parsePositiveInteger(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
+function isRotateCredentialRequest(body = {}) {
+  return /^(1|true|yes|on|rotate)$/i.test(String(body?.rotate || body?.mode || '').trim());
 }
 
 function setResponseHeader(res, name, value) {
@@ -445,6 +454,65 @@ function presentPageMappingWriteTextError(err) {
   };
 }
 
+function presentPageCredentialWriteError(err) {
+  if (isMissingPageCredentialWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    unsupported_credential_type: ['unsupported_credential_type', 'Credential type is not supported.', 400],
+    credential_token_missing: ['credential_token_missing', 'Credential token is required.', 400],
+    credential_token_invalid: ['credential_token_invalid', 'Credential token is invalid.', 400],
+    credential_master_key_missing: ['credential_write_unavailable', 'Credential writes are unavailable.', 503],
+    active_credential_exists: ['active_credential_exists', 'An active credential already exists. Use rotate mode to replace it.', 409],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    page_mapping_not_found: ['page_mapping_not_found', 'Page mapping was not found for this shop.', 404],
+    permission_denied: ['permission_denied', 'Page credential write permission is required.', 403],
+    database_url_required: ['credential_write_unavailable', 'Credential writes are unavailable.', 503],
+    page_credential_commit_failed: ['page_credential_commit_failed', 'Page credential write could not be committed.', 500],
+    page_credential_persist_failed: ['page_credential_write_failed', 'Page credential could not be saved.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'page_credential_write_failed',
+      message: 'Page credential write could not be completed.'
+    }
+  };
+}
+
+function presentPageCredentialWriteTextError(err) {
+  const response = presentPageCredentialWriteError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Page credential write could not be completed.'
+  };
+}
+
 function presentAssetWriteError(err) {
   if (isMissingAssetWriteSchemaError(err)) {
     return {
@@ -513,6 +581,7 @@ function registerAdminRoutes(app, {
   dashboardReader,
   internalNoteService,
   assetWriteService,
+  pageCredentialWriteService,
   pageMappingWriteService,
   productWriteService,
   shopSettingsWriteService,
@@ -551,6 +620,9 @@ function registerAdminRoutes(app, {
     pageId
   });
   const assetWrites = assetWriteService || createPostgresAssetWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const pageCredentialWrites = pageCredentialWriteService || createPostgresPageCredentialWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const pageMappingWrites = pageMappingWriteService || createPostgresPageMappingWriteService({
@@ -769,6 +841,12 @@ function registerAdminRoutes(app, {
     return safeMessage ? `${base}?pageMessage=${encodeURIComponent(safeMessage)}` : base;
   }
 
+  function shopPageCredentialRedirect(shopId = '', message = '') {
+    const base = `/admin/shops/${encodeURIComponent(shopId)}`;
+    const safeMessage = String(message || '').trim();
+    return safeMessage ? `${base}?credentialMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
   async function createPageMappingApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -813,6 +891,64 @@ function registerAdminRoutes(app, {
       return res.redirect(303, shopPageMappingRedirect(shopId, 'created'));
     } catch (err) {
       const response = presentPageMappingWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function createPageCredentialApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
+    const action = isRotateCredentialRequest(req.body || {})
+      ? 'admin.shop_page_credential.rotate'
+      : 'admin.shop_page_credential.create';
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action,
+      resourceType: 'shop_page_credential',
+      resourceId: pageMappingId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageCredentialWrites.createPageCredential({
+        principal,
+        shopId,
+        pageMappingId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentPageCredentialWriteApi(result));
+    } catch (err) {
+      const response = presentPageCredentialWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function createPageCredentialHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
+    const action = isRotateCredentialRequest(req.body || {})
+      ? 'admin.shop_page_credential.rotate'
+      : 'admin.shop_page_credential.create';
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action,
+      resourceType: 'shop_page_credential',
+      resourceId: pageMappingId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageCredentialWrites.createPageCredential({
+        principal,
+        shopId,
+        pageMappingId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopPageCredentialRedirect(shopId, result.rotated ? 'rotated' : 'created'));
+    } catch (err) {
+      const response = presentPageCredentialWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
     }
   }
@@ -1300,6 +1436,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
   app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
+  app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
@@ -1327,6 +1464,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
   app.post('/admin/shops/:shopId/pages', createPageMappingHtml);
+  app.post('/admin/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialHtml);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
   app.post('/admin/shops/:shopId/products', createProductHtml);
   app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
@@ -1359,6 +1497,7 @@ module.exports = {
   createPostgresAuditLogger,
   createPostgresAssetWriteService,
   createPostgresDashboardReader,
+  createPostgresPageCredentialWriteService,
   createPostgresPageMappingWriteService,
   createPostgresProductWriteService,
   createPostgresShopSettingsWriteService,

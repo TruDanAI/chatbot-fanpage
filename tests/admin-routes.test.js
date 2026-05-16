@@ -797,6 +797,32 @@ function createPageMappingWriteServiceStub({ failWith, createdPage } = {}) {
   };
 }
 
+function createPageCredentialWriteServiceStub({ failWith, createdCredential } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async createPageCredential(input = {}) {
+      calls.push({ method: 'createPageCredential', input });
+      if (failWith) throw failWith;
+      return createdCredential || {
+        shopId: input.shopId || 'adult-shop',
+        pageMappingId: input.pageMappingId || 'page-map-1',
+        page_ref: 'p:safe-page',
+        credential: {
+          id: 'credential-new',
+          credential_type: 'fb_page_token',
+          status: 'active',
+          encrypted_value: 'do-not-return',
+          page_id: 'raw-page-id'
+        },
+        active_credential_count: 1,
+        archived_count: Boolean(input.body?.rotate) ? 1 : 0,
+        rotated: Boolean(input.body?.rotate)
+      };
+    }
+  };
+}
+
 function createInternalNoteRouteFakeClientClass({
   failAudit = false,
   failNoteCode = '',
@@ -2960,6 +2986,202 @@ describe('admin dashboard routes', () => {
     }
   });
 
+  it('page credential create API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const pageCredentialWrites = createPageCredentialWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCredentialWriteService: pageCredentialWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/credentials'](createReq({
+        params: { shopId: 'adult-shop', pageMappingId: 'page-map-1' },
+        body: { token: 'EAAB-local-admin-page-token-value' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/credentials'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop', pageMappingId: 'page-map-1' },
+        body: { token: 'EAAB-local-admin-page-token-value' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageCredentialWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_page_credential.create');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('page credential create API returns safe summary only', async () => {
+    const app = createApp();
+    const pageCredentialWrites = createPageCredentialWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageCredentialWriteService: pageCredentialWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/credentials'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', pageMappingId: 'page-map-1' },
+      body: {
+        token: 'EAAB-local-admin-page-token-value',
+        rotate: 'true'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(201);
+    expect(Object.keys(body).sort()).toEqual([
+      'active_credential_count',
+      'archived_count',
+      'credential',
+      'page_ref',
+      'rotated'
+    ].sort());
+    expect(Object.keys(body.credential).sort()).toEqual([
+      'credential_type',
+      'id',
+      'status'
+    ].sort());
+    expect(body.ok).toBe(undefined);
+    expect(body.schemaReady).toBe(undefined);
+    expect(body.shop_id).toBe(undefined);
+    expect(body.page_mapping_id).toBe(undefined);
+    expect(body.page_ref).toBe('p:safe-page');
+    expect(body.credential.id).toBe('credential-new');
+    expect(body.credential.credential_type).toBe('fb_page_token');
+    expect(body.credential.status).toBe('active');
+    expect(body.active_credential_count).toBe(1);
+    expect(body.archived_count).toBe(1);
+    expect(body.rotated).toBeTrue();
+    expect(pageCredentialWrites.calls[0].method).toBe('createPageCredential');
+    expect(pageCredentialWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(pageCredentialWrites.calls[0].input.pageMappingId).toBe('page-map-1');
+    expect(pageCredentialWrites.calls[0].input.body.token).toBe('EAAB-local-admin-page-token-value');
+    expect(bodyText.includes('adult-shop')).toBeFalse();
+    expect(bodyText.includes('page-map-1')).toBeFalse();
+    expect(bodyText.includes('shop_id')).toBeFalse();
+    expect(bodyText.includes('page_mapping_id')).toBeFalse();
+    expect(bodyText.includes('EAAB-local-admin-page-token-value')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+  });
+
+  it('page credential HTML POST requires auth and write permission before calling service', async () => {
+    const unauthenticatedWrites = createPageCredentialWriteServiceStub();
+    const unauthenticatedAudit = createAuditLoggerStub();
+    const unauthenticatedApp = createApp();
+    registerAdminRoutes(unauthenticatedApp, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageCredentialWriteService: unauthenticatedWrites,
+      auditLogger: unauthenticatedAudit,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const unauthenticatedRes = createRes();
+    await unauthenticatedApp.routes['POST /admin/shops/:shopId/pages/:pageMappingId/credentials'](createReq({
+      params: { shopId: 'adult-shop', pageMappingId: 'page-map-1' },
+      body: { token: 'EAAB-local-admin-page-token-value' }
+    }), unauthenticatedRes);
+
+    expect(unauthenticatedRes.statusCode).toBe(401);
+    expect(unauthenticatedWrites.calls.length).toBe(0);
+    expect(unauthenticatedAudit.entries.length).toBe(1);
+    expect(unauthenticatedAudit.entries[0].action).toBe('admin.shop_page_credential.create');
+    expect(unauthenticatedAudit.entries[0].outcome).toBe('denied');
+    expect(String(unauthenticatedRes.body).includes('EAAB-local-admin-page-token-value')).toBeFalse();
+
+    for (const role of ['viewer', 'support']) {
+      const pageCredentialWrites = createPageCredentialWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCredentialWriteService: pageCredentialWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/shops/:shopId/pages/:pageMappingId/credentials'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop', pageMappingId: 'page-map-1' },
+        body: { token: 'EAAB-local-admin-page-token-value' }
+      }), deniedRes);
+
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageCredentialWrites.calls.length).toBe(0);
+      expect(auditLogger.entries.length).toBe(1);
+      expect(auditLogger.entries[0].action).toBe('admin.shop_page_credential.create');
+      expect(auditLogger.entries[0].outcome).toBe('denied');
+      expect(auditLogger.entries[0].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+      expect(String(deniedRes.body).includes('EAAB-local-admin-page-token-value')).toBeFalse();
+    }
+  });
+
+  it('page credential create API maps validation errors safely', async () => {
+    for (const item of [
+      { code: 'credential_master_key_missing', status: 503, error: 'credential_write_unavailable' },
+      { code: 'credential_token_missing', status: 400, error: 'credential_token_missing' },
+      { code: 'page_mapping_not_found', status: 404, error: 'page_mapping_not_found' },
+      { code: 'active_credential_exists', status: 409, error: 'active_credential_exists' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} token=EAAB-secret at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCredentialWriteService: createPageCredentialWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/credentials'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop', pageMappingId: 'page-map-1' },
+        body: { token: 'EAAB-local-admin-page-token-value' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('EAAB-secret')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+      expect(bodyText.includes('relation')).toBeFalse();
+    }
+  });
+
   it('shop detail HTML filters products by code/name and status without exposing secrets', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -2985,6 +3207,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('1 of 3 products');
     expect(res.body).toContain('action="/admin/shops/adult-shop/pages"');
     expect(res.body).toContain('name="page_id"');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/pages/adult-page/credentials"');
+    expect(res.body).toContain('type="password"');
+    expect(res.body).toContain('name="rotate"');
     expect(res.body).toContain('p:');
     expect(res.body.includes('page_1')).toBeFalse();
     expect(res.body.includes('DB Product')).toBeFalse();
@@ -2996,7 +3221,8 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('api_secret')).toBeFalse();
     expect(res.body.includes('customerPhone')).toBeFalse();
     expect(res.body.includes('0987654321')).toBeFalse();
-    expect(res.body.toLowerCase().includes('token')).toBeFalse();
+    expect(res.body.includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
     expect(res.body.toLowerCase().includes('secret')).toBeFalse();
   });
 

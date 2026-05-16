@@ -511,6 +511,21 @@ function presentPageMappingWriteApi(model = {}) {
   };
 }
 
+function presentPageCredentialWriteApi(model = {}) {
+  const credential = model.credential || {};
+  return {
+    page_ref: model.page_ref || '',
+    credential: {
+      id: credential.id || '',
+      credential_type: credential.credential_type || '',
+      status: credential.status || ''
+    },
+    active_credential_count: Number(model.active_credential_count || 0),
+    archived_count: Number(model.archived_count || 0),
+    rotated: Boolean(model.rotated)
+  };
+}
+
 function presentShopWriteApi(model = {}) {
   return {
     ok: true,
@@ -555,6 +570,7 @@ module.exports = {
   presentDashboardApi,
   presentInternalNotesApi,
   presentOperations,
+  presentPageCredentialWriteApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopSettingsReadApi,
