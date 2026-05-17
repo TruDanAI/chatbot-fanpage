@@ -211,11 +211,25 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .checklist-table { margin-top: 8px; }
     .checklist-table td:first-child { width: 42%; }
     .checklist-table td:nth-child(2) { width: 90px; }
+    .admin-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .admin-nav a { color: rgba(255,255,255,.75); font-size: 14px; font-weight: 600; text-decoration: none; padding: 5px 10px; border-radius: 6px; }
+    .admin-nav a:hover { color: #ffffff; background: rgba(255,255,255,.12); text-decoration: none; }
+    .admin-nav a.nav-active { color: #ffffff; background: rgba(255,255,255,.18); }
+    .admin-brand { font-size: 15px; font-weight: 800; letter-spacing: .3px; color: #ffffff; margin-right: 8px; }
+    .login-branding { margin-bottom: 14px; }
+    .login-branding h2 { font-size: 20px; margin: 0 0 4px; color: #17202a; }
+    .login-branding p { margin: 0; color: var(--muted); font-size: 13px; }
+    .asset-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-muted); }
+    .asset-thumb-broken { width: 48px; height: 48px; border-radius: 4px; border: 1px solid var(--border); background: #fee2e2; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--danger); }
+    .toggle-desc { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+    .collapsible-section summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 0; }
+    .collapsible-section summary:hover { color: #17202a; }
+    .page-id-help { font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; line-height: 1.4; }
   </style>
 </head>
 <body>
-  <header><div class="header-inner"><h1>${escapeHtml(title)}</h1>${showLogout ? '<form class="logout-form" method="post" action="/admin/logout"><button type="submit">Logout</button></form>' : ''}</div></header>
-  <main>${body}</main>
+  <header><div class="header-inner"><span class="admin-brand">ZenBot</span><nav class="admin-nav">${showLogout ? '<a href="/admin/dashboard">Dashboard</a><a href="/admin/shops">Shops</a><a href="/admin/audit">Audit</a>' : ''}</nav>${showLogout ? '<form class="logout-form" method="post" action="/admin/logout"><button type="submit">Logout</button></form>' : ''}</div></header>
+  <main><h1>${escapeHtml(title)}</h1>${body}</main>
 </body>
 </html>`;
 }
@@ -223,6 +237,10 @@ function renderLayout(title, body, { showLogout = true } = {}) {
 function renderLoginHtml({ error = '' } = {}) {
   const body = `
     <section class="login-panel">
+      <div class="login-branding">
+        <h2>ZenBot Admin</h2>
+        <p>Messenger chatbot management console. Enter your admin token to continue.</p>
+      </div>
       ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
       <form method="post" action="/admin/login">
         <label>Admin Token
@@ -656,9 +674,9 @@ function renderPageMappingAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
     <h3>Add page mapping</h3>
-    <label>Page ID <span class="required">required</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"></label>
+    <label>Page ID <span class="required">required</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"><span class="page-id-help">The numeric Facebook Page ID. Find it in <strong>Facebook Page Settings &rarr; About</strong> or in the page URL. Handle this value carefully &mdash; it connects the bot to a specific Facebook page.</span></label>
     <label>Page name<input name="page_name" maxlength="180"></label>
-    <div class="form-actions"><button type="submit">Add mapping</button><span class="meta">Creates an active page mapping only. Credentials are not handled here.</span></div>
+    <div class="form-actions"><button type="submit">Add mapping</button><span class="meta">Creates an active page mapping only. Credentials are added separately below.</span></div>
   </form>`;
 }
 
@@ -805,25 +823,25 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
     ...(settingsJson.ruleToggles || {})
   });
   const modeOptions = [
-    ['menu_code_handoff', 'Menu code handoff'],
-    ['menu_only', 'Menu only'],
-    ['handoff_only', 'Handoff only'],
-    ['disabled', 'Disabled']
+    ['menu_code_handoff', 'Menu code handoff', 'Shows product menu, replies to codes, then hands off to staff'],
+    ['menu_only', 'Menu only', 'Shows menu and replies to codes, no handoff'],
+    ['handoff_only', 'Handoff only', 'Immediately hands all messages to staff'],
+    ['disabled', 'Disabled', 'Bot does not respond']
   ]
-    .map(([value, label]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .map(([value, label, desc]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)} \u2014 ${escapeHtml(desc)}</option>`)
     .join('');
   const toggleRows = [
-    ['productCodeLookupEnabled', 'Product code lookup'],
-    ['menuSendingEnabled', 'Menu/product list sending'],
-    ['postProductHandoffEnabled', 'Handoff after product code reply'],
-    ['fallbackEnabled', 'Fallback text'],
-    ['leadCaptureEnabled', 'Lead capture']
+    ['productCodeLookupEnabled', 'Product Lookup', 'Bot responds when a customer types a product code (e.g. M7).'],
+    ['menuSendingEnabled', 'Menu Images', 'Bot sends menu/catalog images when a customer asks to browse.'],
+    ['postProductHandoffEnabled', 'Auto-Handoff', 'Bot hands the customer to staff after showing product details.'],
+    ['fallbackEnabled', 'Fallback Message', 'Bot sends a fallback reply when it cannot understand the message.'],
+    ['leadCaptureEnabled', 'Lead Capture', 'Bot collects customer name, phone, and address for order drafts.']
   ]
-    .map(([name, label]) => `
+    .map(([name, label, desc]) => `
       <label class="checkbox-label">
         <input type="hidden" name="${escapeHtml(name)}" value="false">
         <input type="checkbox" name="${escapeHtml(name)}" value="true"${ruleToggles[name] ? ' checked' : ''}>
-        ${escapeHtml(label)}
+        <span>${escapeHtml(label)}<span class="toggle-desc">${escapeHtml(desc)}</span></span>
       </label>
     `)
     .join('');
@@ -831,17 +849,17 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
   return `<form class="settings-form" method="post" action="${escapeHtml(action)}">
     <label>Bot mode
       <select name="bot_mode">${modeOptions}</select>
-      <span class="help">Controls which safe runtime behavior mode this shop uses.</span>
+      <span class="help">Controls which runtime behavior mode this shop uses. Each mode changes how the bot responds to customer messages.</span>
     </label>
     <label class="checkbox-label">
       <input type="hidden" name="handoff_enabled" value="false">
       <input type="checkbox" name="handoff_enabled" value="true"${settings?.handoff_enabled ? ' checked' : ''}>
-      Enable handoff
+      <span>Enable handoff<span class="toggle-desc">Allow the bot to transfer conversations to human staff.</span></span>
     </label>
     <fieldset class="wide">
       <legend>Rule toggles</legend>
       <div class="settings-checkbox-grid">${toggleRows}</div>
-      <span class="help">Per-shop runtime switches stored in settings_json.ruleToggles.</span>
+      <span class="help">Per-shop switches that control specific bot features at runtime.</span>
     </fieldset>
     <label class="wide">Handoff message
       <textarea name="handoff_message" maxlength="1000">${escapeHtml(settings?.handoff_message || '')}</textarea>
@@ -901,20 +919,22 @@ function renderShopDetailHtml(model = {}) {
       ${renderProductFlash(model.productFlash || {})}
       <h2 id="settings">Chat Behavior Settings</h2>
       ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
-      <table><tbody>
-        <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
-        <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
-        <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
-        <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
-        <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
-        <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
-          ...(model.settings?.settings_json?.botMode || {}),
-          ...(model.settings?.settings_json?.ruleToggles || {})
-        })))}</td></tr>
-        <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
-      </tbody></table>
-      <h2>Settings JSON</h2>
-      ${renderJsonBlock(model.settings?.settings_json || {})}
+      <details class="collapsible-section">
+        <summary>Advanced: Current settings values &amp; raw JSON</summary>
+        <table><tbody>
+          <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
+          <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
+          <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
+          <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
+          <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+          <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
+            ...(model.settings?.settings_json?.botMode || {}),
+            ...(model.settings?.settings_json?.ruleToggles || {})
+          })))}</td></tr>
+          <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
+        </tbody></table>
+        ${renderJsonBlock(model.settings?.settings_json || {})}
+      </details>
 
       <section class="product-section">
         <div class="product-toolbar">
@@ -942,8 +962,9 @@ function renderShopDetailHtml(model = {}) {
       ${renderProductFlash(model.assetFlash || {})}
       ${renderCounts(summary)}
       ${renderAssetAddForm(shop.id, model.products || [])}
-      ${renderTable(['type', 'product', 'provider', 'url', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], assets.rows || [], asset => `
+      ${renderTable(['preview', 'type', 'product', 'provider', 'url', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], assets.rows || [], asset => `
         <tr>
+          <td>${asset.public_url ? `<img src="${escapeHtml(asset.public_url)}" alt="${escapeHtml(asset.asset_type)}" class="asset-thumb" loading="lazy" onerror="this.outerHTML='<div class=asset-thumb-broken>broken</div>'">` : '<div class="asset-thumb-broken">no url</div>'}</td>
           <td>${escapeHtml(asset.asset_type)}</td>
           <td>${escapeHtml(asset.product_code || asset.product_id || '')}</td>
           <td>${escapeHtml(asset.storage_provider)}</td>
