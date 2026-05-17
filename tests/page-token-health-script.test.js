@@ -4,6 +4,7 @@ const {
   appAccessTokenFromEnv,
   chooseDatabaseUrl,
   createMetaTokenHealthClient,
+  graphErrorCategory,
   main,
   parseArgs
 } = require('../scripts/check-page-token-health');
@@ -80,6 +81,36 @@ function validMetaClient(pageId = 'raw-cli-page-id') {
       return { id: pageId, name: 'CLI Page' };
     }
   };
+}
+
+function graphAxiosError({
+  status = 400,
+  code,
+  subcode,
+  axiosCode,
+  message = 'raw provider error EAAB-graph-token raw-page-graph',
+  request = true
+} = {}) {
+  const err = new Error(message);
+  if (axiosCode) err.code = axiosCode;
+  if (status) {
+    err.response = {
+      status,
+      data: {
+        error: {
+          code,
+          error_subcode: subcode,
+          message,
+          error_data: {
+            subresponse: `subresponse ${message}`
+          }
+        }
+      }
+    };
+  } else if (request) {
+    err.request = {};
+  }
+  return err;
 }
 
 describe('page token health CLI script', () => {
@@ -296,5 +327,40 @@ describe('page token health CLI script', () => {
     expect(output.includes(secret)).toBeFalse();
     expect(output.includes('RAW_META_RESPONSE')).toBeFalse();
     expect(calls.length).toBe(2);
+  });
+
+  it('classifies Graph OAuth and app-token auth failures without raw provider text', async () => {
+    const token = 'EAAB-oauth-token';
+    const rawMessage = `raw OAuth failure ${token}`;
+    const pageOAuthError = graphAxiosError({ status: 400, code: 190, subcode: 463, message: rawMessage });
+    const appAuthError = graphAxiosError({ status: 400, code: 190, message: rawMessage });
+    const client = createMetaTokenHealthClient({
+      env: { META_APP_ACCESS_TOKEN: 'app-access-token-secret' },
+      axios: {
+        async get(url) {
+          if (url.includes('/debug_token')) throw appAuthError;
+          throw pageOAuthError;
+        }
+      }
+    });
+
+    const debug = await client.debugToken({ token });
+    const page = await client.pageMe({ token });
+    const output = JSON.stringify({ debug, page });
+
+    expect(debug.error_category).toBe('app_auth_failed');
+    expect(page.error_category).toBe('graph_oauth_failed');
+    expect(output.includes(rawMessage)).toBeFalse();
+    expect(output.includes(token)).toBeFalse();
+    expect(output.includes('subresponse')).toBeFalse();
+  });
+
+  it('classifies permission, rate-limit, timeout, network, and unknown Graph errors safely', () => {
+    expect(graphErrorCategory(graphAxiosError({ status: 403, code: 200 }))).toBe('graph_permission_denied');
+    expect(graphErrorCategory(graphAxiosError({ status: 429, code: 190 }))).toBe('rate_limited');
+    expect(graphErrorCategory(graphAxiosError({ status: 400, code: 613 }))).toBe('rate_limited');
+    expect(graphErrorCategory(graphAxiosError({ status: 0, axiosCode: 'ECONNABORTED' }))).toBe('timeout');
+    expect(graphErrorCategory(graphAxiosError({ status: 0, axiosCode: 'ENOTFOUND' }))).toBe('network_failed');
+    expect(graphErrorCategory(graphAxiosError({ status: 400, code: 100, subcode: 33 }))).toBe('graph_bad_request');
   });
 });

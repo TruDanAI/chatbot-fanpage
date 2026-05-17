@@ -95,6 +95,10 @@ function firstStatus(report) {
   return report.results[0].token_health_status;
 }
 
+function firstCategory(report) {
+  return report.results[0].error_category;
+}
+
 describe('page token health core', () => {
   it('reports a valid token without exposing secret fields', async () => {
     const token = 'EAAB-valid-token';
@@ -197,6 +201,67 @@ describe('page token health core', () => {
     expect(firstStatus(report)).toBe('rate_limited');
     expect(report.results[0].error_category).toBe('rate_limited');
     expect(report.counts.rate_limited).toBe(1);
+  });
+
+  it('keeps Graph OAuth diagnostics safe while using the existing invalid status', async () => {
+    const { report } = await runHealth({
+      metaClient: createMetaClient({
+        debug: { ok: false, error_category: 'graph_oauth_failed' },
+        page: { id: 'raw-page-123' }
+      })
+    });
+
+    expect(firstStatus(report)).toBe('invalid');
+    expect(firstCategory(report)).toBe('graph_oauth_failed');
+    expect(report.counts.invalid).toBe(1);
+  });
+
+  it('keeps Graph permission diagnostics safe while using the existing permission status', async () => {
+    const { report } = await runHealth({
+      metaClient: createMetaClient({
+        debug: validDebug(),
+        page: { ok: false, error_category: 'graph_permission_denied' }
+      })
+    });
+
+    expect(firstStatus(report)).toBe('permission_missing');
+    expect(firstCategory(report)).toBe('graph_permission_denied');
+    expect(report.counts.permission_missing).toBe(1);
+  });
+
+  it('keeps provider failure categories without raw provider details in the report', async () => {
+    const rawMessage = 'RAW_META_RESPONSE EAAB-provider-token raw-page-provider customer-provider message-provider';
+    const rawSubresponse = 'RAW_META_SUBRESPONSE';
+    const { report } = await runHealth({
+      metaClient: createMetaClient({
+        debug: {
+          ok: false,
+          error_category: 'graph_bad_request',
+          message: rawMessage,
+          response: {
+            data: {
+              error: {
+                message: rawMessage,
+                error_data: {
+                  subresponse: rawSubresponse
+                }
+              }
+            }
+          }
+        },
+        page: { id: 'raw-page-123' }
+      })
+    });
+    const output = JSON.stringify(report);
+
+    expect(firstStatus(report)).toBe('check_failed');
+    expect(firstCategory(report)).toBe('graph_bad_request');
+    expect(output.includes(rawMessage)).toBeFalse();
+    expect(output.includes(rawSubresponse)).toBeFalse();
+    expect(output.includes('EAAB-provider-token')).toBeFalse();
+    expect(output.includes('raw-page-provider')).toBeFalse();
+    expect(output.includes('customer-provider')).toBeFalse();
+    expect(output.includes('message-provider')).toBeFalse();
   });
 
   it('reports network or provider check failure without raw error text', async () => {

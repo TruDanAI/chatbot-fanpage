@@ -69,8 +69,25 @@ function normalizeErrorCategory(value) {
   if (category === 'config_missing' || category === 'missing_config') return 'config_missing';
   if (category === 'decrypt_failed' || category === 'credential_decrypt_failed') return 'decrypt_failed';
   if (category === 'invalid' || category === 'invalid_token') return 'invalid';
+  if (category === 'graph_oauth_failed' || category === 'oauth_failed' || category === 'oauth_error') return 'graph_oauth_failed';
+  if (category === 'app_auth_failed' || category === 'app_oauth_failed') return 'app_auth_failed';
   if (category === 'expired' || category === 'token_expired') return 'expired';
   if (category === 'permission_missing' || category === 'missing_permission') return 'permission_missing';
+  if (category === 'graph_permission_denied' || category === 'permission_denied') return 'graph_permission_denied';
+  if (category === 'graph_bad_request' || category === 'bad_request') return 'graph_bad_request';
+  if (category === 'timeout' || category === 'econnaborted' || category === 'etimedout' || category === 'esockettimedout') return 'timeout';
+  if ([
+    'network_failed',
+    'network_error',
+    'err_network',
+    'eai_again',
+    'econnreset',
+    'econnrefused',
+    'enetdown',
+    'enetunreach',
+    'enotfound',
+    'epipe'
+  ].includes(category)) return 'network_failed';
   if (category === 'app_mismatch') return 'app_mismatch';
   if (category === 'page_mismatch') return 'page_mismatch';
   return 'check_failed';
@@ -78,6 +95,8 @@ function normalizeErrorCategory(value) {
 
 function statusFromErrorCategory(value) {
   const category = normalizeErrorCategory(value);
+  if (category === 'graph_oauth_failed') return 'invalid';
+  if (category === 'graph_permission_denied') return 'permission_missing';
   return HEALTH_STATUSES.includes(category) ? category : 'check_failed';
 }
 

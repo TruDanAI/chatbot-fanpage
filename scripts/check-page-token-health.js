@@ -147,11 +147,67 @@ function facebookErrorCode(err) {
   return Number(err?.response?.data?.error?.code || 0);
 }
 
-function graphErrorCategory(err) {
+function facebookErrorSubcode(err) {
+  return Number(
+    err?.response?.data?.error?.error_subcode
+      || err?.response?.data?.error?.subcode
+      || 0
+  );
+}
+
+const RATE_LIMIT_ERROR_CODES = Object.freeze([4, 17, 32, 613]);
+const OAUTH_ERROR_CODES = Object.freeze([190, 102, 104]);
+const OAUTH_ERROR_SUBCODES = Object.freeze([458, 459, 460, 463, 464, 467]);
+const APP_AUTH_ERROR_CODES = Object.freeze([101]);
+const PERMISSION_ERROR_CODES = Object.freeze([10, 200, 294, 298]);
+const TIMEOUT_ERROR_CODES = Object.freeze(['ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT']);
+const NETWORK_ERROR_CODES = Object.freeze([
+  'EAI_AGAIN',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPIPE',
+  'ERR_NETWORK'
+]);
+
+function errorCodeText(err) {
+  return trimText(err?.code).toUpperCase();
+}
+
+function isAxiosTimeout(err) {
+  const code = errorCodeText(err);
+  if (TIMEOUT_ERROR_CODES.includes(code)) return true;
+  return trimText(err?.message).toLowerCase().includes('timeout');
+}
+
+function isNetworkFailure(err) {
+  const code = errorCodeText(err);
+  if (NETWORK_ERROR_CODES.includes(code)) return true;
+  return Boolean(!err?.response && err?.request);
+}
+
+function graphErrorCategory(err, { operation = '' } = {}) {
+  if (isAxiosTimeout(err)) return 'timeout';
+  if (isNetworkFailure(err)) return 'network_failed';
+
   const status = Number(err?.response?.status || 0);
   const code = facebookErrorCode(err);
-  if (status === 429 || [4, 17, 32, 613].includes(code)) return 'rate_limited';
-  if (code === 190) return 'invalid';
+  const subcode = facebookErrorSubcode(err);
+
+  if (status === 429 || RATE_LIMIT_ERROR_CODES.includes(code)) return 'rate_limited';
+  if (
+    operation === 'debug_token'
+      && (APP_AUTH_ERROR_CODES.includes(code) || OAUTH_ERROR_CODES.includes(code) || status === 401)
+  ) {
+    return 'app_auth_failed';
+  }
+  if (OAUTH_ERROR_CODES.includes(code) || OAUTH_ERROR_SUBCODES.includes(subcode) || status === 401) {
+    return 'graph_oauth_failed';
+  }
+  if (PERMISSION_ERROR_CODES.includes(code) || status === 403) return 'graph_permission_denied';
+  if (status === 400 || code || subcode) return 'graph_bad_request';
   return 'check_failed';
 }
 
@@ -206,7 +262,7 @@ function createMetaTokenHealthClient({
         });
         return safeDebugData(response.data && response.data.data ? response.data.data : response.data);
       } catch (err) {
-        return { ok: false, error_category: graphErrorCategory(err) };
+        return { ok: false, error_category: graphErrorCategory(err, { operation: 'debug_token' }) };
       }
     },
     async pageMe({ token, fields = ['id', 'name'] } = {}) {
@@ -220,7 +276,7 @@ function createMetaTokenHealthClient({
         });
         return safePageData(response.data);
       } catch (err) {
-        return { ok: false, error_category: graphErrorCategory(err) };
+        return { ok: false, error_category: graphErrorCategory(err, { operation: 'page_me' }) };
       }
     }
   };
