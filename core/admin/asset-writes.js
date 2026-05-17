@@ -133,6 +133,13 @@ function isLocalOrPrivateHostname(hostname = '') {
     })();
 }
 
+function isNonPublicHostname(hostname = '') {
+  const host = normalizeHostnameForPolicy(hostname);
+  if (!host) return true;
+  if (host.includes(':') || parseIpv4Address(host)) return false;
+  return !host.includes('.') || host.endsWith('.internal');
+}
+
 function normalizePublicUrl(value = '') {
   const raw = String(value ?? '').trim();
   if (!raw) throw createAssetWriteError('public_url_required', 'Public URL is required.', 400);
@@ -150,7 +157,10 @@ function normalizePublicUrl(value = '') {
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw createAssetWriteError('invalid_public_url', 'Public URL must use http or https.', 400);
   }
-  if (parsed.username || parsed.password || isLocalOrPrivateHostname(parsed.hostname)) {
+  if (parsed.username ||
+    parsed.password ||
+    isLocalOrPrivateHostname(parsed.hostname) ||
+    isNonPublicHostname(parsed.hostname)) {
     throw createAssetWriteError('invalid_public_url', 'Public URL is not allowed.', 400);
   }
 

@@ -178,6 +178,7 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .product-filters { margin: 0; }
     .product-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 0 0 6px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .product-form.compact { padding: 0; margin: 0; border: 0; background: transparent; grid-template-columns: repeat(2, minmax(96px, 1fr)); }
+    .product-form.bulk-import textarea { min-height: 150px; font-family: Consolas, monospace; }
     .product-form h3 { grid-column: 1 / -1; margin: 0 0 2px; font-size: 15px; }
     .product-form label { display: grid; gap: 4px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
     .product-form input, .product-form textarea, .product-form select { min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
@@ -636,6 +637,21 @@ function renderProductAddForm(shopId = '') {
   </form>`;
 }
 
+function renderProductBulkImportForm(shopId = '') {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/products/import`;
+  const sample = [
+    'code,name,price_text,description,image_url,status,sort_order',
+    'M7,Demo Product M7,150k,Demo product,https://example.com/m7.png,active,1'
+  ].join('\n');
+  return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}">
+    <h3>Bulk import products</h3>
+    <label>CSV products
+      <textarea name="csv" maxlength="50000" placeholder="${escapeHtml(sample)}" spellcheck="false"></textarea>
+    </label>
+    <div class="form-actions"><button type="submit">Import products</button><span class="meta">Upserts by product code. Optional image_url creates or updates product_image assets.</span></div>
+  </form>`;
+}
+
 function renderPageMappingAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
@@ -907,6 +923,7 @@ function renderShopDetailHtml(model = {}) {
         </div>
         ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
         ${renderProductAddForm(shop.id)}
+        ${renderProductBulkImportForm(shop.id)}
         ${renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products || [], product => `
         <tr>
           <td><code>${escapeHtml(product.code)}</code></td>

@@ -22,6 +22,11 @@ const {
   isMissingAssetWriteSchemaError
 } = require('./admin/asset-writes');
 const {
+  createPostgresProductImportService,
+  isMissingProductImportSchemaError,
+  presentImportSummary
+} = require('./admin/product-import-writes');
+const {
   createPostgresProductWriteService,
   isMissingProductWriteSchemaError
 } = require('./admin/product-writes');
@@ -281,6 +286,94 @@ function presentProductWriteTextError(err) {
   return {
     statusCode: response.statusCode,
     text: response.body?.message || 'Product write could not be completed.'
+  };
+}
+
+function presentProductImportApi(result = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    ...presentImportSummary(result)
+  };
+}
+
+function presentImportErrors(errors = []) {
+  return (Array.isArray(errors) ? errors : []).slice(0, 100).map(error => ({
+    row: Number(error?.row || 0),
+    field: String(error?.field || '').trim().slice(0, 80),
+    code: String(error?.code || 'invalid_row').trim().slice(0, 120),
+    message: String(error?.message || 'Row is invalid.').trim().slice(0, 180)
+  }));
+}
+
+function presentProductImportError(err) {
+  if (isMissingProductImportSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  if (code === 'product_import_validation_failed') {
+    return {
+      statusCode: 400,
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: 'product_import_validation_failed',
+        message: 'Product import validation failed.',
+        rows_received: Number(err?.rows_received || 0),
+        ignored_columns: Array.isArray(err?.ignored_columns)
+          ? err.ignored_columns.map(column => String(column || '').trim().slice(0, 80)).filter(Boolean)
+          : [],
+        errors: presentImportErrors(err?.errors)
+      }
+    };
+  }
+
+  const safe = {
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    permission_denied: ['permission_denied', 'Product write permission is required.', 403],
+    database_url_required: ['product_import_unavailable', 'Product imports are unavailable.', 503],
+    product_import_commit_failed: ['product_import_commit_failed', 'Product import could not be committed.', 500],
+    product_import_persist_failed: ['product_import_failed', 'Product import could not be completed.', 500],
+    product_import_asset_persist_failed: ['product_import_failed', 'Product import could not be completed.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'product_import_failed',
+      message: 'Product import could not be completed.'
+    }
+  };
+}
+
+function presentProductImportTextError(err) {
+  const response = presentProductImportError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Product import could not be completed.'
   };
 }
 
@@ -583,6 +676,7 @@ function registerAdminRoutes(app, {
   assetWriteService,
   pageCredentialWriteService,
   pageMappingWriteService,
+  productImportService,
   productWriteService,
   shopSettingsWriteService,
   shopWriteService,
@@ -626,6 +720,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl
   });
   const pageMappingWrites = pageMappingWriteService || createPostgresPageMappingWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const productImports = productImportService || createPostgresProductImportService({
     databaseUrl: dashboardDatabaseUrl
   });
   const productWrites = productWriteService || createPostgresProductWriteService({
@@ -977,6 +1074,30 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function importProductsApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.import',
+      resourceType: 'shop_product',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await productImports.importProducts({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentProductImportApi(result));
+    } catch (err) {
+      const response = presentProductImportError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function updateProductApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const productId = String(req.params.productId || '').trim().slice(0, 160);
@@ -1211,6 +1332,30 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function importProductsHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.import',
+      resourceType: 'shop_product',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await productImports.importProducts({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopProductRedirect(shopId, 'imported'));
+    } catch (err) {
+      const response = presentProductImportTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   async function updateProductHtml(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const productId = String(req.params.productId || '').trim().slice(0, 160);
@@ -1438,6 +1583,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
+  app.post('/admin/api/shops/:shopId/products/import', importProductsApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
   if (typeof app.patch === 'function') {
@@ -1467,6 +1613,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialHtml);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
   app.post('/admin/shops/:shopId/products', createProductHtml);
+  app.post('/admin/shops/:shopId/products/import', importProductsHtml);
   app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
   app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
   app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
@@ -1499,6 +1646,7 @@ module.exports = {
   createPostgresDashboardReader,
   createPostgresPageCredentialWriteService,
   createPostgresPageMappingWriteService,
+  createPostgresProductImportService,
   createPostgresProductWriteService,
   createPostgresShopSettingsWriteService,
   createPostgresShopWriteService,

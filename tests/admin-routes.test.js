@@ -706,6 +706,29 @@ function createProductWriteServiceStub({ failWith, createdProduct, updatedProduc
   };
 }
 
+function createProductImportServiceStub({ failWith, result } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async importProducts(input = {}) {
+      calls.push({ method: 'importProducts', input });
+      if (failWith) throw failWith;
+      return result || {
+        shop_id: input.shopId,
+        rows_received: 2,
+        products_created: 1,
+        products_updated: 1,
+        product_images_created: 1,
+        product_images_updated: 0,
+        product_images_skipped: 1,
+        image_assets_touched: 1,
+        ignored_columns: ['extra_col'],
+        errors: []
+      };
+    }
+  };
+}
+
 function createAssetWriteServiceStub({ failWith, createdAsset, updatedAsset, statusAsset, archivedAsset } = {}) {
   const calls = [];
   const baseAsset = {
@@ -3548,6 +3571,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('action="/admin/shops/adult-shop/pages/adult-page/credentials"');
     expect(res.body).toContain('type="password"');
     expect(res.body).toContain('name="rotate"');
+    expect(res.body).toContain('Bulk import products');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/import"');
+    expect(res.body).toContain('name="csv"');
     expect(res.body).toContain('p:');
     expect(res.body.includes('page_1')).toBeFalse();
     expect(res.body.includes('DB Product')).toBeFalse();
@@ -3602,6 +3628,150 @@ describe('admin dashboard routes', () => {
     expect(productWrites.calls[0].method).toBe('createProduct');
     expect(productWrites.calls[0].input.shopId).toBe('adult-shop');
     expect(productWrites.calls[0].input.body.code).toBe(' DB2 ');
+  });
+
+  it('product import API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const productImports = createProductImportServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        productImportService: productImports,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/products/import'](createReq({
+        params: { shopId: 'adult-shop' },
+        body: { csv: 'code,name\nM7,Demo' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/products/import'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { csv: 'code,name\nM7,Demo' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(productImports.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.product.import');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('product import API returns safe summary without raw CSV', async () => {
+    const app = createApp();
+    const productImports = createProductImportServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: productImports,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        csv: 'code,name,image_url,extra_col\nM7,Raw Name,https://cdn.example.test/m7.png,ignored'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.shop_id).toBe('adult-shop');
+    expect(body.rows_received).toBe(2);
+    expect(body.products_created).toBe(1);
+    expect(body.products_updated).toBe(1);
+    expect(body.product_images_created).toBe(1);
+    expect(body.ignored_columns).toEqual(['extra_col']);
+    expect(body.errors).toEqual([]);
+    expect(bodyText.includes('Raw Name')).toBeFalse();
+    expect(bodyText.includes('cdn.example')).toBeFalse();
+    expect(productImports.calls[0].method).toBe('importProducts');
+    expect(productImports.calls[0].input.shopId).toBe('adult-shop');
+  });
+
+  it('product import API maps validation and missing schema errors safely', async () => {
+    const validationErr = new Error('raw csv should not be returned');
+    validationErr.code = 'product_import_validation_failed';
+    validationErr.statusCode = 400;
+    validationErr.rows_received = 1;
+    validationErr.ignored_columns = ['extra_col'];
+    validationErr.errors = [{
+      row: 2,
+      field: 'image_url',
+      code: 'invalid_image_url',
+      message: 'Image URL is invalid.'
+    }];
+
+    for (const item of [
+      { err: validationErr, status: 400, error: 'product_import_validation_failed' },
+      { err: Object.assign(new Error('relation "shop_products" at postgres://secret'), { code: '42P01' }), status: 503, error: 'multi_shop_schema_not_ready' },
+      { err: Object.assign(new Error('commit failed at postgres://secret'), { code: 'product_import_commit_failed' }), status: 500, error: 'product_import_commit_failed' }
+    ]) {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        productImportService: createProductImportServiceStub({ failWith: item.err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/products/import'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { csv: 'code,name\nM7,Demo' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.ok).toBeFalse();
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+      expect(bodyText.includes('raw csv')).toBeFalse();
+    }
+  });
+
+  it('product import HTML POST redirects after safe import', async () => {
+    const app = createApp();
+    const productImports = createProductImportServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: productImports,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { csv: 'code,name\nM7,Demo Product' }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/adult-shop?productMessage=imported');
+    expect(productImports.calls[0].method).toBe('importProducts');
   });
 
   it('product update API succeeds and keeps write scoped to route shop/product', async () => {
