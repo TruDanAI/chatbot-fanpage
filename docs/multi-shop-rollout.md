@@ -184,6 +184,51 @@ Safety boundary:
   production `/data` access, authenticated production smoke, commit, or push
   was performed.
 
+## Staging Onboarding Demo Shop E2E Checkpoint - 2026-05-17
+
+This checkpoint is staging-only. It records the completed
+`onboarding-demo-shop` pass from the provided staging state. It is not approval
+to deploy, change environment variables, write any database, touch `/data`, run
+authenticated smoke, or touch production.
+
+Staging onboarding state for this checkpoint:
+
+- Admin onboarding API/UI created a second shop end-to-end on staging:
+  `onboarding-demo-shop`.
+- The shop used a real second staging test fanpage.
+- The onboarding readiness checklist passed.
+- `WEBHOOK_QUEUE_ENABLED=false`; webhook processing remains on the inline path.
+- Production deployment is still not updated with the latest admin UI unless a
+  manual deploy is separately approved and performed.
+
+Messenger flow passed for `onboarding-demo-shop`:
+
+- Webhook `POST /webhook` count: `2`.
+- Inbound/customer marker count: `2`.
+- Reply marker count: `1`.
+- Image marker count: `2`.
+- Menu image marker count: `1`.
+- Product image marker count: `1`.
+- Handoff marker count: `1`.
+- DB config fail-closed count: `0`.
+- `page_not_found` count: `0`.
+- Credential error count: `0`.
+- Messenger send error count: `0`.
+
+Routing and isolation:
+
+- Incoming `page_ref` matched `p:3d651b6548`.
+- The request routed to `onboarding-demo-shop` only.
+- No wrong-shop routing to `test-shop` or `adult-shop` was observed.
+
+Safety boundary:
+
+- Production was untouched.
+- No deploy, environment change, database write, `/data` touch,
+  authenticated smoke, commit, or push was performed as part of this
+  documentation update.
+- `WEBHOOK_QUEUE_ENABLED` remains false and is a separate future gate.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
