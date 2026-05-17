@@ -221,6 +221,19 @@ Routing and isolation:
 - The request routed to `onboarding-demo-shop` only.
 - No wrong-shop routing to `test-shop` or `adult-shop` was observed.
 
+Product bulk CSV import smoke passed for `onboarding-demo-shop` after the
+feature was deployed to staging:
+
+- The import created product codes `M8` and `M9`.
+- `rows_received=2`.
+- `products_created=2`.
+- `products_updated=0`.
+- `product_images_created=2`.
+- `errors_count=0`.
+- Active product image count increased from `1` to `3`.
+- Onboarding readiness remained pass after the import.
+- The bulk import form still rendered after the smoke.
+
 Safety boundary:
 
 - Production was untouched.

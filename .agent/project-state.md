@@ -56,4 +56,6 @@ Admin onboarding flows are implemented and pushed to `main`:
 
 Latest staging deploy for admin onboarding UI passed public and read-only authenticated UI smoke. Staging `onboarding-demo-shop` was created through the admin API/UI with a real second staging test fanpage, passed readiness, and completed a Messenger end-to-end pass. Incoming `page_ref` matched `p:3d651b6548` and routed only to `onboarding-demo-shop`, with no wrong-shop routing to `test-shop` or `adult-shop`.
 
+Staging product bulk CSV import smoke passed for `onboarding-demo-shop` after deployment. The import created `M8` and `M9` with `rows_received=2`, `products_created=2`, `products_updated=0`, `product_images_created=2`, and `errors_count=0`. Active product image count increased from `1` to `3`, onboarding readiness remained pass, and the bulk import form still rendered. Production was untouched.
+
 Production deployment is intentionally not updated with the latest admin UI commits unless manually deployed. `WEBHOOK_QUEUE_ENABLED` remains false and should be handled as a separate future gate.
