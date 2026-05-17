@@ -358,13 +358,23 @@ async function callDebugToken(metaClient, token) {
   }
 }
 
-async function callPageIdentity(metaClient, token) {
-  const pageMethod = metaClient && (metaClient.pageMe || metaClient.getPageIdentity);
+async function callPageIdentity(metaClient, token, expectedPageId) {
+  const pageMethod = metaClient && (
+    metaClient.getPageIdentity
+      || metaClient.pageIdentity
+      || metaClient.pageMe
+  );
   if (typeof pageMethod !== 'function') {
     return { ok: false, errorCategory: 'config_missing', operation: 'page_identity' };
   }
   try {
-    return normalizePageResponse(await pageMethod.call(metaClient, { token, fields: ['id', 'name'] }));
+    const pageId = trimText(expectedPageId);
+    return normalizePageResponse(await pageMethod.call(metaClient, {
+      token,
+      expectedPageId: pageId,
+      pageId,
+      fields: ['id']
+    }));
   } catch (err) {
     return { ok: false, ...diagnosticFromException(err, 'page_identity') };
   }
@@ -446,7 +456,17 @@ async function evaluateCredentialRow({
     });
   }
 
-  const identity = await callPageIdentity(metaClient, token);
+  const expectedPageId = trimText(row.expected_page_id);
+  if (!expectedPageId) {
+    return safeResult(row, {
+      tokenHealthStatus: 'page_mismatch',
+      errorCategory: 'page_mismatch',
+      operation: 'page_identity',
+      checked: true
+    });
+  }
+
+  const identity = await callPageIdentity(metaClient, token, expectedPageId);
   if (!identity.ok) {
     const status = statusFromErrorCategory(identity.errorCategory);
     return safeResult(row, {
@@ -459,7 +479,7 @@ async function evaluateCredentialRow({
     });
   }
 
-  if (!trimText(identity.id) || trimText(identity.id) !== trimText(row.expected_page_id)) {
+  if (!trimText(identity.id) || trimText(identity.id) !== expectedPageId) {
     return safeResult(row, {
       tokenHealthStatus: 'page_mismatch',
       errorCategory: 'page_mismatch',

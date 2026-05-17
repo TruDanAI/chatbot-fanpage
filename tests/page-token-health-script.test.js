@@ -123,8 +123,8 @@ function validMetaClient(pageId = 'raw-cli-page-id') {
         scopes: ['pages_messaging']
       };
     },
-    async pageMe(input) {
-      calls.push({ method: 'pageMe', input });
+    async getPageIdentity(input) {
+      calls.push({ method: 'getPageIdentity', input });
       return { id: pageId, name: 'CLI Page' };
     }
   };
@@ -436,6 +436,7 @@ describe('page token health CLI script', () => {
   it('builds a Meta client that returns normalized categories only', async () => {
     const secret = 'app-secret-value';
     const token = 'EAAB-normalized-client-token';
+    const expectedPageId = 'raw-normalized-client-page';
     const calls = [];
     const axios = {
       async get(url, options) {
@@ -476,7 +477,7 @@ describe('page token health CLI script', () => {
     });
 
     const debug = await client.debugToken({ token });
-    const page = await client.pageMe({ token });
+    const page = await client.getPageIdentity({ token, expectedPageId });
     const output = JSON.stringify({ debug, page });
     const pageKeys = Object.keys(page).sort();
 
@@ -491,6 +492,57 @@ describe('page token health CLI script', () => {
     expect(output.includes(secret)).toBeFalse();
     expect(output.includes('RAW_META_RESPONSE')).toBeFalse();
     expect(calls.length).toBe(2);
+  });
+
+  it('requests the expected page node for page identity', async () => {
+    const token = 'EAAB-page-endpoint-token';
+    const expectedPageId = 'raw-page-endpoint-id';
+    const calls = [];
+    const client = createMetaTokenHealthClient({
+      env: { META_APP_ACCESS_TOKEN: 'app-access-token-secret' },
+      axios: {
+        async get(url, options) {
+          calls.push({ url, options });
+          return { data: { id: expectedPageId, name: 'Ignored Page Name' } };
+        }
+      }
+    });
+
+    const page = await client.getPageIdentity({ token, expectedPageId });
+    const call = calls[0];
+
+    expect(page.id).toBe(expectedPageId);
+    expect(Object.keys(page).sort()).toEqual(['id'].sort());
+    expect(call.url).toContain(`/v19.0/${encodeURIComponent(expectedPageId)}`);
+    expect(call.url.includes('/me')).toBeFalse();
+    expect(call.options.params.fields).toBe('id');
+    expect(call.options.params.access_token).toBe(token);
+  });
+
+  it('maps page identity Graph code 100 safely', async () => {
+    const token = 'EAAB-page-code-100-token';
+    const rawMessage = `raw page identity code 100 ${token} raw-page-code-100`;
+    const pageBadRequest = graphAxiosError({ status: 400, code: 100, subcode: 33, message: rawMessage });
+    const client = createMetaTokenHealthClient({
+      env: { META_APP_ACCESS_TOKEN: 'app-access-token-secret' },
+      axios: {
+        async get() {
+          throw pageBadRequest;
+        }
+      }
+    });
+
+    const page = await client.getPageIdentity({ token, expectedPageId: 'raw-page-code-100' });
+    const output = JSON.stringify(page);
+
+    expect(page.error_category).toBe('graph_bad_request');
+    expect(page.operation).toBe('page_identity');
+    expect(page.graph_error_code).toBe(100);
+    expect(page.graph_error_subcode).toBe(33);
+    expect(Object.keys(page).sort()).toEqual(['error_category', 'graph_error_code', 'graph_error_subcode', 'ok', 'operation'].sort());
+    expect(output.includes(rawMessage)).toBeFalse();
+    expect(output.includes(token)).toBeFalse();
+    expect(output.includes('raw-page-code-100')).toBeFalse();
   });
 
   it('classifies Graph OAuth and app-token auth failures without raw provider text', async () => {
@@ -509,7 +561,7 @@ describe('page token health CLI script', () => {
     });
 
     const debug = await client.debugToken({ token });
-    const page = await client.pageMe({ token });
+    const page = await client.getPageIdentity({ token, expectedPageId: 'raw-oauth-page' });
     const output = JSON.stringify({ debug, page });
     const debugKeys = Object.keys(debug).sort();
     const pageKeys = Object.keys(page).sort();

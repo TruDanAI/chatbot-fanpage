@@ -77,8 +77,8 @@ function createMetaClient({
       if (throwDebug) throw throwDebug;
       return debug;
     },
-    async pageMe(input) {
-      calls.push({ method: 'pageMe', input });
+    async getPageIdentity(input) {
+      calls.push({ method: 'getPageIdentity', input });
       if (throwPage) throw throwPage;
       return page;
     }
@@ -146,6 +146,23 @@ describe('page token health core', () => {
     expect(output.includes(token)).toBeFalse();
     expect(output.includes(encrypted)).toBeFalse();
     expect(output.includes('raw-page-123')).toBeFalse();
+  });
+
+  it('checks page identity against the expected page id only', async () => {
+    const expectedPageId = 'raw-page-expected-client-call';
+    const { report, metaClient } = await runHealth({
+      rows: [credentialRow({ expectedPageId })],
+      metaClient: createMetaClient({
+        debug: validDebug(),
+        page: { id: expectedPageId, name: 'Ignored Page Name' }
+      })
+    });
+    const pageCall = metaClient.calls.find(call => call.method === 'getPageIdentity');
+
+    expect(firstStatus(report)).toBe('valid');
+    expect(pageCall.input.expectedPageId).toBe(expectedPageId);
+    expect(pageCall.input.pageId).toBe(expectedPageId);
+    expect(pageCall.input.fields).toEqual(['id']);
   });
 
   it('constrains active credential SELECT by shop_id and page_ref before evaluation', async () => {
@@ -337,6 +354,35 @@ describe('page token health core', () => {
     expect(report.results[0].graph_error_code).toBe(200);
     expect(report.results[0].graph_error_subcode).toBe(201);
     expect(report.counts.permission_missing).toBe(1);
+  });
+
+  it('maps page identity Graph code 100 to graph_bad_request without raw details', async () => {
+    const rawMessage = 'RAW_PAGE_IDENTITY_RESPONSE EAAB-page-identity-token raw-page-identity message-body';
+    const { report } = await runHealth({
+      metaClient: createMetaClient({
+        debug: validDebug(),
+        page: {
+          ok: false,
+          operation: 'page_identity',
+          graph_error_code: 100,
+          graph_error_subcode: 33,
+          error_category: 'graph_bad_request',
+          message: rawMessage,
+          response: { data: { error: { message: rawMessage } } }
+        }
+      })
+    });
+    const output = JSON.stringify(report);
+
+    expect(firstStatus(report)).toBe('check_failed');
+    expect(firstCategory(report)).toBe('graph_bad_request');
+    expect(report.results[0].operation).toBe('page_identity');
+    expect(report.results[0].graph_error_code).toBe(100);
+    expect(report.results[0].graph_error_subcode).toBe(33);
+    expect(output.includes(rawMessage)).toBeFalse();
+    expect(output.includes('EAAB-page-identity-token')).toBeFalse();
+    expect(output.includes('raw-page-identity')).toBeFalse();
+    expect(output.includes('message-body')).toBeFalse();
   });
 
   it('keeps provider failure categories without raw provider details in the report', async () => {

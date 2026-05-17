@@ -273,8 +273,7 @@ function safeDebugData(data = {}) {
 
 function safePageData(data = {}) {
   return {
-    id: trimText(data.id),
-    name: trimText(data.name)
+    id: trimText(data.id)
   };
 }
 
@@ -286,6 +285,30 @@ function createMetaTokenHealthClient({
 } = {}) {
   const http = axios || require('axios');
   const appAccessToken = appAccessTokenFromEnv(env);
+  async function getPageIdentity({ token, expectedPageId, pageId, fields = ['id'] } = {}) {
+    const targetPageId = trimText(expectedPageId || pageId);
+    if (!targetPageId) {
+      return {
+        ok: false,
+        operation: 'page_identity',
+        graph_error_code: null,
+        graph_error_subcode: null,
+        error_category: 'page_mismatch'
+      };
+    }
+    try {
+      const response = await http.get(graphUrl(graphVersion, encodeURIComponent(targetPageId)), {
+        params: {
+          fields: fields.join(','),
+          access_token: token
+        },
+        timeout: timeoutMs
+      });
+      return safePageData(response.data);
+    } catch (err) {
+      return safeGraphFailure(err, { operation: 'page_identity' });
+    }
+  }
 
   return {
     async debugToken({ token } = {}) {
@@ -311,20 +334,8 @@ function createMetaTokenHealthClient({
         return safeGraphFailure(err, { operation: 'debug_token' });
       }
     },
-    async pageMe({ token, fields = ['id', 'name'] } = {}) {
-      try {
-        const response = await http.get(graphUrl(graphVersion, 'me'), {
-          params: {
-            fields: fields.join(','),
-            access_token: token
-          },
-          timeout: timeoutMs
-        });
-        return safePageData(response.data);
-      } catch (err) {
-        return safeGraphFailure(err, { operation: 'page_identity' });
-      }
-    }
+    getPageIdentity,
+    pageMe: getPageIdentity
   };
 }
 
