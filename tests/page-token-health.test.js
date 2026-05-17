@@ -24,6 +24,32 @@ function createClient(rows = []) {
   };
 }
 
+function createFilteringClient(rows = []) {
+  const calls = [];
+  return {
+    calls,
+    writes: 0,
+    async query(sql, values = []) {
+      const sqlText = String(sql);
+      calls.push({ sql: sqlText, values });
+      if (/^\s*SELECT/i.test(sqlText)) {
+        let filtered = rows;
+        const shopMatch = sqlText.match(/c\.shop_id\s*=\s*\$(\d+)/);
+        const pageRefMatch = sqlText.match(/c\.page_mapping_id\s*=\s*\$(\d+)/);
+        if (shopMatch) {
+          filtered = filtered.filter(row => row.shop_id === values[Number(shopMatch[1]) - 1]);
+        }
+        if (pageRefMatch) {
+          filtered = filtered.filter(row => row.page_mapping_id === values[Number(pageRefMatch[1]) - 1]);
+        }
+        return { rows: filtered };
+      }
+      if (/^\s*(INSERT|UPDATE|DELETE)/i.test(sqlText)) this.writes += 1;
+      return { rows: [] };
+    }
+  };
+}
+
 function credentialRow(overrides = {}) {
   const token = overrides.token || 'EAAB-local-page-token';
   return {
@@ -77,7 +103,9 @@ async function runHealth({
   }),
   masterKey = MASTER_KEY,
   expectedAppId = 'app-1',
-  requiredPermissions = ['pages_messaging']
+  requiredPermissions = ['pages_messaging'],
+  shopId = '',
+  pageRef = ''
 } = {}) {
   const client = createClient(rows);
   const report = await checkPageTokenHealth({
@@ -86,7 +114,9 @@ async function runHealth({
     masterKey,
     expectedAppId,
     requiredPermissions,
-    now: () => NOW_MS
+    now: () => NOW_MS,
+    shopId,
+    pageRef
   });
   return { report, client, metaClient };
 }
@@ -116,6 +146,49 @@ describe('page token health core', () => {
     expect(output.includes(token)).toBeFalse();
     expect(output.includes(encrypted)).toBeFalse();
     expect(output.includes('raw-page-123')).toBeFalse();
+  });
+
+  it('constrains active credential SELECT by shop_id and page_ref before evaluation', async () => {
+    const rows = [
+      credentialRow({
+        shopId: 'shop-filter',
+        pageRef: 'page-map-filter',
+        expectedPageId: 'raw-page-filter'
+      }),
+      credentialRow({
+        shopId: 'other-shop',
+        pageRef: 'page-map-other',
+        encryptedValue: 'not-an-envelope',
+        expectedPageId: 'raw-page-other'
+      })
+    ];
+    const client = createFilteringClient(rows);
+    const metaClient = createMetaClient({
+      debug: validDebug(),
+      page: { id: 'raw-page-filter', name: 'Filtered Page' }
+    });
+    const report = await checkPageTokenHealth({
+      client,
+      metaClient,
+      masterKey: MASTER_KEY,
+      expectedAppId: 'app-1',
+      requiredPermissions: ['pages_messaging'],
+      shopId: 'shop-filter',
+      pageRef: 'page-map-filter',
+      now: () => NOW_MS
+    });
+    const select = client.calls[0];
+
+    expect(select.sql).toContain('c.shop_id = $2');
+    expect(select.sql).toContain('c.page_mapping_id = $3');
+    expect(select.values).toEqual(['fb_page_token', 'shop-filter', 'page-map-filter']);
+    expect(report.counts.credentials).toBe(1);
+    expect(report.results.length).toBe(1);
+    expect(report.results[0].shop_id).toBe('shop-filter');
+    expect(report.results[0].page_ref).toBe('page-map-filter');
+    expect(firstStatus(report)).toBe('valid');
+    expect(report.counts.decrypt_failed).toBe(0);
+    expect(metaClient.calls.length).toBe(2);
   });
 
   it('reports invalid token status', async () => {
@@ -216,16 +289,53 @@ describe('page token health core', () => {
     expect(report.counts.invalid).toBe(1);
   });
 
+  it('keeps wrong-app debug_token failures sanitized', async () => {
+    const rawMessage = 'wrong app raw Graph message EAAB-wrong-app raw-page-wrong-app';
+    const { report } = await runHealth({
+      metaClient: createMetaClient({
+        debug: {
+          ok: false,
+          operation: 'debug_token',
+          graph_error_code: 190,
+          graph_error_subcode: null,
+          error_category: 'app_auth_failed',
+          message: rawMessage,
+          response: { data: { error: { message: rawMessage } } }
+        },
+        page: { id: 'raw-page-123' }
+      })
+    });
+    const output = JSON.stringify(report);
+
+    expect(firstStatus(report)).toBe('check_failed');
+    expect(firstCategory(report)).toBe('app_auth_failed');
+    expect(report.results[0].operation).toBe('debug_token');
+    expect(report.results[0].graph_error_code).toBe(190);
+    expect(report.results[0].graph_error_subcode).toBe(null);
+    expect(output.includes(rawMessage)).toBeFalse();
+    expect(output.includes('EAAB-wrong-app')).toBeFalse();
+    expect(output.includes('raw-page-wrong-app')).toBeFalse();
+  });
+
   it('keeps Graph permission diagnostics safe while using the existing permission status', async () => {
     const { report } = await runHealth({
       metaClient: createMetaClient({
         debug: validDebug(),
-        page: { ok: false, error_category: 'graph_permission_denied' }
+        page: {
+          ok: false,
+          operation: 'page_identity',
+          graph_error_code: 200,
+          graph_error_subcode: 201,
+          error_category: 'graph_permission_denied'
+        }
       })
     });
 
     expect(firstStatus(report)).toBe('permission_missing');
     expect(firstCategory(report)).toBe('graph_permission_denied');
+    expect(report.results[0].operation).toBe('page_identity');
+    expect(report.results[0].graph_error_code).toBe(200);
+    expect(report.results[0].graph_error_subcode).toBe(201);
     expect(report.counts.permission_missing).toBe(1);
   });
 
@@ -236,6 +346,9 @@ describe('page token health core', () => {
       metaClient: createMetaClient({
         debug: {
           ok: false,
+          operation: 'debug_token',
+          graph_error_code: 100,
+          graph_error_subcode: 33,
           error_category: 'graph_bad_request',
           message: rawMessage,
           response: {
@@ -256,6 +369,12 @@ describe('page token health core', () => {
 
     expect(firstStatus(report)).toBe('check_failed');
     expect(firstCategory(report)).toBe('graph_bad_request');
+    expect(report.results[0].operation).toBe('debug_token');
+    expect(report.results[0].graph_error_code).toBe(100);
+    expect(report.results[0].graph_error_subcode).toBe(33);
+    expect(Object.keys(report.results[0]).includes('message')).toBeFalse();
+    expect(Object.keys(report.results[0]).includes('response')).toBeFalse();
+    expect(Object.keys(report.results[0]).includes('error')).toBeFalse();
     expect(output.includes(rawMessage)).toBeFalse();
     expect(output.includes(rawSubresponse)).toBeFalse();
     expect(output.includes('EAAB-provider-token')).toBeFalse();

@@ -16,6 +16,7 @@ const HEALTH_STATUSES = Object.freeze([
   'rate_limited',
   'check_failed'
 ]);
+const DIAGNOSTIC_OPERATIONS = Object.freeze(['debug_token', 'page_identity']);
 
 function text(value) {
   return value == null ? '' : String(value);
@@ -38,6 +39,32 @@ function normalizeList(value) {
     .split(',')
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function normalizeOperation(value) {
+  const operation = trimText(value);
+  return DIAGNOSTIC_OPERATIONS.includes(operation) ? operation : null;
+}
+
+function nullableNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function isLikelyRawMetaPageId(value) {
+  return /^\d+$/.test(trimText(value));
+}
+
+function normalizeCredentialFilters({ shopId, pageRef } = {}) {
+  const filters = {
+    shopId: trimText(shopId),
+    pageRef: trimText(pageRef)
+  };
+  if (filters.pageRef && isLikelyRawMetaPageId(filters.pageRef)) {
+    throw new Error('raw_page_id_disallowed');
+  }
+  return filters;
 }
 
 function normalizeRequiredPermissions(value) {
@@ -110,6 +137,15 @@ function errorCategoryFromException(err) {
   );
 }
 
+function diagnosticFromException(err, operation) {
+  return {
+    errorCategory: errorCategoryFromException(err),
+    operation: normalizeOperation(err?.operation) || normalizeOperation(operation),
+    graphErrorCode: nullableNumber(err?.graph_error_code ?? err?.graphErrorCode),
+    graphErrorSubcode: nullableNumber(err?.graph_error_subcode ?? err?.graphErrorSubcode)
+  };
+}
+
 function rowPageRef(row = {}) {
   return trimText(row.page_ref || row.page_mapping_id || row.shop_page_id);
 }
@@ -125,6 +161,9 @@ function safeResult(row, {
   credentialStatus,
   tokenHealthStatus,
   errorCategory = '',
+  operation = null,
+  graphErrorCode = null,
+  graphErrorSubcode = null,
   activeCredentialCount = 1,
   checked = false
 } = {}) {
@@ -134,6 +173,9 @@ function safeResult(row, {
     credential_status: trimText(credentialStatus || row.credential_status || row.status || 'active'),
     token_health_status: HEALTH_STATUSES.includes(tokenHealthStatus) ? tokenHealthStatus : 'check_failed',
     error_category: trimText(errorCategory),
+    operation: normalizeOperation(operation),
+    graph_error_code: nullableNumber(graphErrorCode),
+    graph_error_subcode: nullableNumber(graphErrorSubcode),
     counts: {
       active_credentials: Number(activeCredentialCount || 0),
       checked: checked ? 1 : 0
@@ -147,7 +189,23 @@ function addResult(report, result) {
   report.counts.checked += result.counts.checked;
 }
 
-async function fetchActivePageTokenCredentials(client, credentialType = DEFAULT_CREDENTIAL_TYPE) {
+async function fetchActivePageTokenCredentials(client, credentialType = DEFAULT_CREDENTIAL_TYPE, filters = {}) {
+  const safeFilters = normalizeCredentialFilters(filters);
+  const values = [credentialType];
+  const where = [
+    'c.credential_type = $1',
+    "c.status = 'active'",
+    "sp.status = 'active'"
+  ];
+  if (safeFilters.shopId) {
+    values.push(safeFilters.shopId);
+    where.push(`c.shop_id = $${values.length}`);
+  }
+  if (safeFilters.pageRef) {
+    values.push(safeFilters.pageRef);
+    where.push(`c.page_mapping_id = $${values.length}`);
+  }
+
   const result = await client.query(
     `
       SELECT
@@ -159,12 +217,10 @@ async function fetchActivePageTokenCredentials(client, credentialType = DEFAULT_
         sp.page_id AS expected_page_id
       FROM shop_page_credentials c
       JOIN shop_pages sp ON sp.id = c.page_mapping_id
-      WHERE c.credential_type = $1
-        AND c.status = 'active'
-        AND sp.status = 'active'
+      WHERE ${where.join('\n        AND ')}
       ORDER BY c.shop_id ASC, c.page_mapping_id ASC, c.updated_at DESC, c.id ASC
     `,
-    [credentialType]
+    values
   );
   return Array.isArray(result.rows) ? result.rows : [];
 }
@@ -249,7 +305,10 @@ function normalizeDebugResponse(response) {
   if (data.ok === false || data.error_category || data.errorCategory) {
     return {
       ok: false,
-      errorCategory: normalizeErrorCategory(data.error_category || data.errorCategory || data.status)
+      errorCategory: normalizeErrorCategory(data.error_category || data.errorCategory || data.status),
+      operation: normalizeOperation(data.operation),
+      graphErrorCode: nullableNumber(data.graph_error_code ?? data.graphErrorCode),
+      graphErrorSubcode: nullableNumber(data.graph_error_subcode ?? data.graphErrorSubcode)
     };
   }
   return {
@@ -271,7 +330,10 @@ function normalizePageResponse(response) {
   if (data.ok === false || data.error_category || data.errorCategory) {
     return {
       ok: false,
-      errorCategory: normalizeErrorCategory(data.error_category || data.errorCategory || data.status)
+      errorCategory: normalizeErrorCategory(data.error_category || data.errorCategory || data.status),
+      operation: normalizeOperation(data.operation),
+      graphErrorCode: nullableNumber(data.graph_error_code ?? data.graphErrorCode),
+      graphErrorSubcode: nullableNumber(data.graph_error_subcode ?? data.graphErrorSubcode)
     };
   }
   return {
@@ -287,24 +349,24 @@ function missingRequiredPermission(scopes, requiredPermissions) {
 
 async function callDebugToken(metaClient, token) {
   if (!metaClient || typeof metaClient.debugToken !== 'function') {
-    return { ok: false, errorCategory: 'config_missing' };
+    return { ok: false, errorCategory: 'config_missing', operation: 'debug_token' };
   }
   try {
     return normalizeDebugResponse(await metaClient.debugToken({ token }));
   } catch (err) {
-    return { ok: false, errorCategory: errorCategoryFromException(err) };
+    return { ok: false, ...diagnosticFromException(err, 'debug_token') };
   }
 }
 
 async function callPageIdentity(metaClient, token) {
   const pageMethod = metaClient && (metaClient.pageMe || metaClient.getPageIdentity);
   if (typeof pageMethod !== 'function') {
-    return { ok: false, errorCategory: 'config_missing' };
+    return { ok: false, errorCategory: 'config_missing', operation: 'page_identity' };
   }
   try {
     return normalizePageResponse(await pageMethod.call(metaClient, { token, fields: ['id', 'name'] }));
   } catch (err) {
-    return { ok: false, errorCategory: errorCategoryFromException(err) };
+    return { ok: false, ...diagnosticFromException(err, 'page_identity') };
   }
 }
 
@@ -341,6 +403,9 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: status,
       errorCategory: normalizeErrorCategory(debug.errorCategory),
+      operation: debug.operation || 'debug_token',
+      graphErrorCode: debug.graphErrorCode,
+      graphErrorSubcode: debug.graphErrorSubcode,
       checked: false
     });
   }
@@ -349,6 +414,7 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: 'expired',
       errorCategory: 'expired',
+      operation: 'debug_token',
       checked: true
     });
   }
@@ -356,6 +422,7 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: 'invalid',
       errorCategory: 'invalid',
+      operation: 'debug_token',
       checked: true
     });
   }
@@ -365,6 +432,7 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: 'app_mismatch',
       errorCategory: 'app_mismatch',
+      operation: 'debug_token',
       checked: true
     });
   }
@@ -373,6 +441,7 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: 'permission_missing',
       errorCategory: 'permission_missing',
+      operation: 'debug_token',
       checked: true
     });
   }
@@ -383,6 +452,9 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: status,
       errorCategory: normalizeErrorCategory(identity.errorCategory),
+      operation: identity.operation || 'page_identity',
+      graphErrorCode: identity.graphErrorCode,
+      graphErrorSubcode: identity.graphErrorSubcode,
       checked: false
     });
   }
@@ -391,6 +463,7 @@ async function evaluateCredentialRow({
     return safeResult(row, {
       tokenHealthStatus: 'page_mismatch',
       errorCategory: 'page_mismatch',
+      operation: 'page_identity',
       checked: true
     });
   }
@@ -411,7 +484,9 @@ async function checkPageTokenHealth({
   expectedAppId = process.env.META_APP_ID || process.env.FB_APP_ID,
   requiredPermissions,
   now = Date.now,
-  apply = false
+  apply = false,
+  shopId = '',
+  pageRef = ''
 } = {}) {
   if (apply) throw new Error('apply_disabled');
 
@@ -428,21 +503,21 @@ async function checkPageTokenHealth({
   };
 
   if (!trimText(masterKey)) {
-    addResult(report, {
-      shop_id: '',
-      page_ref: '',
-      credential_status: 'not_checked',
-      token_health_status: 'config_missing',
-      error_category: 'credential_master_key_missing',
-      counts: {
-        active_credentials: 0,
-        checked: 0
-      }
-    });
+    addResult(report, safeResult({}, {
+      credentialStatus: 'not_checked',
+      tokenHealthStatus: 'config_missing',
+      errorCategory: 'credential_master_key_missing',
+      activeCredentialCount: 0,
+      checked: false
+    }));
     return report;
   }
 
-  const rows = await fetchActivePageTokenCredentials(queryable, trimText(credentialType) || DEFAULT_CREDENTIAL_TYPE);
+  const rows = await fetchActivePageTokenCredentials(
+    queryable,
+    trimText(credentialType) || DEFAULT_CREDENTIAL_TYPE,
+    { shopId, pageRef }
+  );
   report.counts.credentials = rows.length;
   if (!rows.length) {
     report.counts.no_active_credentials = 1;
@@ -485,6 +560,7 @@ module.exports = {
   createCounts,
   evaluateCredentialRow,
   fetchActivePageTokenCredentials,
+  normalizeCredentialFilters,
   normalizeDebugResponse,
   normalizePageResponse,
   normalizeRequiredPermissions

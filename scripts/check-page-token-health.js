@@ -17,6 +17,14 @@ function normalizeList(value) {
     .filter(Boolean);
 }
 
+function normalizeCliFilter(value, { field, rejectNumeric = false } = {}) {
+  const normalized = trimText(value);
+  if (!normalized) throw new Error(`${field || 'filter'}_required`);
+  if (rejectNumeric && /^\d+$/.test(normalized)) throw new Error('raw_page_id_disallowed');
+  if (!/^[A-Za-z0-9:_-]+$/.test(normalized)) throw new Error(`${field || 'filter'}_invalid`);
+  return normalized;
+}
+
 function isPostgresUrl(value) {
   try {
     const parsed = new URL(value);
@@ -33,7 +41,9 @@ function parseArgs(argv = []) {
     dbUrlEnv: '',
     expectedAppId: '',
     requiredPermissions: undefined,
-    graphVersion: DEFAULT_GRAPH_VERSION
+    graphVersion: DEFAULT_GRAPH_VERSION,
+    shopId: '',
+    pageRef: ''
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -57,6 +67,10 @@ function parseArgs(argv = []) {
       options.requiredPermissions = normalizeList(nextValue());
     } else if (arg === '--graph-version') {
       options.graphVersion = nextValue() || DEFAULT_GRAPH_VERSION;
+    } else if (arg === '--shop-id') {
+      options.shopId = normalizeCliFilter(nextValue(), { field: 'shop_id' });
+    } else if (arg === '--page-ref') {
+      options.pageRef = normalizeCliFilter(nextValue(), { field: 'page_ref', rejectNumeric: true });
     } else if (arg === '--help' || arg === '-h') {
       options.help = true;
     } else {
@@ -69,9 +83,10 @@ function parseArgs(argv = []) {
 
 function usage() {
   return [
-    'Usage: node scripts/check-page-token-health.js --db-url-env NAME [--dry-run] [--expected-app-id APP_ID] [--required-permissions pages_messaging]',
+    'Usage: node scripts/check-page-token-health.js --db-url-env NAME [--dry-run] [--shop-id SHOP_ID] [--page-ref PAGE_MAPPING_REF] [--expected-app-id APP_ID] [--required-permissions pages_messaging]',
     '',
     '--db-url-env is required and must name an explicit non-production PostgreSQL URL env var. DATABASE_URL is refused.',
+    '--page-ref accepts only a safe internal page mapping ref, not a raw Meta page ID.',
     'Phase 1 is dry-run only. --apply is parsed but disabled.'
   ].join('\n');
 }
@@ -143,16 +158,29 @@ function appAccessTokenFromEnv(env = process.env) {
   return '';
 }
 
+function nullableNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function graphErrorNumber(err, names) {
+  const error = err?.response?.data?.error;
+  if (!error || typeof error !== 'object') return null;
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(error, name)) {
+      return nullableNumber(error[name]);
+    }
+  }
+  return null;
+}
+
 function facebookErrorCode(err) {
-  return Number(err?.response?.data?.error?.code || 0);
+  return graphErrorNumber(err, ['code']) ?? 0;
 }
 
 function facebookErrorSubcode(err) {
-  return Number(
-    err?.response?.data?.error?.error_subcode
-      || err?.response?.data?.error?.subcode
-      || 0
-  );
+  return graphErrorNumber(err, ['error_subcode', 'subcode']) ?? 0;
 }
 
 const RATE_LIMIT_ERROR_CODES = Object.freeze([4, 17, 32, 613]);
@@ -211,6 +239,16 @@ function graphErrorCategory(err, { operation = '' } = {}) {
   return 'check_failed';
 }
 
+function safeGraphFailure(err, { operation, errorCategory } = {}) {
+  return {
+    ok: false,
+    operation: operation === 'page_identity' ? 'page_identity' : 'debug_token',
+    graph_error_code: graphErrorNumber(err, ['code']),
+    graph_error_subcode: graphErrorNumber(err, ['error_subcode', 'subcode']),
+    error_category: errorCategory || graphErrorCategory(err, { operation })
+  };
+}
+
 function safeScopes(value) {
   if (!Array.isArray(value)) return [];
   return value.map(item => trimText(item)).filter(Boolean);
@@ -251,7 +289,15 @@ function createMetaTokenHealthClient({
 
   return {
     async debugToken({ token } = {}) {
-      if (!appAccessToken) return { ok: false, error_category: 'config_missing' };
+      if (!appAccessToken) {
+        return {
+          ok: false,
+          operation: 'debug_token',
+          graph_error_code: null,
+          graph_error_subcode: null,
+          error_category: 'config_missing'
+        };
+      }
       try {
         const response = await http.get(graphUrl(graphVersion, 'debug_token'), {
           params: {
@@ -262,7 +308,7 @@ function createMetaTokenHealthClient({
         });
         return safeDebugData(response.data && response.data.data ? response.data.data : response.data);
       } catch (err) {
-        return { ok: false, error_category: graphErrorCategory(err, { operation: 'debug_token' }) };
+        return safeGraphFailure(err, { operation: 'debug_token' });
       }
     },
     async pageMe({ token, fields = ['id', 'name'] } = {}) {
@@ -276,7 +322,7 @@ function createMetaTokenHealthClient({
         });
         return safePageData(response.data);
       } catch (err) {
-        return { ok: false, error_category: graphErrorCategory(err, { operation: 'page_me' }) };
+        return safeGraphFailure(err, { operation: 'page_identity' });
       }
     }
   };
@@ -339,7 +385,9 @@ async function main({
       }),
       masterKey: env.CREDENTIAL_MASTER_KEY,
       expectedAppId,
-      requiredPermissions
+      requiredPermissions,
+      shopId: options.shopId,
+      pageRef: options.pageRef
     });
     stdout(JSON.stringify(report, null, 2));
     return 0;

@@ -41,13 +41,56 @@ function createClientClass(rows = []) {
   return { Client: FakeClient, instances };
 }
 
+function createFilteringClientClass(rows = []) {
+  const instances = [];
+  class FakeClient {
+    constructor(config) {
+      this.config = config;
+      this.calls = [];
+      this.writes = 0;
+      this.connected = false;
+      this.ended = false;
+      instances.push(this);
+    }
+
+    async connect() {
+      this.connected = true;
+    }
+
+    async query(sql, values = []) {
+      const sqlText = String(sql);
+      this.calls.push({ sql: sqlText, values });
+      if (/^\s*SELECT/i.test(sqlText)) {
+        let filtered = rows;
+        const shopMatch = sqlText.match(/c\.shop_id\s*=\s*\$(\d+)/);
+        const pageRefMatch = sqlText.match(/c\.page_mapping_id\s*=\s*\$(\d+)/);
+        if (shopMatch) {
+          filtered = filtered.filter(row => row.shop_id === values[Number(shopMatch[1]) - 1]);
+        }
+        if (pageRefMatch) {
+          filtered = filtered.filter(row => row.page_mapping_id === values[Number(pageRefMatch[1]) - 1]);
+        }
+        return { rows: filtered };
+      }
+      if (/^\s*(INSERT|UPDATE|DELETE)/i.test(sqlText)) this.writes += 1;
+      throw new Error('write_not_allowed');
+    }
+
+    async end() {
+      this.ended = true;
+    }
+  }
+  return { Client: FakeClient, instances };
+}
+
 function credentialRow({
   token = 'EAAB-cli-page-token',
+  shopId = 'shop-cli',
   pageRef = 'page-map-cli',
   expectedPageId = 'raw-cli-page-id'
 } = {}) {
   return {
-    shop_id: 'shop-cli',
+    shop_id: shopId,
     page_mapping_id: pageRef,
     page_ref: pageRef,
     credential_status: 'active',
@@ -68,8 +111,11 @@ function baseEnv(overrides = {}) {
 }
 
 function validMetaClient(pageId = 'raw-cli-page-id') {
+  const calls = [];
   return {
-    async debugToken() {
+    calls,
+    async debugToken(input) {
+      calls.push({ method: 'debugToken', input });
       return {
         is_valid: true,
         app_id: 'app-1',
@@ -77,7 +123,8 @@ function validMetaClient(pageId = 'raw-cli-page-id') {
         scopes: ['pages_messaging']
       };
     },
-    async pageMe() {
+    async pageMe(input) {
+      calls.push({ method: 'pageMe', input });
       return { id: pageId, name: 'CLI Page' };
     }
   };
@@ -210,12 +257,124 @@ describe('page token health CLI script', () => {
     expect(output.includes('page_id')).toBeFalse();
   });
 
+  it('--shop-id parses and constrains the credential SELECT', async () => {
+    const options = parseArgs(['--shop-id', 'shop-filter']);
+    const { Client, instances } = createClientClass([credentialRow()]);
+    const stdout = [];
+    const stderr = [];
+    const code = await main({
+      argv: ['--db-url-env', 'CHATBOT_HEALTH_DATABASE_URL', '--shop-id', 'shop-filter'],
+      env: baseEnv(),
+      stdout: line => stdout.push(line),
+      stderr: line => stderr.push(line),
+      Client,
+      metaClient: validMetaClient()
+    });
+    const select = instances[0].calls[0];
+
+    expect(options.shopId).toBe('shop-filter');
+    expect(code).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(select.sql).toContain('c.shop_id = $2');
+    expect(select.values).toEqual(['fb_page_token', 'shop-filter']);
+  });
+
+  it('--page-ref parses and constrains the credential SELECT', async () => {
+    const options = parseArgs(['--page-ref', 'page-map-filter']);
+    const { Client, instances } = createClientClass([credentialRow()]);
+    const stdout = [];
+    const stderr = [];
+    const code = await main({
+      argv: ['--db-url-env', 'CHATBOT_HEALTH_DATABASE_URL', '--page-ref', 'page-map-filter'],
+      env: baseEnv(),
+      stdout: line => stdout.push(line),
+      stderr: line => stderr.push(line),
+      Client,
+      metaClient: validMetaClient()
+    });
+    const select = instances[0].calls[0];
+
+    expect(options.pageRef).toBe('page-map-filter');
+    expect(code).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(select.sql).toContain('c.page_mapping_id = $2');
+    expect(select.values).toEqual(['fb_page_token', 'page-map-filter']);
+  });
+
+  it('rejects raw-looking page IDs in filters without printing them', async () => {
+    const rawPageId = '123456789012345';
+    const { Client, instances } = createClientClass([credentialRow()]);
+    const stdout = [];
+    const stderr = [];
+    const code = await main({
+      argv: ['--db-url-env', 'CHATBOT_HEALTH_DATABASE_URL', '--page-ref', rawPageId],
+      env: baseEnv(),
+      stdout: line => stdout.push(line),
+      stderr: line => stderr.push(line),
+      Client,
+      metaClient: validMetaClient()
+    });
+    const output = stdout.concat(stderr).join('\n');
+
+    expect(code).toBe(1);
+    expect(instances.length).toBe(0);
+    expect(output).toContain('invalid_args');
+    expect(output.includes(rawPageId)).toBeFalse();
+  });
+
+  it('filters reduce evaluated credentials before decrypting or checking', async () => {
+    const rows = [
+      credentialRow({
+        shopId: 'shop-filter',
+        pageRef: 'page-map-filter',
+        expectedPageId: 'raw-filtered-page'
+      }),
+      credentialRow({
+        shopId: 'other-shop',
+        pageRef: 'page-map-other',
+        expectedPageId: 'raw-other-page',
+        token: 'EAAB-unselected-token'
+      })
+    ];
+    rows[1].encrypted_value = 'not-an-envelope';
+    const { Client, instances } = createFilteringClientClass(rows);
+    const metaClient = validMetaClient('raw-filtered-page');
+    const stdout = [];
+    const stderr = [];
+    const code = await main({
+      argv: [
+        '--db-url-env',
+        'CHATBOT_HEALTH_DATABASE_URL',
+        '--shop-id',
+        'shop-filter',
+        '--page-ref',
+        'page-map-filter'
+      ],
+      env: baseEnv(),
+      stdout: line => stdout.push(line),
+      stderr: line => stderr.push(line),
+      Client,
+      metaClient
+    });
+    const report = JSON.parse(stdout.join('\n'));
+
+    expect(code).toBe(0);
+    expect(stderr.length).toBe(0);
+    expect(instances[0].calls[0].values).toEqual(['fb_page_token', 'shop-filter', 'page-map-filter']);
+    expect(report.counts.credentials).toBe(1);
+    expect(report.results.length).toBe(1);
+    expect(report.results[0].shop_id).toBe('shop-filter');
+    expect(report.results[0].page_ref).toBe('page-map-filter');
+    expect(report.counts.decrypt_failed).toBe(0);
+    expect(metaClient.calls.length).toBe(2);
+  });
+
   it('disables apply mode before connecting or writing', async () => {
     const { Client, instances } = createClientClass([credentialRow()]);
     const stdout = [];
     const stderr = [];
     const code = await main({
-      argv: ['--apply', '--db-url-env', 'CHATBOT_HEALTH_DATABASE_URL'],
+      argv: ['--apply', '--db-url-env', 'CHATBOT_HEALTH_DATABASE_URL', '--shop-id', 'shop-cli', '--page-ref', 'page-map-cli'],
       env: baseEnv(),
       stdout: line => stdout.push(line),
       stderr: line => stderr.push(line),
@@ -319,10 +478,15 @@ describe('page token health CLI script', () => {
     const debug = await client.debugToken({ token });
     const page = await client.pageMe({ token });
     const output = JSON.stringify({ debug, page });
+    const pageKeys = Object.keys(page).sort();
 
     expect(appAccessTokenFromEnv({ META_APP_ID: 'app-1', META_APP_SECRET: secret })).toBe(`app-1|${secret}`);
     expect(debug.is_valid).toBeTrue();
     expect(page.error_category).toBe('rate_limited');
+    expect(page.operation).toBe('page_identity');
+    expect(page.graph_error_code).toBe(613);
+    expect(page.graph_error_subcode).toBe(null);
+    expect(pageKeys).toEqual(['error_category', 'graph_error_code', 'graph_error_subcode', 'ok', 'operation'].sort());
     expect(output.includes(token)).toBeFalse();
     expect(output.includes(secret)).toBeFalse();
     expect(output.includes('RAW_META_RESPONSE')).toBeFalse();
@@ -347,9 +511,19 @@ describe('page token health CLI script', () => {
     const debug = await client.debugToken({ token });
     const page = await client.pageMe({ token });
     const output = JSON.stringify({ debug, page });
+    const debugKeys = Object.keys(debug).sort();
+    const pageKeys = Object.keys(page).sort();
 
     expect(debug.error_category).toBe('app_auth_failed');
+    expect(debug.operation).toBe('debug_token');
+    expect(debug.graph_error_code).toBe(190);
+    expect(debug.graph_error_subcode).toBe(null);
+    expect(debugKeys).toEqual(['error_category', 'graph_error_code', 'graph_error_subcode', 'ok', 'operation'].sort());
     expect(page.error_category).toBe('graph_oauth_failed');
+    expect(page.operation).toBe('page_identity');
+    expect(page.graph_error_code).toBe(190);
+    expect(page.graph_error_subcode).toBe(463);
+    expect(pageKeys).toEqual(['error_category', 'graph_error_code', 'graph_error_subcode', 'ok', 'operation'].sort());
     expect(output.includes(rawMessage)).toBeFalse();
     expect(output.includes(token)).toBeFalse();
     expect(output.includes('subresponse')).toBeFalse();
