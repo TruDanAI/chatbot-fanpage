@@ -137,6 +137,59 @@ function createAdminReadHandlers({
     return CREDENTIAL_FLASH_MESSAGES[key] || {};
   }
 
+  function createUnavailableShopHealthPresentation(shop = null) {
+    const unavailable = {
+      available: false,
+      reason: 'health_read_failed'
+    };
+    return {
+      ...presentShopHealthApi({
+        schemaReady: true,
+        shop,
+        pageMappings: unavailable,
+        activity: unavailable,
+        queue: unavailable,
+        credentials: unavailable
+      }),
+      available: false,
+      message: 'Shop health is unavailable right now.'
+    };
+  }
+
+  function presentShopAssetsForHtml(assets = {}) {
+    const summary = assets.summary || {};
+    const presentedSummary = {
+      total: Number(summary.total || 0),
+      active: Number(summary.active || 0),
+      product_image: Number(summary.product_image || 0),
+      product_image_active: Number(summary.product_image_active || 0),
+      menu_image: Number(summary.menu_image || 0),
+      menu_image_active: Number(summary.menu_image_active || 0)
+    };
+    if (Object.prototype.hasOwnProperty.call(summary, 'shop_image')) {
+      presentedSummary.shop_image = Number(summary.shop_image || 0);
+    }
+    if (Object.prototype.hasOwnProperty.call(summary, 'shop_image_active')) {
+      presentedSummary.shop_image_active = Number(summary.shop_image_active || 0);
+    }
+    return {
+      summary: presentedSummary,
+      rows: (assets.rows || []).map(asset => ({
+        id: asset.id || '',
+        product_id: asset.product_id || '',
+        product_code: asset.product_code || '',
+        asset_type: asset.asset_type || '',
+        storage_provider: asset.storage_provider || '',
+        public_url: asset.public_url || '',
+        content_type: asset.content_type || '',
+        size_bytes: asset.size_bytes == null ? null : Number(asset.size_bytes),
+        status: asset.status || '',
+        sort_order: Number(asset.sort_order || 0),
+        updated_at: asset.updated_at || ''
+      }))
+    };
+  }
+
   function isMissingInternalNotesSchemaError(err) {
     return err?.code === '42P01' || err?.code === '42703';
   }
@@ -407,6 +460,14 @@ function createAdminReadHandlers({
       const model = await reader.getShopDetail(shopId);
       const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
       const presented = presentShopDetailApi(model);
+      presented.assets = presentShopAssetsForHtml(model.assets || {});
+      if (model.schemaReady !== false && model.shop) {
+        try {
+          presented.health = presentShopHealthApi(await reader.getShopHealth(shopId));
+        } catch (err) {
+          presented.health = createUnavailableShopHealthPresentation(model.shop);
+        }
+      }
       const productFilters = normalizeShopProductFilters(req.query || {});
       const products = Array.isArray(presented.products) ? presented.products : [];
       presented.products = filterShopProducts(products, productFilters);

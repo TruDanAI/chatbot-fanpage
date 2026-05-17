@@ -225,6 +225,16 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .collapsible-section summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 0; }
     .collapsible-section summary:hover { color: #17202a; }
     .page-id-help { font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; line-height: 1.4; }
+    .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; padding-bottom: 1px; }
+    .tabs a { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+    .tabs a:hover { color: #17202a; }
+    .tabs a.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-section { display: none; }
+    .tab-section.active { display: block; }
+    .health-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 16px 0; }
+    .health-card h2 { margin-top: 0; font-size: 16px; }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .health-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -758,7 +768,9 @@ function renderProductOptions(products = [], selectedProductId = '', { includeEm
 
 function renderAssetTypeOptions(selected = '') {
   const type = String(selected || 'menu_image');
-  return ['menu_image', 'product_image']
+  const baseTypes = ['menu_image', 'product_image'];
+  const options = type && !baseTypes.includes(type) ? [type, ...baseTypes] : baseTypes;
+  return options
     .map(value => `<option value="${escapeHtml(value)}"${type === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
     .join('');
 }
@@ -880,89 +892,67 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
   </form>`;
 }
 
-function renderShopDetailHtml(model = {}) {
-  const shop = model.shop || {};
-  const assets = model.assets || {};
-  const summary = assets.summary || {};
-  const body = `
-    <p><a href="/admin/shops">Back to shops</a></p>
-    ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
-    ${!shop.id && model.schemaReady !== false ? '<div class="empty">Không tìm thấy shop.</div>' : ''}
-    ${shop.id ? `
-      <p class="meta">Shop <code>${escapeHtml(shop.id)}</code> | slug <code>${escapeHtml(shop.slug)}</code> | updated ${escapeHtml(formatDate(shop.updated_at))}</p>
+function healthCount(value = 0) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
 
-      ${renderOnboardingChecklist(model.onboarding || {})}
+function healthTimestamp(value = '') {
+  return value ? formatDate(value) : 'unknown';
+}
 
-      <h2 id="metadata">Metadata</h2>
-      <table><tbody>
-        <tr><th>Name</th><td>${escapeHtml(shop.name)}</td></tr>
-        <tr><th>Status</th><td>${renderStatus(shop.status)}</td></tr>
-        <tr><th>Locale</th><td>${escapeHtml(shop.default_locale)}</td></tr>
-        <tr><th>Timezone</th><td>${escapeHtml(shop.timezone)}</td></tr>
-        <tr><th>Created</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
-      </tbody></table>
+function renderHealthMetric(label = '', value = '', state = 'unknown') {
+  const normalizedState = ['ok', 'warning', 'error', 'unknown'].includes(state) ? state : 'unknown';
+  const status = normalizedState === 'ok'
+    ? 'ready'
+    : normalizedState === 'error'
+      ? 'error'
+      : normalizedState;
+  return `<div class="health-item"><span class="${statusClass(status)}">${escapeHtml(normalizedState)}</span><span><strong>${escapeHtml(label)}</strong>: ${escapeHtml(value)}</span></div>`;
+}
 
-      <h2 id="page-mappings">Page Mappings</h2>
-      ${renderProductFlash(model.pageFlash || {})}
-      ${renderProductFlash(model.credentialFlash || {})}
-      ${renderPageMappingAddForm(shop.id)}
-      ${renderTable(['page ref', 'name', 'status', 'updated', 'credential action'], model.pages || [], page => `
-        <tr>
-          <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
-          <td>${escapeHtml(page.page_name)}</td>
-          <td>${renderStatus(page.status)}</td>
-          <td>${escapeHtml(formatDate(page.updated_at))}</td>
-          <td>${renderPageCredentialForm(shop.id, page)}</td>
-        </tr>
-      `)}
-
-      ${renderProductFlash(model.productFlash || {})}
-      <h2 id="settings">Chat Behavior Settings</h2>
-      ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
-      <details class="collapsible-section">
-        <summary>Advanced: Current settings values &amp; raw JSON</summary>
-        <table><tbody>
-          <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
-          <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
-          <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
-          <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
-          <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
-          <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
-            ...(model.settings?.settings_json?.botMode || {}),
-            ...(model.settings?.settings_json?.ruleToggles || {})
-          })))}</td></tr>
-          <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
-        </tbody></table>
-        ${renderJsonBlock(model.settings?.settings_json || {})}
-      </details>
-
-      <section class="product-section">
-        <div class="product-toolbar">
-          <h2 id="products">Products</h2>
-          <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>
+function renderHealthCard(health = {}) {
+  if (!health || health.schemaReady === false || health.available === false) {
+    return `
+      <section class="health-card">
+        <h2>Shop Health</h2>
+        <p class="meta">Shop health is unavailable right now. Shop detail data is still shown.</p>
+        <div class="health-grid">
+          ${renderHealthMetric('Health status', 'unknown', 'unknown')}
         </div>
-        ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
-        ${renderProductAddForm(shop.id)}
-        ${renderProductBulkImportForm(shop.id)}
-        ${renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products || [], product => `
-        <tr>
-          <td><code>${escapeHtml(product.code)}</code></td>
-          <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
-          <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
-          <td>${renderStatus(product.status)}</td>
-          <td>${escapeHtml(product.sort_order || 0)}</td>
-          <td>${escapeHtml(formatDate(product.updated_at))}</td>
-          <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
-          <td>${renderProductEditForm(shop.id, product)}</td>
-        </tr>
-      `)}
       </section>
+    `;
+  }
 
-      <h2 id="assets">Assets</h2>
-      ${renderProductFlash(model.assetFlash || {})}
-      ${renderCounts(summary)}
-      ${renderAssetAddForm(shop.id, model.products || [])}
-      ${renderTable(['preview', 'type', 'product', 'provider', 'url', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], assets.rows || [], asset => `
+  const mappings = health.pageMappings || {};
+  const credentials = health.credentials || {};
+  const activity = health.activity || {};
+  const queue = health.queue || {};
+  const mappingUnavailable = mappings.available === false;
+  const credentialUnavailable = credentials.available === false;
+  const activityUnavailable = activity.available === false;
+  const queueUnavailable = queue.available === false;
+  const errorRate = Number(activity.send_error_rate_1h);
+  const hasErrorRate = Number.isFinite(errorRate);
+
+  return `
+    <section class="health-card">
+      <h2>Shop Health</h2>
+      <div class="health-grid">
+        ${renderHealthMetric('Page mappings', mappingUnavailable ? 'unknown' : `${healthCount(mappings.total)} total`, mappingUnavailable ? 'unknown' : (healthCount(mappings.total) > 0 ? 'ok' : 'error'))}
+        ${renderHealthMetric('Active credentials', credentialUnavailable ? 'unknown' : healthCount(credentials.byStatus?.active), credentialUnavailable ? 'unknown' : (healthCount(credentials.byStatus?.active) > 0 ? 'ok' : 'error'))}
+        ${renderHealthMetric('Last webhook', activityUnavailable ? 'unknown' : healthTimestamp(activity.last_webhook_received_at), activityUnavailable ? 'unknown' : (activity.last_webhook_received_at ? 'ok' : 'warning'))}
+        ${renderHealthMetric('Last send', activityUnavailable ? 'unknown' : healthTimestamp(activity.last_successful_send_at), activityUnavailable ? 'unknown' : (activity.last_successful_send_at ? 'ok' : 'warning'))}
+        ${renderHealthMetric('Send error rate 1h', activityUnavailable || !hasErrorRate ? 'unknown' : `${(errorRate * 100).toFixed(1)}%`, activityUnavailable || !hasErrorRate ? 'unknown' : (errorRate > 0.1 ? 'error' : (errorRate > 0 ? 'warning' : 'ok')))}
+        ${renderHealthMetric('Active handoffs', activityUnavailable ? 'unknown' : healthCount(activity.active_handoff_count), activityUnavailable ? 'unknown' : (healthCount(activity.active_handoff_count) > 0 ? 'warning' : 'ok'))}
+        ${renderHealthMetric('Queue', queueUnavailable ? 'unknown' : `${healthCount(queue.total)} total`, queueUnavailable ? 'unknown' : 'ok')}
+      </div>
+    </section>
+  `;
+}
+
+function renderAssetTable(assets = [], shopId = '', products = []) {
+  return renderTable(['preview', 'type', 'product', 'provider', 'url', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], assets, asset => `
         <tr>
           <td>${asset.public_url ? `<img src="${escapeHtml(asset.public_url)}" alt="${escapeHtml(asset.asset_type)}" class="asset-thumb" loading="lazy" onerror="this.outerHTML='<div class=asset-thumb-broken>broken</div>'">` : '<div class="asset-thumb-broken">no url</div>'}</td>
           <td>${escapeHtml(asset.asset_type)}</td>
@@ -972,10 +962,172 @@ function renderShopDetailHtml(model = {}) {
           <td>${renderStatus(asset.status)}</td>
           <td>${escapeHtml(asset.sort_order || 0)}</td>
           <td>${escapeHtml(formatDate(asset.updated_at))}</td>
-          <td class="product-actions">${renderAssetStatusActions(shop.id, asset)}</td>
-          <td>${renderAssetEditForm(shop.id, asset, model.products || [])}</td>
+          <td class="product-actions">${renderAssetStatusActions(shopId, asset)}</td>
+          <td>${renderAssetEditForm(shopId, asset, products)}</td>
         </tr>
-      `)}
+      `);
+}
+
+function groupShopAssets(assets = []) {
+  const grouped = {
+    menu_image: [],
+    product_image: [],
+    shop_image: [],
+    other: []
+  };
+  for (const asset of assets) {
+    const type = String(asset.asset_type || '').trim();
+    if (type === 'menu_image') grouped.menu_image.push(asset);
+    else if (type === 'product_image') grouped.product_image.push(asset);
+    else if (type === 'shop_image') grouped.shop_image.push(asset);
+    else grouped.other.push(asset);
+  }
+  return [
+    { title: 'Menu Images', rows: grouped.menu_image },
+    { title: 'Product Images', rows: grouped.product_image },
+    { title: 'Shop Images', rows: grouped.shop_image },
+    { title: 'Other / Unknown Assets', rows: grouped.other }
+  ];
+}
+
+function renderAssetGroups(assets = [], shopId = '', products = []) {
+  return groupShopAssets(assets)
+    .map(group => `
+      <section class="asset-group">
+        <h3>${escapeHtml(group.title)}</h3>
+        ${renderAssetTable(group.rows, shopId, products)}
+      </section>
+    `)
+    .join('');
+}
+
+function renderShopDetailHtml(model = {}) {
+  const shop = model.shop || {};
+  const assets = model.assets || {};
+  const summary = assets.summary || {};
+  const assetRows = Array.isArray(assets.rows) ? assets.rows : [];
+  const body = `
+    <p><a href="/admin/shops">Back to shops</a></p>
+    ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
+    ${!shop.id && model.schemaReady !== false ? '<div class="empty">Không tìm thấy shop.</div>' : ''}
+    ${shop.id ? `
+      <p class="meta">Shop <code>${escapeHtml(shop.id)}</code> | slug <code>${escapeHtml(shop.slug)}</code> | updated ${escapeHtml(formatDate(shop.updated_at))}</p>
+
+      <nav class="tabs">
+        <a href="#overview" class="active">Overview</a>
+        <a href="#pages">Pages &amp; Credentials</a>
+        <a href="#settings">Chat Behavior</a>
+        <a href="#products">Products</a>
+        <a href="#assets">Images / Assets</a>
+      </nav>
+
+      <div id="overview" class="tab-section active">
+        ${renderOnboardingChecklist(model.onboarding || {})}
+        ${renderHealthCard(model.health)}
+        <h2 id="metadata">Metadata</h2>
+        <table><tbody>
+          <tr><th>Name</th><td>${escapeHtml(shop.name)}</td></tr>
+          <tr><th>Status</th><td>${renderStatus(shop.status)}</td></tr>
+          <tr><th>Locale</th><td>${escapeHtml(shop.default_locale)}</td></tr>
+          <tr><th>Timezone</th><td>${escapeHtml(shop.timezone)}</td></tr>
+          <tr><th>Created</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div id="pages" class="tab-section">
+        <h2 id="page-mappings">Page Mappings</h2>
+        ${renderProductFlash(model.pageFlash || {})}
+        ${renderProductFlash(model.credentialFlash || {})}
+        ${renderPageMappingAddForm(shop.id)}
+        ${renderTable(['page ref', 'name', 'status', 'updated', 'credential action'], model.pages || [], page => `
+          <tr>
+            <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
+            <td>${escapeHtml(page.page_name)}</td>
+            <td>${renderStatus(page.status)}</td>
+            <td>${escapeHtml(formatDate(page.updated_at))}</td>
+            <td>${renderPageCredentialForm(shop.id, page)}</td>
+          </tr>
+        `)}
+      </div>
+
+      <div id="settings" class="tab-section">
+        ${renderProductFlash(model.productFlash || {})}
+        <h2 id="settings-heading">Chat Behavior Settings</h2>
+        ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
+        <details class="collapsible-section">
+          <summary>Advanced: Current settings values &amp; raw JSON</summary>
+          <table><tbody>
+            <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
+            <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
+            <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
+            <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
+            <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+            <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
+              ...(model.settings?.settings_json?.botMode || {}),
+              ...(model.settings?.settings_json?.ruleToggles || {})
+            })))}</td></tr>
+            <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
+          </tbody></table>
+          ${renderJsonBlock(model.settings?.settings_json || {})}
+        </details>
+      </div>
+
+      <div id="products" class="tab-section">
+        <section class="product-section">
+          <div class="product-toolbar">
+            <h2 id="products-heading">Products</h2>
+            <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>
+          </div>
+          ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
+          ${renderProductAddForm(shop.id)}
+          ${renderProductBulkImportForm(shop.id)}
+          ${renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products || [], product => `
+          <tr>
+            <td><code>${escapeHtml(product.code)}</code></td>
+            <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
+            <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
+            <td>${renderStatus(product.status)}</td>
+            <td>${escapeHtml(product.sort_order || 0)}</td>
+            <td>${escapeHtml(formatDate(product.updated_at))}</td>
+            <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
+            <td>${renderProductEditForm(shop.id, product)}</td>
+          </tr>
+        `)}
+        </section>
+      </div>
+
+      <div id="assets" class="tab-section">
+        <h2 id="assets-heading">Assets</h2>
+        ${renderProductFlash(model.assetFlash || {})}
+        ${renderCounts(summary)}
+        ${renderAssetAddForm(shop.id, model.products || [])}
+        ${renderAssetGroups(assetRows, shop.id, model.products || [])}
+      </div>
+
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          const tabs = document.querySelectorAll('.tabs a');
+          const sections = document.querySelectorAll('.tab-section');
+          const overviewSection = document.getElementById('overview');
+
+          function sectionForHash(hash) {
+            if (!hash || hash === '#') return overviewSection;
+            const target = document.getElementById(hash.slice(1));
+            if (!target) return overviewSection;
+            if (target.classList.contains('tab-section')) return target;
+            return target.closest('.tab-section') || overviewSection;
+          }
+
+          function activateTab(hash) {
+            const activeSection = sectionForHash(hash);
+            const activeHash = activeSection ? '#' + activeSection.id : '#overview';
+            tabs.forEach(t => t.classList.toggle('active', t.getAttribute('href') === activeHash));
+            sections.forEach(s => s.classList.toggle('active', s === activeSection));
+          }
+          window.addEventListener('hashchange', () => activateTab(window.location.hash));
+          activateTab(window.location.hash);
+        });
+      </script>
     ` : ''}
   `;
   return renderLayout('Admin Shop Detail', body);

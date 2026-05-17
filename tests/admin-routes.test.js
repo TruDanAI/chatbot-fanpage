@@ -2999,6 +2999,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('add menu image');
     expect(res.body).toContain('add product image');
     expect(res.body).toContain('view health');
+    expect(res.body).toContain('href="/admin/shops/adult-shop#page-mappings"');
+    expect(res.body).toContain("target.closest('.tab-section')");
+    expect(res.body).toContain("const activeHash = activeSection ? '#' + activeSection.id : '#overview';");
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
   });
 

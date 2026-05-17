@@ -230,7 +230,6 @@ function createDashboardRepository({
                  COUNT(*) FILTER (WHERE status = 'active')::int AS active
           FROM shop_assets
           WHERE shop_id = $1
-            AND asset_type IN ('menu_image', 'product_image')
           GROUP BY asset_type
           ORDER BY asset_type ASC
         `, params),
@@ -241,7 +240,6 @@ function createDashboardRepository({
           FROM shop_assets a
           LEFT JOIN shop_products p ON p.id = a.product_id AND p.shop_id = a.shop_id
           WHERE a.shop_id = $1
-            AND a.asset_type IN ('menu_image', 'product_image')
           ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
         `, params)
       ]);
@@ -252,7 +250,9 @@ function createDashboardRepository({
         product_image: 0,
         product_image_active: 0,
         menu_image: 0,
-        menu_image_active: 0
+        menu_image_active: 0,
+        shop_image: 0,
+        shop_image_active: 0
       };
       for (const row of assetSummaryResult.rows) {
         const type = String(row.asset_type || '');
