@@ -22,6 +22,9 @@ function isProductionDbWriteAllowed(env = process.env) {
 
 function assertStorageAdapterAllowed(adapterName, env = process.env) {
   const normalized = normalizeStorageAdapterName(adapterName);
+  if (normalized === 'file' && envFlagEnabled(env.MULTI_SHOP_DB_CONFIG_ENABLED)) {
+    throw new Error('Refusing STORAGE_ADAPTER=file when MULTI_SHOP_DB_CONFIG_ENABLED=true.');
+  }
   if (
     normalized === 'postgres' &&
     isProductionRuntime(env) &&

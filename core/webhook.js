@@ -464,22 +464,10 @@ function createWebhook({
     const senderId = event.sender?.id;
     if (!senderId) return;
 
-    // Echo: tin bot tự gửi thì bỏ qua; tin page/người trực gửi tay thì tạm dừng đúng khách.
-    if (event.message?.is_echo) {
-      if (!isBotEcho(event)) {
-        const customerId = getEchoCustomerId(event);
-        if (customerId) {
-          storage.setHandoff(customerId, Date.now() + handoffMs);
-          console.log(`⏸️  Bật handoff do người trực trả lời: ${customerId}`);
-        }
-      }
-      return;
-    }
-
     // Dedup theo message id (Meta có thể retry)
     const mid = event.message?.mid;
+    const pageId = getEventPageId(event, options);
     if (mid) {
-      const pageId = getEventPageId(event, options);
       try {
         if (typeof storage.tryMarkMid !== 'function') {
           throw new Error('storage_tryMarkMid_unavailable');
@@ -496,6 +484,19 @@ function createWebhook({
 
     const runtime = await resolveEventRuntime(event, options);
     if (runtime.failClosed) return;
+    const runtimeStorage = runtime.storage || storage;
+
+    // Echo: tin bot tự gửi thì bỏ qua; tin page/người trực gửi tay thì tạm dừng đúng khách.
+    if (event.message?.is_echo) {
+      if (!isBotEcho(event)) {
+        const customerId = getEchoCustomerId(event);
+        if (customerId) {
+          runtimeStorage.setHandoff(customerId, Date.now() + handoffMs);
+          console.log(`⏸️  Bật handoff do người trực trả lời: ${customerId}`);
+        }
+      }
+      return;
+    }
 
     const {
       shopConfig,
@@ -567,7 +568,6 @@ function createWebhook({
       return;
     }
 
-    const pageId = getEventPageId(event, options);
     if (shouldSkipDuplicateMessageText({
       pageId,
       senderId,
@@ -596,7 +596,7 @@ function createWebhook({
 
     // Đang trong khoảng human handoff → bot không trả lời, nhưng vẫn ghi nhận cập nhật đơn
     // nếu shop còn bật order flow.
-    if (storage.inHandoff(senderId)) {
+    if (runtimeStorage.inHandoff(senderId)) {
       const captured = orderFlowEnabled
         ? captureHandoffOrderUpdate(senderId, userText, { messageId: mid || '' })
         : false;
@@ -605,8 +605,8 @@ function createWebhook({
     }
 
     maybeResetTimedOutSession(senderId, userText);
-    if (typeof storage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload, extractRequestedProductCodes)) {
-      storage.setEngagedFollowUp(senderId, {
+    if (typeof runtimeStorage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload, extractRequestedProductCodes)) {
+      runtimeStorage.setEngagedFollowUp(senderId, {
         at: new Date().toISOString(),
         note: userText
       });
@@ -614,9 +614,9 @@ function createWebhook({
 
     // Khách yêu cầu gặp nhân viên → tạm dừng bot, ghi log
     if (wantsHuman(userText)) {
-      storage.setHandoff(senderId, Date.now() + handoffMs);
+      runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
       trackEvent(senderId, 'handoff_started', userText, { reason: 'wants_human' });
-      storage.appendCustomer({
+      runtimeStorage.appendCustomer({
         type: 'handoff_request',
         senderId,
         phone: '',
@@ -636,9 +636,9 @@ function createWebhook({
     }
 
     if (wantsUrgentHumanAttention(userText)) {
-      storage.setHandoff(senderId, Date.now() + handoffMs);
+      runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
       trackEvent(senderId, 'handoff_started', userText, { reason: 'urgent_attention' });
-      storage.appendCustomer({
+      runtimeStorage.appendCustomer({
         type: 'handoff_attention',
         senderId,
         phone: '',
@@ -661,12 +661,12 @@ function createWebhook({
       // Nhận diện sđt → ghi lead vào customers.csv để nhân viên xem lại.
       // Phần storage tự xếp hàng ghi file để nhiều khách nhắn cùng lúc không làm lẫn dòng CSV.
       const leadDetails = buildLeadDetails(userText, senderId);
-      const prevOrderDraft = storage.getOrderDraft(senderId);
+      const prevOrderDraft = runtimeStorage.getOrderDraft(senderId);
       const hasOrderDetail = Boolean(
         leadDetails.productCode || leadDetails.phone || leadDetails.name || leadDetails.address
       );
       const mergedOrderDraft = hasOrderDetail
-        ? storage.mergeOrderDraft(senderId, leadDetails)
+        ? runtimeStorage.mergeOrderDraft(senderId, leadDetails)
         : {};
       const currentLead = Object.keys(mergedOrderDraft).length ? mergedOrderDraft : leadDetails;
 
@@ -678,21 +678,21 @@ function createWebhook({
       );
       if (
         orderFlowEnabled &&
-        storage.getSessionState(senderId) === STATES.CONFIRMED &&
+        runtimeStorage.getSessionState(senderId) === STATES.CONFIRMED &&
         (substantiveLead || productChanged)
       ) {
-        storage.setSessionState(senderId, '');
+        runtimeStorage.setSessionState(senderId, '');
       }
 
       if (leadCaptureEnabled && looksLikePhone(userText)) {
         trackEvent(senderId, 'lead_info_received', userText, { fields: ['phone'] });
-        storage.appendCustomer({
+        runtimeStorage.appendCustomer({
           type: 'lead',
           senderId,
           ...currentLead,
           phone: currentLead.phone || leadDetails.phone,
           text: userText,
-          history: storage.getHistory(senderId).slice(-10),
+          history: runtimeStorage.getHistory(senderId).slice(-10),
           at: new Date().toISOString()
         });
       } else if (
@@ -705,12 +705,12 @@ function createWebhook({
         trackEvent(senderId, 'lead_info_received', userText, {
           fields: ['name', 'address'].filter(field => Boolean(leadDetails[field]))
         });
-        storage.appendCustomer({
+        runtimeStorage.appendCustomer({
           type: 'lead_update',
           senderId,
           ...currentLead,
           text: userText,
-          history: storage.getHistory(senderId).slice(-10),
+          history: runtimeStorage.getHistory(senderId).slice(-10),
           at: new Date().toISOString()
         });
       }
@@ -718,9 +718,9 @@ function createWebhook({
       if (orderFlowEnabled) {
         await notifyStaffForReadyOrder(senderId, userText, { messageId: mid || '' });
 
-        const sessionBeforeConfirm = storage.getSessionState(senderId);
+        const sessionBeforeConfirm = runtimeStorage.getSessionState(senderId);
         if (shouldSilenceAfterCompleteOrder(userText, senderId)) {
-          const nowConfirmed = storage.getSessionState(senderId) === STATES.CONFIRMED;
+          const nowConfirmed = runtimeStorage.getSessionState(senderId) === STATES.CONFIRMED;
           const justConfirmed = nowConfirmed && sessionBeforeConfirm !== STATES.CONFIRMED;
           if (justConfirmed) {
             console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (${senderId}).`);
@@ -734,7 +734,7 @@ function createWebhook({
               ...confirmedLead,
               text: 'ĐƠN ĐÃ ĐƯỢC KHÁCH XÁC NHẬN'
             });
-            storage.setHandoff(senderId, Date.now() + handoffMs);
+            runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
           }
           console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
           return;
@@ -829,8 +829,8 @@ function createWebhook({
         isGreeting,
         replyText: reply,
         fallbackUsed: usedFallbackReply,
-        lastProductCode: storage.getLastProductCode(senderId),
-        orderDraft: storage.getOrderDraft(senderId)
+        lastProductCode: runtimeStorage.getLastProductCode(senderId),
+        orderDraft: runtimeStorage.getOrderDraft(senderId)
       }, shopConfig);
       console.log(`🤖 reply: ${redactSensitiveText(reply).slice(0, 120).replace(/\n/g, ' ')}`);
       await imagePromise; // đợi ảnh xong rồi mới gửi text để text xuất hiện sau ảnh

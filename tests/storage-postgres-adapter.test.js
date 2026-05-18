@@ -202,4 +202,102 @@ describe('postgres storage adapter', () => {
       .map(call => call.values[1]);
     expect(pageIds.slice(-3)).toEqual(['page_a', 'page_a', 'page_b']);
   });
+
+  it('binds runtime state to tenant/page contexts for same sender id', async () => {
+    const client = new FakePgClient();
+    const storage = await createReadyPostgresAdapter({
+      dataDir: makeTempDataDir('chatbot-postgres-storage-context-state'),
+      client
+    });
+    const pageA = storage.forContext({ tenantId: 'tenant_a', pageId: 'page_a', shopId: 'shop_a' });
+    const pageB = storage.forContext({ tenantId: 'tenant_b', pageId: 'page_b', shopId: 'shop_b' });
+    await pageA.ready;
+    await pageB.ready;
+
+    const senderId = 'same_sender';
+    pageA.setHandoff(senderId, Date.now() + 60 * 1000);
+    pageA.setLastProductCode(senderId, 'MÃ8');
+    pageA.setLastUserAt(senderId, '2026-05-08T00:00:00.000Z');
+    pageA.setUserProfile(senderId, { first_name: 'Page', last_name: 'A' });
+    pageA.mergeOrderDraft(senderId, { productCode: 'MÃ8', phone: '0987654321' });
+    pageA.setSessionState(senderId, 'READY_TO_CONFIRM');
+    pageA.setHistory(senderId, [{ role: 'user', parts: [{ text: 'page a' }] }]);
+
+    expect(pageB.inHandoff(senderId)).toBeFalse();
+    expect(pageB.getLastProductCode(senderId)).toBe('');
+    expect(pageB.getLastUserAt(senderId)).toBe('');
+    expect(pageB.getUserProfile(senderId)).toEqual({});
+    expect(pageB.getOrderDraft(senderId)).toEqual({});
+    expect(pageB.getSessionState(senderId)).toBe('');
+    expect(pageB.getHistory(senderId)).toEqual([]);
+
+    pageB.setLastProductCode(senderId, 'MÃ10');
+    pageB.mergeOrderDraft(senderId, { productCode: 'MÃ10', phone: '0111222333' });
+    pageB.setSessionState(senderId, 'COLLECTING_INFO');
+    pageB.setHistory(senderId, [{ role: 'user', parts: [{ text: 'page b' }] }]);
+
+    expect(pageA.getLastProductCode(senderId)).toBe('MÃ8');
+    expect(pageA.getOrderDraft(senderId).phone).toBe('0987654321');
+    expect(pageA.getSessionState(senderId)).toBe('READY_TO_CONFIRM');
+    expect(pageA.getHistory(senderId)[0].parts[0].text).toBe('page a');
+  });
+
+  it('writes events and customers with the bound tenant/page context', async () => {
+    const client = new FakePgClient();
+    const storage = await createReadyPostgresAdapter({
+      dataDir: makeTempDataDir('chatbot-postgres-storage-context-events'),
+      client
+    });
+    const pageA = storage.forContext({ tenantId: 'tenant_a', pageId: 'page_a', shopId: 'shop_a' });
+    const pageB = storage.forContext({ tenantId: 'tenant_b', pageId: 'page_b', shopId: 'shop_b' });
+    await pageA.ready;
+    await pageB.ready;
+
+    await pageA.appendEvent({
+      at: '2026-05-08T00:00:00.000Z',
+      type: 'message_received',
+      senderId: 'same_sender',
+      text: 'hello'
+    });
+    await pageB.appendCustomer({
+      at: '2026-05-08T00:00:01.000Z',
+      type: 'lead',
+      senderId: 'same_sender',
+      phone: '0987654321'
+    });
+
+    const eventWrites = client.queryCalls
+      .filter(call => String(call.sql).replace(/\s+/g, ' ').trim().startsWith('INSERT INTO events'))
+      .map(call => call.values.slice(0, 5));
+
+    expect(eventWrites.slice(-2)).toEqual([
+      ['tenant_a', 'page_a', 'same_sender', '2026-05-08T00:00:00.000Z', 'message_received'],
+      ['tenant_b', 'page_b', 'same_sender', '2026-05-08T00:00:01.000Z', 'lead']
+    ]);
+  });
+
+  it('uses the bound page id for mid idempotency by default', async () => {
+    const client = new FakePgClient();
+    const storage = await createReadyPostgresAdapter({
+      dataDir: makeTempDataDir('chatbot-postgres-storage-context-mids'),
+      client
+    });
+    const pageA = storage.forContext({ tenantId: 'tenant_a', pageId: 'page_a' });
+    const pageB = storage.forContext({ tenantId: 'tenant_a', pageId: 'page_b' });
+    await pageA.ready;
+    await pageB.ready;
+
+    expect(await pageA.tryMarkMid('same-mid', { senderId: 'same_sender' })).toBeTrue();
+    expect(await pageA.tryMarkMid('same-mid', { senderId: 'same_sender' })).toBeFalse();
+    expect(await pageB.tryMarkMid('same-mid', { senderId: 'same_sender' })).toBeTrue();
+
+    const midScopes = client.queryCalls
+      .filter(call => String(call.sql).replace(/\s+/g, ' ').trim().startsWith('INSERT INTO processed_mids'))
+      .map(call => [call.values[0], call.values[1], call.values[2]]);
+    expect(midScopes.slice(-3)).toEqual([
+      ['tenant_a', 'page_a', 'same-mid'],
+      ['tenant_a', 'page_a', 'same-mid'],
+      ['tenant_a', 'page_b', 'same-mid']
+    ]);
+  });
 });

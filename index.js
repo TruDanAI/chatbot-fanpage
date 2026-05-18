@@ -555,6 +555,7 @@ const {
 registerMediaRoutes(app);
 
 function buildDbShopRuntime(resolved, options = {}) {
+  const runtimeStorage = options.storage || storage;
   const dbConfig = applyBotModeConfig(resolved.config);
   const dbProducts = resolved.products || [];
   const messenger = options.messenger
@@ -564,15 +565,7 @@ function buildDbShopRuntime(resolved, options = {}) {
   const dbRules = createRuleEngine({
     products: dbProducts,
     config: dbConfig,
-    contextStore: {
-      getLastProductCode: userId => storage.getLastProductCode(userId),
-      setLastProductCode: (userId, code) => storage.setLastProductCode(userId, code),
-      getOrderDraft: userId => storage.getOrderDraft(userId),
-      mergeOrderDraft: (userId, details) => storage.mergeOrderDraft(userId, details),
-      getSessionState: userId => storage.getSessionState(userId),
-      setSessionState: (userId, state) => storage.setSessionState(userId, state),
-      clearOrderDraft: userId => storage.clearOrderDraft(userId)
-    }
+    contextStore: runtimeStorage
   });
   const dbImages = getDbAssetImageRuntime({
     config: dbConfig,
@@ -580,13 +573,65 @@ function buildDbShopRuntime(resolved, options = {}) {
     rules: dbRules,
     sendCarousel: messenger.sendCarousel
   });
+  const dbEventTracker = createEventTracker({
+    storage: runtimeStorage,
+    deriveSessionState: dbRules.deriveSessionState,
+    sessionTimeoutMs: SESSION_TIMEOUT_MS
+  });
+  const dbAiClient = createAiClient({
+    storage: runtimeStorage,
+    products: dbProducts,
+    shopConfig: dbConfig,
+    deriveSessionState: dbRules.deriveSessionState,
+    normalizeText: dbRules.normalizeText,
+    render: dbRules.render,
+    truncateText,
+    config: {
+      geminiApiKey: GEMINI_API_KEY,
+      geminiProvider: GEMINI_PROVIDER,
+      geminiModel: GEMINI_MODEL,
+      geminiTemperature: GEMINI_TEMPERATURE,
+      geminiMaxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+      googleCloudProject: GOOGLE_CLOUD_PROJECT,
+      googleCloudLocation: GOOGLE_CLOUD_LOCATION,
+      geminiHistoryLimit: GEMINI_HISTORY_LIMIT
+    }
+  });
+  const dbNotifications = createNotificationService({
+    storage: runtimeStorage,
+    fbPageToken: options.fbPageToken || FB_PAGE_TOKEN,
+    fbProfileCacheTtlMs: FB_PROFILE_CACHE_TTL_MS,
+    telegramAlertCooldownMs: TELEGRAM_ALERT_COOLDOWN_MS,
+    fallbackAlertThreshold: FALLBACK_ALERT_THRESHOLD,
+    fallbackHandoffThreshold: FALLBACK_HANDOFF_THRESHOLD,
+    handoffMs: HANDOFF_MS,
+    trackEvent: dbEventTracker.trackEvent,
+    truncateText
+  });
+  const dbLeadParser = createLeadParser({
+    storage: runtimeStorage,
+    products: dbProducts,
+    extractPhone: dbRules.extractPhone,
+    extractRequestedProductCodes: dbRules.extractRequestedProductCodes,
+    normalizeText: dbRules.normalizeText,
+    deriveSessionState: dbRules.deriveSessionState,
+    STATES: dbRules.STATES,
+    pushLeadToSheet: options.pushLeadToSheet || pushLeadToSheet,
+    sendTelegramAlert: dbNotifications.sendTelegramAlert,
+    trackEvent: dbEventTracker.trackEvent
+  });
 
   return {
+    storage: runtimeStorage,
     shopConfig: dbConfig,
     useGemini: USE_GEMINI && isAiFallbackEnabled(dbConfig),
     buildDeterministicReply: dbRules.buildDeterministicReply,
     buildFallbackReply: dbRules.buildFallbackReply,
+    buildLeadDetails: dbLeadParser.buildLeadDetails,
+    buildConfirmedSheetLead: dbLeadParser.buildConfirmedSheetLead,
     extractRequestedProductCodes: dbRules.extractRequestedProductCodes,
+    captureHandoffOrderUpdate: dbLeadParser.captureHandoffOrderUpdate,
+    notifyStaffForReadyOrder: dbLeadParser.notifyStaffForReadyOrder,
     looksLikePhone: dbRules.looksLikePhone,
     shouldSilenceAfterCompleteOrder: dbRules.shouldSilenceAfterCompleteOrder,
     wantsHuman: dbRules.wantsHuman,
@@ -594,6 +639,11 @@ function buildDbShopRuntime(resolved, options = {}) {
     render: dbRules.render,
     deriveSessionState: dbRules.deriveSessionState,
     STATES: dbRules.STATES,
+    callGemini: dbAiClient.callGemini,
+    getGeminiErrorInfo: dbAiClient.getGeminiErrorInfo,
+    shouldUseFallbackReply: dbAiClient.shouldUseFallbackReply,
+    isProbablyIncompleteReply: dbAiClient.isProbablyIncompleteReply,
+    recordConversationTurn: dbAiClient.recordConversationTurn,
     getMenuImageUrls: dbImages.getMenuImageUrls,
     buildRequestedImageUrls: dbImages.buildRequestedImageUrls,
     isGreetingText: dbImages.isGreetingText,
@@ -602,8 +652,38 @@ function buildDbShopRuntime(resolved, options = {}) {
     sendMessage: messenger.sendMessage,
     sendQuickReplies: messenger.sendQuickReplies,
     sendImage: messenger.sendImage,
-    showTyping: messenger.showTyping
+    showTyping: messenger.showTyping,
+    pushLeadToSheet: options.pushLeadToSheet || pushLeadToSheet,
+    sendTelegramAlert: dbNotifications.sendTelegramAlert,
+    sendTelegramOperationalAlert: dbNotifications.sendTelegramOperationalAlert,
+    resetFallbackAttention: dbNotifications.resetFallbackAttention,
+    trackFallbackAttention: dbNotifications.trackFallbackAttention,
+    trackEvent: dbEventTracker.trackEvent,
+    maybeResetTimedOutSession: dbEventTracker.maybeResetTimedOutSession,
+    redactSensitiveText
   };
+}
+
+async function resolveStorageForDbRuntime(result) {
+  if (!MULTI_SHOP_DB_CONFIG_ENABLED) return storage;
+  if (typeof storage.forContext !== 'function') {
+    const err = new Error('runtime_storage_context_unavailable');
+    err.code = 'runtime_storage_context_unavailable';
+    throw err;
+  }
+
+  const runtimeStorage = storage.forContext({
+    tenantId: result.tenantId || process.env.TENANT_ID || 'default',
+    pageId: result.page?.page_id,
+    shopId: result.shop?.id
+  });
+  if (!runtimeStorage || typeof runtimeStorage !== 'object') {
+    const err = new Error('runtime_storage_context_invalid');
+    err.code = 'runtime_storage_context_invalid';
+    throw err;
+  }
+  if (runtimeStorage.ready) await runtimeStorage.ready;
+  return runtimeStorage;
 }
 
 async function resolveDbShopRuntimeForPage({
@@ -647,7 +727,14 @@ async function resolveDbShopRuntimeForPage({
   if (!credential?.found || !credential.secret) {
     return { failClosed: true, reason: credential?.reason || 'credential_not_found' };
   }
+  let runtimeStorage;
+  try {
+    runtimeStorage = await resolveStorageForDbRuntime(result);
+  } catch {
+    return { failClosed: true, reason: 'runtime_storage_context_unavailable' };
+  }
   return buildDbShopRuntime(result, {
+    storage: runtimeStorage,
     fbPageToken: credential.secret,
     messengerFactory
   });

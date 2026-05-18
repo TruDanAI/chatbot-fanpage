@@ -293,10 +293,11 @@ function buildDbRuntimeForWebhook(fallbackRuntime, overrides = {}) {
   const dbRules = createRuleEngine({
     products: dbProducts,
     config: dbConfig,
-    contextStore: fallbackRuntime.storage
+    contextStore: overrides.storage || fallbackRuntime.storage
   });
 
   return {
+    storage: overrides.storage || fallbackRuntime.storage,
     shopConfig: dbConfig,
     useGemini: false,
     buildDeterministicReply: dbRules.buildDeterministicReply,
@@ -407,6 +408,32 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(textMessages[0]).toContain('999k');
     expect(textMessages[1]).toBe('DB handoff message');
     expect(JSON.stringify(h.sent).includes('680k')).toBeFalse();
+  });
+
+  it('uses resolved runtime storage instead of the singleton storage', async () => {
+    const senderId = 'same_sender_db_runtime';
+    const pageStorage = {
+      page_a: makeStorage(),
+      page_b: makeStorage()
+    };
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async ({ pageId, fallbackRuntime }) =>
+        buildDbRuntimeForWebhook(fallbackRuntime, { storage: pageStorage[pageId] })
+    });
+
+    await h.handleText('cho xem MÃ99', senderId, 'm_db_runtime_a', 'page_a');
+
+    expect(pageStorage.page_a.inHandoff(senderId)).toBeTrue();
+    expect(pageStorage.page_a.getLastProductCode(senderId)).toBe('MÃ99');
+    expect(pageStorage.page_b.inHandoff(senderId)).toBeFalse();
+    expect(pageStorage.page_b.getLastProductCode(senderId)).toBe('');
+    expect(h.storage.inHandoff(senderId)).toBeFalse();
+
+    await h.handleText('cho xem MÃ99', senderId, 'm_db_runtime_b', 'page_b');
+
+    expect(pageStorage.page_b.inHandoff(senderId)).toBeTrue();
+    expect(pageStorage.page_b.getLastProductCode(senderId)).toBe('MÃ99');
   });
 
   it('DB multi-shop mode fails closed on unknown page without adult-shop fallback', async () => {
