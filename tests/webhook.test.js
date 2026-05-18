@@ -317,8 +317,26 @@ function buildDbRuntimeForWebhook(fallbackRuntime, overrides = {}) {
   };
 }
 
+function expectNoRuntimeFallback(h, senderId) {
+  expect(h.sent.length).toBe(0);
+  expect(h.storage.inHandoff(senderId)).toBeFalse();
+  expect(h.storage._handoff.size).toBe(0);
+  expect(h.storage._customers.length).toBe(0);
+  expect(h.storage._events.length).toBe(0);
+  expect(h.getGeminiCalls()).toBe(0);
+  expect(h.getLeadParserCalls()).toBe(0);
+  expect(h.getHandoffCaptureCalls()).toBe(0);
+  expect(h.getNotifyReadyOrderCalls()).toBe(0);
+  expect(h.getPushedLeadCalls()).toBe(0);
+  expect(h.getTelegramAlertCalls()).toBe(0);
+  expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  expect(h.getFallbackAttentionCalls()).toBe(0);
+  expect(h.getConversationTurnCalls()).toBe(0);
+  expect(h.getEventCalls()).toBe(0);
+}
+
 describe('webhook: menu_code_handoff mode', () => {
-  it('uses file config path unchanged when no runtime resolver is provided', async () => {
+  it('static mode uses file config path unchanged when no runtime resolver is provided', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('chào shop', 'flag_off_file_path', 'm_flag_off', 'page_file');
@@ -391,15 +409,16 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(JSON.stringify(h.sent).includes('680k')).toBeFalse();
   });
 
-  it('fails closed on unresolved DB page without sending file shop content', async () => {
+  it('DB multi-shop mode fails closed on unknown page without adult-shop fallback', async () => {
+    const senderId = 'db_unknown_page';
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
-      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'page_not_found' })
+      resolveRuntimeForPage: async () => ({ reason: 'page_not_found' })
     });
 
-    await h.handleText('chào shop', 'db_missing_page', 'm_db_missing', 'unknown_page');
+    await h.handleText('cho xem MÃ8', senderId, 'm_db_unknown', 'unknown_page');
 
-    expect(h.sent.length).toBe(0);
+    expectNoRuntimeFallback(h, senderId);
   });
 
   it('fail-closed runtime logs use page_ref instead of raw page_id', async () => {
@@ -425,11 +444,12 @@ describe('webhook: menu_code_handoff mode', () => {
     }
   });
 
-  it('credential fail-closed logs do not include raw token or raw page_id', async () => {
+  it('DB multi-shop mode fails closed on missing credential without adult-shop fallback', async () => {
     const warnings = [];
     const originalWarn = console.warn;
     console.warn = message => warnings.push(String(message));
     try {
+      const senderId = 'db_missing_credential';
       const h = createWebhookHarness(undefined, {
         throwOnLeadParse: true,
         resolveRuntimeForPage: async () => ({
@@ -439,24 +459,37 @@ describe('webhook: menu_code_handoff mode', () => {
         })
       });
 
-      await h.handleText('chào shop', 'db_missing_credential', 'm_missing_credential', 'page-secret-raw');
+      await h.handleText('cho xem MÃ8', senderId, 'm_missing_credential', 'page-secret-raw');
 
       const joined = warnings.join('\n');
       expect(joined).toContain('credential_not_found');
       expect(joined).toContain('page_ref=p:');
       expect(joined.includes('EAAB-raw-page-token')).toBeFalse();
       expect(joined.includes('page-secret-raw')).toBeFalse();
-      expect(h.sent.length).toBe(0);
+      expectNoRuntimeFallback(h, senderId);
     } finally {
       console.warn = originalWarn;
     }
   });
 
-  it('falls back safely on DB resolver errors without logging secrets', async () => {
+  it('DB multi-shop mode fails closed on ambiguous mapping without adult-shop fallback', async () => {
+    const senderId = 'db_ambiguous_mapping';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'ambiguous_page_mapping' })
+    });
+
+    await h.handleText('cho xem MÃ8', senderId, 'm_db_ambiguous', 'ambiguous_page');
+
+    expectNoRuntimeFallback(h, senderId);
+  });
+
+  it('DB multi-shop mode fails closed on resolver errors without adult-shop fallback or secret logs', async () => {
     const warnings = [];
     const originalWarn = console.warn;
     console.warn = message => warnings.push(String(message));
     try {
+      const senderId = 'db_error_fail_closed';
       const h = createWebhookHarness(undefined, {
         throwOnLeadParse: true,
         resolveRuntimeForPage: async () => {
@@ -464,11 +497,15 @@ describe('webhook: menu_code_handoff mode', () => {
         }
       });
 
-      await h.handleText('chào shop', 'db_error_fallback', 'm_db_error', 'page_file');
+      await h.handleText('cho xem MÃ8', senderId, 'm_db_error', 'page-secret-raw');
 
-      expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
-      expect(warnings.join('\n').includes('secret')).toBeFalse();
-      expect(warnings.join('\n')).toContain('resolver_error');
+      const joined = warnings.join('\n');
+      expect(joined).toContain('fail-closed');
+      expect(joined).toContain('resolver_error');
+      expect(joined).toContain('page_ref=p:');
+      expect(joined.includes('secret')).toBeFalse();
+      expect(joined.includes('page-secret-raw')).toBeFalse();
+      expectNoRuntimeFallback(h, senderId);
     } finally {
       console.warn = originalWarn;
     }
@@ -957,7 +994,7 @@ describe('webhook: menu_code_handoff mode', () => {
     const resolverOrder = [];
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
-      resolveRuntimeForPage: async ({ event }) => {
+      resolveRuntimeForPage: async ({ event, fallbackRuntime }) => {
         const label = event.message?.text || 'referral';
         activeResolvers += 1;
         maxActiveResolvers = Math.max(maxActiveResolvers, activeResolvers);
@@ -965,7 +1002,7 @@ describe('webhook: menu_code_handoff mode', () => {
         await delay(10);
         resolverOrder.push(`end:${label}`);
         activeResolvers -= 1;
-        return null;
+        return fallbackRuntime;
       }
     });
     const senderId = 'route_ads_sibling_returning';

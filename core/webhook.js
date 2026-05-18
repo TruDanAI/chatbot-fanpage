@@ -334,20 +334,24 @@ function createWebhook({
         event,
         fallbackRuntime: staticRuntime
       });
-      if (!resolved) return staticRuntime;
+      if (!resolved) {
+        console.warn(`[multi-shop] DB config fail-closed reason=runtime_not_resolved page_ref=${pageRef(pageId)}`);
+        return { failClosed: true };
+      }
       if (resolved.failClosed) {
         console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
         return { failClosed: true };
       }
       if (resolved.shopConfig) return materializeRuntime(resolved);
       if (resolved.reason) {
-        console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
+        console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
+        return { failClosed: true };
       }
-      return staticRuntime;
+      console.warn(`[multi-shop] DB config fail-closed reason=invalid_runtime page_ref=${pageRef(pageId)}`);
+      return { failClosed: true };
     } catch (err) {
-      const reason = err && (err.code || err.reason) ? (err.code || err.reason) : 'resolver_error';
-      console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(reason)} page_ref=${pageRef(pageId)}`);
-      return staticRuntime;
+      console.warn(`[multi-shop] DB config fail-closed reason=resolver_error page_ref=${pageRef(pageId)}`);
+      return { failClosed: true };
     }
   }
 

@@ -336,9 +336,6 @@ function evaluateDbShopRuntimeAdmission({
   logger = console
 } = {}) {
   if (!result?.found) {
-    if (hasRuntimeAllowlist(allowlist)) return { failClosed: true, reason: result?.reason || 'page_not_found' };
-    if (result?.reason === 'missing_page_id') return { failClosed: true, reason: result.reason };
-    if (knownFileConfigPage) return { reason: result?.reason || 'page_not_found' };
     return { failClosed: true, reason: result?.reason || 'page_not_found' };
   }
 
