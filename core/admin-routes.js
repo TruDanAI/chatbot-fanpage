@@ -65,6 +65,7 @@ const {
 const {
   maskAddress,
   maskPhone,
+  renderBulkMenuImageImportResultHtml,
   renderProductImportResultHtml,
   renderShopCreateHtml
 } = require('./admin/views');
@@ -681,6 +682,47 @@ function presentAssetWriteTextError(err) {
     statusCode: response.statusCode,
     text: response.body?.message || 'Asset write could not be completed.'
   };
+}
+
+function sanitizeBulkMenuImageErrors(errors = []) {
+  return (Array.isArray(errors) ? errors : []).slice(0, 200).map(error => ({
+    row: Number(error?.row || 0),
+    field: String(error?.field || '').slice(0, 80),
+    code: String(error?.code || 'invalid_row').slice(0, 80),
+    message: String(error?.message || 'Invalid row.').slice(0, 240),
+    ...(error?.suggested_fix ? { suggested_fix: String(error.suggested_fix).slice(0, 240) } : {})
+  }));
+}
+
+function presentBulkMenuImageImportApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    asset_type: 'menu_image',
+    rows_received: Number(model.rows_received || 0),
+    assets_created: Number(model.assets_created || 0),
+    errors_count: Number(model.errors_count || 0)
+  };
+}
+
+function presentBulkMenuImageImportError(err) {
+  if (err?.code === 'bulk_menu_image_validation_failed') {
+    const errors = sanitizeBulkMenuImageErrors(err.errors);
+    return {
+      statusCode: 400,
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: 'bulk_menu_image_validation_failed',
+        message: 'Bulk menu image import validation failed.',
+        rows_received: Number(err.rowsReceived || 0),
+        errors_count: errors.length,
+        errors
+      }
+    };
+  }
+  return presentAssetWriteError(err);
 }
 
 function registerAdminRoutes(app, {
@@ -1349,6 +1391,30 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function importMenuImagesApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.bulk_menu_import',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await assetWrites.importMenuImages({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentBulkMenuImageImportApi(result));
+    } catch (err) {
+      const response = presentBulkMenuImageImportError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function importProductsHtml(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -1464,6 +1530,33 @@ function registerAdminRoutes(app, {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
     return safeMessage ? `${base}?assetMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  async function importMenuImagesHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.bulk_menu_import',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await assetWrites.importMenuImages({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, 'menu-imported'));
+    } catch (err) {
+      const response = presentBulkMenuImageImportError(err);
+      return res.status(response.statusCode).type('html').send(renderBulkMenuImageImportResultHtml({
+        shopId,
+        error: response.body
+      }));
+    }
   }
 
   async function createAssetHtml(req, res) {
@@ -1611,6 +1704,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/products/import', importProductsApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
+  app.post('/admin/api/shops/:shopId/assets/menu-images/import', importMenuImagesApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
   if (typeof app.patch === 'function') {
     app.patch('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
@@ -1644,6 +1738,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
   app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
   app.post('/admin/shops/:shopId/assets', createAssetHtml);
+  app.post('/admin/shops/:shopId/assets/menu-images/import', importMenuImagesHtml);
   app.post('/admin/shops/:shopId/assets/:assetId', updateAssetHtml);
   app.post('/admin/shops/:shopId/assets/:assetId/status', setAssetStatusHtml);
   app.post('/admin/shops/:shopId/assets/:assetId/archive', archiveAssetHtml);

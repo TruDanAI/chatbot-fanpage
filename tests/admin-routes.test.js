@@ -729,7 +729,7 @@ function createProductImportServiceStub({ failWith, result } = {}) {
   };
 }
 
-function createAssetWriteServiceStub({ failWith, createdAsset, updatedAsset, statusAsset, archivedAsset } = {}) {
+function createAssetWriteServiceStub({ failWith, bulkFailWith, createdAsset, updatedAsset, statusAsset, archivedAsset, bulkResult } = {}) {
   const calls = [];
   const baseAsset = {
     id: 'asset-1',
@@ -777,6 +777,21 @@ function createAssetWriteServiceStub({ failWith, createdAsset, updatedAsset, sta
       return {
         shopId: input.shopId,
         asset: archivedAsset || { ...baseAsset, status: 'archived' }
+      };
+    },
+    async importMenuImages(input = {}) {
+      calls.push({ method: 'importMenuImages', input });
+      if (bulkFailWith || failWith) throw (bulkFailWith || failWith);
+      return bulkResult || {
+        shopId: input.shopId,
+        asset_type: 'menu_image',
+        rows_received: 2,
+        assets_created: 2,
+        errors_count: 0,
+        assets: [
+          { ...baseAsset, id: 'asset-menu-1', product_id: '', product_code: '', asset_type: 'menu_image', public_url: 'https://cdn.example.test/menu-1.jpg', sort_order: 1 },
+          { ...baseAsset, id: 'asset-menu-2', product_id: '', product_code: '', asset_type: 'menu_image', public_url: 'https://cdn.example.test/menu-2.jpg', sort_order: 2 }
+        ]
       };
     }
   };
@@ -2966,6 +2981,101 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('shop_image')).toBeFalse();
   });
 
+  it('shop detail HTML renders image manager groups, large lazy thumbnails, badges, and replace URL forms', async () => {
+    const app = createApp();
+    const reader = createShopDetailReader(createOnboardingShopDetailModel({
+      products: [{
+        id: 'prod-1',
+        code: 'DB1',
+        name: 'DB Product',
+        description: '',
+        status: 'active',
+        sort_order: 1,
+        updated_at: '2026-05-12T00:00:00.000Z'
+      }],
+      assets: {
+        summary: {
+          total: 4,
+          active: 2,
+          menu_image: 1,
+          menu_image_active: 1,
+          product_image: 1,
+          product_image_active: 1,
+          shop_image: 1,
+          shop_image_active: 0
+        },
+        rows: [{
+          id: 'asset-menu',
+          asset_type: 'menu_image',
+          storage_provider: 'public_url',
+          public_url: 'https://cdn.example.test/menu.jpg',
+          status: 'active',
+          sort_order: 1,
+          updated_at: '2026-05-12T00:00:00.000Z'
+        }, {
+          id: 'asset-product',
+          product_id: 'prod-1',
+          product_code: 'DB1',
+          asset_type: 'product_image',
+          storage_provider: 'public_url',
+          public_url: 'https://cdn.example.test/db1.jpg',
+          status: 'hidden',
+          sort_order: 2,
+          updated_at: '2026-05-12T00:00:00.000Z'
+        }, {
+          id: 'asset-shop',
+          asset_type: 'shop_image',
+          storage_provider: 'public_url',
+          public_url: 'https://cdn.example.test/shop.jpg',
+          status: 'archived',
+          sort_order: 3,
+          updated_at: '2026-05-12T00:00:00.000Z'
+        }, {
+          id: 'asset-other',
+          asset_type: 'legacy_banner',
+          storage_provider: 'public_url',
+          public_url: 'https://cdn.example.test/legacy.jpg',
+          status: 'active',
+          sort_order: 4,
+          updated_at: '2026-05-12T00:00:00.000Z'
+        }]
+      }
+    }));
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Menu Images');
+    expect(res.body).toContain('Product Images');
+    expect(res.body).toContain('Shop Images');
+    expect(res.body).toContain('Other / Unknown Assets');
+    expect(res.body).toContain('class="asset-card-grid"');
+    expect(res.body).toContain('class="asset-thumb"');
+    expect(res.body).toContain('loading="lazy"');
+    expect(res.body).toContain('Broken image');
+    expect(res.body).toContain('target="_blank"');
+    expect(res.body).toContain('status status-success">enabled');
+    expect(res.body).toContain('status status-warning">disabled');
+    expect(res.body).toContain('status status-danger">archived');
+    expect(res.body).toContain('product linked');
+    expect(res.body).toContain('product unlinked');
+    expect(res.body).toContain('sort_order 4');
+    expect(res.body).toContain('Replace image URL');
+    expect(res.body).toContain('Bulk menu image URL import');
+    expect(res.body).toContain('name="menu_image_urls"');
+  });
+
   it('shop detail HTML renders onboarding checklist labels and actions', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -4044,6 +4154,183 @@ describe('admin dashboard routes', () => {
     }), resArchive);
     expect(JSON.parse(resArchive.body).asset.status).toBe('archived');
     expect(assetWrites.calls[3].method).toBe('archiveAsset');
+  });
+
+  it('bulk menu image import API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const assetWrites = createAssetWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        assetWriteService: assetWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/assets/menu-images/import'](createReq({
+        params: { shopId: 'adult-shop' },
+        body: { menu_image_urls: 'http://localhost/private.jpg?token=do-not-return' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+      expect(String(unauthRes.body).includes('do-not-return')).toBeFalse();
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/assets/menu-images/import'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { menu_image_urls: 'https://cdn.example.test/menu.jpg' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(assetWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_asset.bulk_menu_import');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('bulk menu image import HTML POST requires auth and write permission before calling service', async () => {
+    const unauthenticatedWrites = createAssetWriteServiceStub();
+    const unauthenticatedAudit = createAuditLoggerStub();
+    const unauthenticatedApp = createApp();
+    registerAdminRoutes(unauthenticatedApp, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetWriteService: unauthenticatedWrites,
+      auditLogger: unauthenticatedAudit,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const unauthenticatedRes = createRes();
+    await unauthenticatedApp.routes['POST /admin/shops/:shopId/assets/menu-images/import'](createReq({
+      params: { shopId: 'adult-shop' },
+      body: { menu_image_urls: 'http://localhost/private.jpg?token=do-not-return' }
+    }), unauthenticatedRes);
+
+    expect(unauthenticatedRes.statusCode).toBe(401);
+    expect(unauthenticatedWrites.calls.length).toBe(0);
+    expect(unauthenticatedAudit.entries.length).toBe(1);
+    expect(unauthenticatedAudit.entries[0].action).toBe('admin.shop_asset.bulk_menu_import');
+    expect(unauthenticatedAudit.entries[0].outcome).toBe('denied');
+    expect(String(unauthenticatedRes.body).includes('do-not-return')).toBeFalse();
+
+    for (const role of ['viewer', 'support']) {
+      const assetWrites = createAssetWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        assetWriteService: assetWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/shops/:shopId/assets/menu-images/import'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { menu_image_urls: 'https://cdn.example.test/menu.jpg' }
+      }), deniedRes);
+
+      expect(deniedRes.statusCode).toBe(403);
+      expect(assetWrites.calls.length).toBe(0);
+      expect(auditLogger.entries.length).toBe(1);
+      expect(auditLogger.entries[0].action).toBe('admin.shop_asset.bulk_menu_import');
+      expect(auditLogger.entries[0].outcome).toBe('denied');
+      expect(auditLogger.entries[0].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('bulk menu image import API creates menu_image assets only and returns counts', async () => {
+    const app = createApp();
+    const assetWrites = createAssetWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetWriteService: assetWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/menu-images/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        menu_image_urls: 'https://cdn.example.test/menu-1.jpg\nhttps://cdn.example.test/menu-2.jpg,2'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(201);
+    expect(body.ok).toBeTrue();
+    expect(body.asset_type).toBe('menu_image');
+    expect(body.rows_received).toBe(2);
+    expect(body.assets_created).toBe(2);
+    expect(body.asset).toBe(undefined);
+    expect(assetWrites.calls.length).toBe(1);
+    expect(assetWrites.calls[0].method).toBe('importMenuImages');
+    expect(assetWrites.calls[0].input.body.menu_image_urls).toContain('menu-1.jpg');
+  });
+
+  it('bulk menu image import API reports sanitized row errors for private URLs', async () => {
+    const err = new Error('Bulk menu image import validation failed.');
+    err.code = 'bulk_menu_image_validation_failed';
+    err.rowsReceived = 2;
+    err.errors = [{
+      row: 1,
+      field: 'public_url',
+      code: 'invalid_public_url',
+      message: 'Image URL is invalid.',
+      suggested_fix: 'Use a public http or https image URL.'
+    }, {
+      row: 2,
+      field: 'sort_order',
+      code: 'invalid_sort_order',
+      message: 'Sort order must be an integer between -100000 and 100000.',
+      suggested_fix: 'Use URL,sort_order with a numeric sort_order.'
+    }];
+    const app = createApp();
+    const assetWrites = createAssetWriteServiceStub({ bulkFailWith: err });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetWriteService: assetWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/menu-images/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        menu_image_urls: 'http://localhost/private.jpg?token=do-not-return\nhttps://cdn.example.test/a.jpg,nope'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const text = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(400);
+    expect(body.error).toBe('bulk_menu_image_validation_failed');
+    expect(body.errors.length).toBe(2);
+    expect(body.errors[0].row).toBe(1);
+    expect(text.includes('localhost')).toBeFalse();
+    expect(text.includes('do-not-return')).toBeFalse();
+    expect(assetWrites.calls[0].method).toBe('importMenuImages');
   });
 
   it('asset write API maps validation and missing schema errors safely', async () => {

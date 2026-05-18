@@ -263,6 +263,12 @@ describe('asset write persistence', () => {
       { asset_type: 'menu_image', public_url: 'javascript:alert(1)' },
       { asset_type: 'menu_image', public_url: 'file:///tmp/a.jpg' },
       { asset_type: 'menu_image', public_url: 'http://localhost/a.jpg' },
+      { asset_type: 'menu_image', public_url: 'https://cdn.example.local/a.jpg' },
+      { asset_type: 'menu_image', public_url: 'https://cdn.example.lan/a.jpg' },
+      { asset_type: 'menu_image', public_url: 'https://cdn.example.corp/a.jpg' },
+      { asset_type: 'menu_image', public_url: 'https://cdn.example.home/a.jpg' },
+      { asset_type: 'menu_image', public_url: 'https://cdn.example.invalid/a.jpg' },
+      { asset_type: 'menu_image', public_url: 'https://cdn.example.localhost/a.jpg' },
       { asset_type: 'menu_image', public_url: 'http://10.0.0.4/a.jpg' },
       { asset_type: 'menu_image', public_url: 'http://172.16.0.4/a.jpg' },
       { asset_type: 'menu_image', public_url: 'http://192.168.1.4/a.jpg' },
@@ -290,6 +296,182 @@ describe('asset write persistence', () => {
       expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
       expect(state.assets.length).toBe(1);
     }
+  });
+
+  it('bulk imports menu image URLs as menu_image assets with counts-only audit metadata', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresAssetWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries })
+    });
+
+    const result = await service.importMenuImages({
+      principal,
+      shopId: 'adult-shop',
+      body: {
+        menu_image_urls: [
+          'https://cdn.example.test/menu-1.jpg?signature=do-not-audit',
+          'https://cdn.example.test/menu-2.jpg,7'
+        ].join('\n')
+      }
+    });
+
+    const created = state.assets.filter(asset => asset.asset_type === 'menu_image');
+    expect(result.rows_received).toBe(2);
+    expect(result.assets_created).toBe(2);
+    expect(created.length).toBe(2);
+    expect(created.every(asset => asset.product_id == null)).toBeTrue();
+    expect(created.every(asset => asset.storage_provider === 'public_url')).toBeTrue();
+    expect(created.map(asset => asset.sort_order)).toEqual([1, 7]);
+    expect(state.products.length).toBe(2);
+    expect(queries.some(item => item.sql.includes('FROM shop_products'))).toBeFalse();
+    expect(queries.some(item => item.sql.includes('shop_pages'))).toBeFalse();
+    expect(queries.some(item => item.sql.includes('page_credentials'))).toBeFalse();
+
+    const auditInsert = queries.find(item => /^INSERT INTO admin_audit_log/i.test(item.sql));
+    const metadata = JSON.parse(auditInsert.params[12]);
+    const metadataText = JSON.stringify(metadata);
+    expect(auditInsert.params[5]).toBe('admin.shop_asset.bulk_menu_import');
+    expect(metadata.shop_id).toBe('adult-shop');
+    expect(metadata.asset_type).toBe('menu_image');
+    expect(metadata.rows_received).toBe(2);
+    expect(metadata.assets_created).toBe(2);
+    expect(metadata.errors_count).toBe(0);
+    expect(Object.keys(metadata).sort()).toEqual([
+      'asset_type',
+      'assets_created',
+      'auth_method',
+      'errors_count',
+      'rows_received',
+      'shop_id'
+    ]);
+    expect(metadataText.includes('menu-1')).toBeFalse();
+    expect(metadataText.includes('do-not-audit')).toBeFalse();
+  });
+
+  it('bulk import reports row errors for invalid private URLs before opening a transaction', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresAssetWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries })
+    });
+
+    let err = null;
+    try {
+      await service.importMenuImages({
+        principal,
+        shopId: 'adult-shop',
+        body: {
+          menu_image_urls: [
+            'https://cdn.example.test/menu-ok.jpg',
+            'http://localhost/private.jpg?token=do-not-echo',
+            'https://cdn.example.test/menu-bad.jpg,not-number',
+            'http://metadata.google.internal/a'
+          ].join('\n')
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('bulk_menu_image_validation_failed');
+    expect(err.errors.length).toBe(3);
+    expect(err.errors.map(error => error.row)).toEqual([2, 3, 4]);
+    expect(JSON.stringify(err.errors).includes('localhost')).toBeFalse();
+    expect(JSON.stringify(err.errors).includes('do-not-echo')).toBeFalse();
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(state.assets.length).toBe(1);
+  });
+
+  it('bulk import reports row errors for private IP URLs before opening a transaction', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresAssetWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries })
+    });
+
+    let err = null;
+    try {
+      await service.importMenuImages({
+        principal,
+        shopId: 'adult-shop',
+        body: {
+          menu_image_urls: 'http://192.168.1.10/private.jpg?token=do-not-echo'
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('bulk_menu_image_validation_failed');
+    expect(err.errors.length).toBe(1);
+    expect(err.errors[0].row).toBe(1);
+    expect(err.errors[0].field).toBe('public_url');
+    expect(JSON.stringify(err.errors).includes('192.168')).toBeFalse();
+    expect(JSON.stringify(err.errors).includes('do-not-echo')).toBeFalse();
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(state.assets.length).toBe(1);
+  });
+
+  it('bulk import reports row errors for non-http URLs before opening a transaction', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresAssetWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries })
+    });
+
+    let err = null;
+    try {
+      await service.importMenuImages({
+        principal,
+        shopId: 'adult-shop',
+        body: {
+          menu_image_urls: 'file:///tmp/private.jpg'
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('bulk_menu_image_validation_failed');
+    expect(err.errors.length).toBe(1);
+    expect(err.errors[0].row).toBe(1);
+    expect(err.errors[0].field).toBe('public_url');
+    expect(JSON.stringify(err.errors).includes('file:///')).toBeFalse();
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(state.assets.length).toBe(1);
+  });
+
+  it('bulk import rolls back all menu image assets when audit insert fails', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createPostgresAssetWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries, failAuditCode: '42P01' })
+    });
+
+    let err = null;
+    try {
+      await service.importMenuImages({
+        principal,
+        shopId: 'adult-shop',
+        body: {
+          menu_image_urls: 'https://cdn.example.test/menu-1.jpg\nhttps://cdn.example.test/menu-2.jpg'
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('42P01');
+    expect(queries.filter(item => /^INSERT INTO shop_assets/i.test(item.sql)).length).toBe(2);
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+    expect(state.assets.length).toBe(1);
   });
 
   it('fails closed when commit does not complete', async () => {

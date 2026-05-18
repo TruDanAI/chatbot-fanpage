@@ -54,9 +54,9 @@ function formatLabel(value = '') {
 
 function statusClass(value = '') {
   const status = String(value || '').toLowerCase();
-  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'pass' || status === 'ready') return 'status status-success';
+  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'enabled' || status === 'pass' || status === 'ready') return 'status status-success';
   if (status === 'cancelled' || status === 'denied' || status === 'fail' || status === 'incomplete' || status.includes('failed') || status.includes('error')) return 'status status-danger';
-  if (status === 'abandoned' || status === 'hidden') return 'status status-warning';
+  if (status === 'abandoned' || status === 'hidden' || status === 'disabled') return 'status status-warning';
   if (status === 'archived') return 'status status-danger';
   return 'status status-neutral';
 }
@@ -181,6 +181,7 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .product-form.bulk-import textarea { min-height: 150px; font-family: Consolas, monospace; }
     .product-form h3 { grid-column: 1 / -1; margin: 0 0 2px; font-size: 15px; }
     .product-form label { display: grid; gap: 4px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+    .product-form .wide { grid-column: 1 / -1; }
     .product-form input, .product-form textarea, .product-form select { min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
     .product-form textarea { min-height: 54px; resize: vertical; grid-column: 1 / -1; }
     .product-form button, .inline-action button { min-height: 32px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; cursor: pointer; }
@@ -228,8 +229,25 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .login-branding { margin-bottom: 14px; }
     .login-branding h2 { font-size: 20px; margin: 0 0 4px; color: #17202a; }
     .login-branding p { margin: 0; color: var(--muted); font-size: 13px; }
-    .asset-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-muted); }
-    .asset-thumb-broken { width: 48px; height: 48px; border-radius: 4px; border: 1px solid var(--border); background: #fee2e2; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--danger); }
+    .asset-group { display: grid; gap: 10px; margin-top: 16px; }
+    .asset-group h3 { margin: 0; font-size: 15px; }
+    .asset-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .asset-card { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .asset-preview { width: 128px; }
+    .asset-thumb { width: 128px; height: 128px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-muted); display: block; }
+    .asset-thumb-broken { width: 128px; height: 128px; border-radius: 6px; border: 1px solid var(--border); background: #fee2e2; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; color: var(--danger); box-sizing: border-box; padding: 8px; }
+    .asset-card-body { min-width: 0; display: grid; gap: 8px; }
+    .asset-title-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .asset-url { overflow-wrap: anywhere; font-size: 13px; }
+    .asset-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+    .asset-url-field { grid-column: 1 / -1; }
+    .bulk-menu-import { margin-top: 12px; }
+    .bulk-menu-import textarea { min-height: 116px; font-family: Consolas, monospace; }
+    .bulk-errors { margin-top: 12px; }
+    @media (max-width: 640px) {
+      .asset-card { grid-template-columns: 1fr; }
+      .asset-preview, .asset-thumb, .asset-thumb-broken { width: 100%; max-width: 160px; }
+    }
     .toggle-desc { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
     .collapsible-section summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 0; }
     .collapsible-section summary:hover { color: #17202a; }
@@ -758,6 +776,33 @@ function renderProductImportResultHtml({ shopId = '', result = null, error = nul
   return renderLayout('Product Import', body);
 }
 
+function renderBulkMenuImageErrorsTable(errors = []) {
+  const rows = Array.isArray(errors) ? errors : [];
+  if (!rows.length) return '<div class="empty">No row errors were returned.</div>';
+  return renderTable(['row', 'field', 'code', 'message', 'suggested fix'], rows, error => `
+    <tr>
+      <td>${escapeHtml(error.row || 0)}</td>
+      <td><code>${escapeHtml(error.field || '')}</code></td>
+      <td><code>${escapeHtml(error.code || '')}</code></td>
+      <td>${escapeHtml(error.message || '')}</td>
+      <td>${escapeHtml(error.suggested_fix || '')}</td>
+    </tr>
+  `);
+}
+
+function renderBulkMenuImageImportResultHtml({ shopId = '', error = null } = {}) {
+  const backHref = `/admin/shops/${encodeRoutePart(shopId)}#assets`;
+  const body = `
+    <p><a href="${escapeHtml(backHref)}">Back to image manager</a></p>
+    <div class="banner banner-error" role="alert">${escapeHtml(error?.message || 'Bulk menu image import failed.')}</div>
+    <p class="meta">Rows received: ${escapeHtml(error?.rows_received || 0)} | errors: ${escapeHtml(error?.errors_count || 0)}</p>
+    <section class="bulk-errors">
+      ${renderBulkMenuImageErrorsTable(error?.errors || [])}
+    </section>
+  `;
+  return renderLayout('Bulk Menu Image Import', body);
+}
+
 function renderPageMappingAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
@@ -874,6 +919,21 @@ function renderAssetAddForm(shopId = '', products = []) {
   </form>`;
 }
 
+function renderBulkMenuImageImportForm(shopId = '') {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/menu-images/import`;
+  return `<form class="product-form bulk-menu-import" method="post" action="${escapeHtml(action)}">
+    <h3>Bulk menu image URL import</h3>
+    <label class="wide">Menu image URLs
+      <textarea name="menu_image_urls" maxlength="50000" placeholder="https://cdn.example.test/menu-1.jpg&#10;https://cdn.example.test/menu-2.jpg,2" required aria-required="true"></textarea>
+    </label>
+    <label>Content type<input name="content_type" maxlength="120" placeholder="image/jpeg"></label>
+    <div class="form-actions">
+      <button type="submit">Import menu images</button>
+      <span class="meta">One public http/https URL per line. Optional format: URL,sort_order. Creates menu_image assets only.</span>
+    </div>
+  </form>`;
+}
+
 function renderAssetEditForm(shopId = '', asset = {}, products = []) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/${encodeRoutePart(asset.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
@@ -882,7 +942,7 @@ function renderAssetEditForm(shopId = '', asset = {}, products = []) {
     <label>Content type<input name="content_type" value="${escapeHtml(asset.content_type || '')}" maxlength="120"></label>
     <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(asset.sort_order || 0)}"></label>
     <label>Status<select name="status">${renderAssetStatusOptions(asset.status)}</select></label>
-    <label>Public URL <span class="required">required</span><input name="public_url" type="url" value="${escapeHtml(asset.public_url || '')}" maxlength="2048" required aria-required="true"></label>
+    <label class="asset-url-field">Replace image URL <span class="required">required</span><input name="public_url" type="url" value="${escapeHtml(asset.public_url || '')}" maxlength="2048" required aria-required="true"></label>
     <div class="form-actions"><button type="submit">Save asset</button></div>
   </form>`;
 }
@@ -1029,21 +1089,52 @@ function renderHealthCard(health = {}) {
   `;
 }
 
-function renderAssetTable(assets = [], shopId = '', products = []) {
-  return renderTable(['preview', 'type', 'product', 'provider', 'url', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], assets, asset => `
-        <tr>
-          <td>${asset.public_url ? `<img src="${escapeHtml(asset.public_url)}" alt="${escapeHtml(asset.asset_type)}" class="asset-thumb" loading="lazy" onerror="this.outerHTML='<div class=asset-thumb-broken>broken</div>'">` : '<div class="asset-thumb-broken">no url</div>'}</td>
-          <td>${escapeHtml(asset.asset_type)}</td>
-          <td>${escapeHtml(asset.product_code || asset.product_id || '')}</td>
-          <td>${escapeHtml(asset.storage_provider)}</td>
-          <td>${asset.public_url ? `<a href="${escapeHtml(asset.public_url)}" rel="noreferrer">${escapeHtml(limitText(asset.public_url, 90))}</a>` : ''}</td>
-          <td>${renderStatus(asset.status)}</td>
-          <td>${escapeHtml(asset.sort_order || 0)}</td>
-          <td>${escapeHtml(formatDate(asset.updated_at))}</td>
-          <td class="product-actions">${renderAssetStatusActions(shopId, asset)}</td>
-          <td>${renderAssetEditForm(shopId, asset, products)}</td>
-        </tr>
-      `);
+function renderAssetPreview(asset = {}) {
+  if (!asset.public_url) {
+    return '<div class="asset-thumb-broken">No URL</div>';
+  }
+  return `
+    <img src="${escapeHtml(asset.public_url)}" alt="${escapeHtml(asset.asset_type || 'image asset')}" class="asset-thumb" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
+    <div class="asset-thumb-broken" hidden>Broken image</div>
+  `;
+}
+
+function renderAssetEnabledBadge(asset = {}) {
+  const status = String(asset.status || '').toLowerCase();
+  if (status === 'archived') return renderStatus('archived');
+  if (status === 'active') return renderStatus('enabled');
+  return renderStatus('disabled');
+}
+
+function renderAssetProductLinkBadge(asset = {}) {
+  const linked = Boolean(asset.product_id || asset.product_code);
+  return `<span class="${linked ? 'status status-success' : 'status status-neutral'}">${linked ? 'product linked' : 'product unlinked'}</span>`;
+}
+
+function renderAssetCards(assets = [], shopId = '', products = []) {
+  if (!assets.length) return '<div class="empty">Không có dữ liệu.</div>';
+  return `<div class="asset-card-grid">${assets.map(asset => `
+    <article class="asset-card">
+      <div class="asset-preview">${renderAssetPreview(asset)}</div>
+      <div class="asset-card-body">
+        <div class="asset-title-row">
+          <strong>${escapeHtml(formatLabel(asset.asset_type || 'asset'))}</strong>
+          ${renderAssetEnabledBadge(asset)}
+          ${renderAssetProductLinkBadge(asset)}
+          <span class="status status-neutral">sort_order ${escapeHtml(asset.sort_order || 0)}</span>
+        </div>
+        <div class="asset-badges">
+          ${renderStatus(asset.status || 'unknown')}
+          <span class="status status-neutral">${escapeHtml(asset.storage_provider || 'public_url')}</span>
+          ${asset.product_code || asset.product_id ? `<span class="status status-neutral">${escapeHtml(asset.product_code || asset.product_id)}</span>` : ''}
+        </div>
+        <div class="asset-url">${asset.public_url ? `<a href="${escapeHtml(asset.public_url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(limitText(asset.public_url, 120))}</a>` : ''}</div>
+        <p class="meta">Updated ${escapeHtml(formatDate(asset.updated_at))}</p>
+        <div class="product-actions">${renderAssetStatusActions(shopId, asset)}</div>
+        ${renderAssetEditForm(shopId, asset, products)}
+      </div>
+    </article>
+  `).join('')}</div>`;
 }
 
 function groupShopAssets(assets = []) {
@@ -1073,7 +1164,7 @@ function renderAssetGroups(assets = [], shopId = '', products = []) {
     .map(group => `
       <section class="asset-group">
         <h3>${escapeHtml(group.title)}</h3>
-        ${renderAssetTable(group.rows, shopId, products)}
+        ${renderAssetCards(group.rows, shopId, products)}
       </section>
     `)
     .join('');
@@ -1179,6 +1270,7 @@ function renderShopDetailHtml(model = {}) {
         ${renderProductFlash(model.assetFlash || {})}
         ${renderCounts(summary)}
         ${renderAssetAddForm(shop.id, model.products || [])}
+        ${renderBulkMenuImageImportForm(shop.id)}
         ${renderAssetGroups(assetRows, shop.id, model.products || [])}
       </div>
 
@@ -1402,6 +1494,7 @@ module.exports = {
   maskAddress,
   maskPhone,
   renderAuditHtml,
+  renderBulkMenuImageImportResultHtml,
   renderDashboardHtml,
   renderLoginHtml,
   renderProductImportResultHtml,

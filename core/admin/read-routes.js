@@ -41,7 +41,8 @@ const ASSET_FLASH_MESSAGES = {
   updated: { type: 'success', text: 'Asset updated.' },
   enabled: { type: 'success', text: 'Asset enabled.' },
   disabled: { type: 'success', text: 'Asset disabled.' },
-  archived: { type: 'success', text: 'Asset archived. No asset was deleted.' }
+  archived: { type: 'success', text: 'Asset archived. No asset was deleted.' },
+  'menu-imported': { type: 'success', text: 'Menu image URLs imported.' }
 };
 const PAGE_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' }

@@ -11,12 +11,22 @@ const ASSET_WRITE_ACTIONS = Object.freeze({
   CREATE: 'admin.shop_asset.create',
   UPDATE: 'admin.shop_asset.update',
   STATUS: 'admin.shop_asset.status',
-  ARCHIVE: 'admin.shop_asset.archive'
+  ARCHIVE: 'admin.shop_asset.archive',
+  BULK_MENU_IMPORT: 'admin.shop_asset.bulk_menu_import'
 });
 
 const ASSET_TYPES = Object.freeze(new Set(['menu_image', 'product_image']));
 const ASSET_STATUSES = Object.freeze(new Set(['active', 'hidden', 'archived']));
 const MAX_PUBLIC_URL_LENGTH = 2048;
+const BLOCKED_HOSTNAME_SUFFIXES = Object.freeze([
+  '.internal',
+  '.local',
+  '.lan',
+  '.corp',
+  '.home',
+  '.invalid',
+  '.localhost'
+]);
 
 function loadPgClient() {
   try {
@@ -137,7 +147,7 @@ function isNonPublicHostname(hostname = '') {
   const host = normalizeHostnameForPolicy(hostname);
   if (!host) return true;
   if (host.includes(':') || parseIpv4Address(host)) return false;
-  return !host.includes('.') || host.endsWith('.internal');
+  return !host.includes('.') || BLOCKED_HOSTNAME_SUFFIXES.some(suffix => host.endsWith(suffix));
 }
 
 function normalizePublicUrl(value = '') {
@@ -190,6 +200,133 @@ function normalizeCreateInput(body = {}) {
     contentType: normalizeText(body.content_type ?? body.contentType, 120),
     sortOrder: toBoundedInteger(body.sort_order ?? body.sortOrder, 0),
     status: normalizeStatus(body.status, 'active')
+  };
+}
+
+function parseCsvLine(line = '') {
+  const cells = [];
+  let cell = '';
+  let quoted = false;
+  const input = String(line || '');
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
+    if (quoted && char === '"' && next === '"') {
+      cell += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (!quoted && char === ',') {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+  cells.push(cell.trim());
+  return { cells, quoted };
+}
+
+function createBulkRowError(row, field, code, message, suggestedFix = '') {
+  return {
+    row,
+    field,
+    code,
+    message,
+    ...(suggestedFix ? { suggested_fix: suggestedFix } : {})
+  };
+}
+
+function parseStrictSortOrder(value = '', fallback = 0) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  if (!/^-?\d+$/.test(raw)) return null;
+  const number = Number(raw);
+  if (!Number.isSafeInteger(number) || number < -100000 || number > 100000) return null;
+  return number;
+}
+
+function normalizeBulkMenuImageImportInput(body = {}) {
+  const raw = String(body.menu_image_urls ?? body.urls ?? body.public_urls ?? '').trim();
+  const lines = raw ? raw.split(/\r\n|\n|\r/) : [];
+  const rows = [];
+  const errors = [];
+  let rowsReceived = 0;
+
+  lines.forEach((line, index) => {
+    const rowNumber = index + 1;
+    if (!String(line || '').trim()) return;
+    rowsReceived += 1;
+    const parsed = parseCsvLine(line);
+    if (parsed.quoted || parsed.cells.length > 2) {
+      errors.push(createBulkRowError(
+        rowNumber,
+        'row',
+        'invalid_row_format',
+        'Use one image URL per line, optionally followed by comma and sort_order.',
+        'Use URL or URL,sort_order.'
+      ));
+      return;
+    }
+
+    let publicUrl = '';
+    try {
+      publicUrl = normalizePublicUrl(parsed.cells[0]);
+    } catch (_) {
+      errors.push(createBulkRowError(
+        rowNumber,
+        'public_url',
+        'invalid_public_url',
+        'Image URL is invalid.',
+        'Use a public http or https image URL.'
+      ));
+    }
+
+    const fallbackSortOrder = rows.length + 1;
+    const sortOrder = parseStrictSortOrder(parsed.cells[1], fallbackSortOrder);
+    if (sortOrder == null) {
+      errors.push(createBulkRowError(
+        rowNumber,
+        'sort_order',
+        'invalid_sort_order',
+        'Sort order must be an integer between -100000 and 100000.',
+        'Use URL,sort_order with a numeric sort_order.'
+      ));
+    }
+
+    if (publicUrl && sortOrder != null) {
+      rows.push({
+        row: rowNumber,
+        assetType: 'menu_image',
+        productId: '',
+        publicUrl,
+        contentType: normalizeText(body.content_type ?? body.contentType, 120),
+        sortOrder,
+        status: 'active'
+      });
+    }
+  });
+
+  if (!rows.length && !errors.length) {
+    errors.push(createBulkRowError(
+      1,
+      'menu_image_urls',
+      'menu_image_urls_required',
+      'At least one menu image URL is required.',
+      'Paste one public image URL per line.'
+    ));
+  }
+
+  if (errors.length) {
+    const err = createAssetWriteError('bulk_menu_image_validation_failed', 'Bulk menu image import validation failed.', 400);
+    err.errors = errors;
+    err.rowsReceived = rowsReceived;
+    throw err;
+  }
+
+  return {
+    rowsReceived,
+    rows
   };
 }
 
@@ -477,6 +614,42 @@ function createPostgresAssetWriteService({
     });
   }
 
+  async function importMenuImages({ principal, shopId, body = {}, requestContext = {} } = {}) {
+    assertWritePermission(principal);
+    const input = normalizeBulkMenuImageImportInput(body);
+    return withTransaction(async client => {
+      const shop = await repository.resolveShop(client, shopId);
+      const assets = [];
+      for (const rowInput of input.rows) {
+        const assetId = `asset_${crypto.randomUUID()}`;
+        const row = await repository.insertAsset(client, { shopId: shop.id, assetId, input: rowInput });
+        if (!row?.id) throw createAssetWriteError('asset_persist_failed', 'Asset could not be persisted.', 500);
+        assets.push(presentAsset(row));
+      }
+      await repository.insertAudit(client, {
+        principal,
+        action: ASSET_WRITE_ACTIONS.BULK_MENU_IMPORT,
+        resourceId: shop.id,
+        metadata: {
+          shop_id: shop.id,
+          asset_type: 'menu_image',
+          rows_received: input.rowsReceived,
+          assets_created: assets.length,
+          errors_count: 0
+        },
+        requestContext
+      });
+      return {
+        shopId: shop.id,
+        asset_type: 'menu_image',
+        rows_received: input.rowsReceived,
+        assets_created: assets.length,
+        errors_count: 0,
+        assets
+      };
+    });
+  }
+
   async function updateAssetWithAction({ principal, shopId, assetId, body = {}, requestContext = {}, action = ASSET_WRITE_ACTIONS.UPDATE } = {}) {
     assertWritePermission(principal);
     const normalizedAssetId = normalizeAssetId(assetId);
@@ -544,6 +717,7 @@ function createPostgresAssetWriteService({
   return {
     archiveAsset,
     createAsset,
+    importMenuImages,
     setAssetEnabled,
     updateAsset
   };
@@ -559,6 +733,7 @@ module.exports = {
   createPostgresAssetWriteService,
   isMissingAssetWriteSchemaError: isMissingMultiShopSchemaError,
   normalizeCreateInput,
+  normalizeBulkMenuImageImportInput,
   normalizePatchInput,
   presentAsset,
   summarizePublicUrl
