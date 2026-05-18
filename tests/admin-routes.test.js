@@ -3577,6 +3577,12 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Bulk import products');
     expect(res.body).toContain('action="/admin/shops/adult-shop/products/import"');
     expect(res.body).toContain('name="csv"');
+    expect(res.body).toContain('Required columns:');
+    expect(res.body).toContain('metadata_json');
+    expect(res.body).toContain('name="validate_only"');
+    expect(res.body).toContain('data-product-import-preview');
+    expect(res.body).toContain('safeImportPreviewCell');
+    expect(res.body).toContain("return 'not shown';");
     expect(res.body).toContain('p:');
     expect(res.body.includes('page_1')).toBeFalse();
     expect(res.body.includes('DB Product')).toBeFalse();
@@ -3716,9 +3722,18 @@ describe('admin dashboard routes', () => {
     validationErr.ignored_columns = ['extra_col'];
     validationErr.errors = [{
       row: 2,
-      field: 'image_url',
-      code: 'invalid_image_url',
-      message: 'Image URL is invalid.'
+      field: 'code',
+      value: 'page_1',
+      code: 'duplicate_product_code_in_csv',
+      message: 'Product code is duplicated in this CSV.',
+      suggested_fix: 'Keep one row for each product code.'
+    }, {
+      row: 3,
+      field: 'status',
+      value: 'hello customer message',
+      code: 'invalid_product_status',
+      message: 'Product status is invalid.',
+      suggested_fix: 'Use active, hidden, archived, enabled, or disabled.'
     }];
 
     for (const item of [
@@ -3750,6 +3765,8 @@ describe('admin dashboard routes', () => {
       expect(body.error).toBe(item.error);
       expect(bodyText.includes('postgres://secret')).toBeFalse();
       expect(bodyText.includes('raw csv')).toBeFalse();
+      expect(bodyText.includes('page_1')).toBeFalse();
+      expect(bodyText.includes('hello customer message')).toBeFalse();
     }
   });
 
@@ -3775,6 +3792,116 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(303);
     expect(res.headers.location).toBe('/admin/shops/adult-shop?productMessage=imported');
     expect(productImports.calls[0].method).toBe('importProducts');
+  });
+
+  it('product import HTML POST renders structured validation errors safely', async () => {
+    const validationErr = new Error('raw csv should not be returned');
+    validationErr.code = 'product_import_validation_failed';
+    validationErr.statusCode = 400;
+    validationErr.rows_received = 2;
+    validationErr.ignored_columns = ['extra_col'];
+    validationErr.errors = [{
+      row: 2,
+      field: 'code',
+      value: 'BAD CODE',
+      code: 'invalid_product_code',
+      message: 'Product code format is invalid.',
+      suggested_fix: 'Use a short code starting with a letter or number.'
+    }, {
+      row: 3,
+      field: 'image_url',
+      code: 'invalid_image_url',
+      message: 'Image URL is invalid.',
+      suggested_fix: 'Use a public https image URL.'
+    }];
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: createProductImportServiceStub({ failWith: validationErr }),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: {
+        csv: [
+          'code,name,image_url,extra_col',
+          'BAD CODE,Raw Product,https://cdn.example.test/raw.png,ignored',
+          'M8,Private Image,http://localhost/private.png?token=abc,ignored'
+        ].join('\n')
+      }
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body).toContain('Product import validation failed.');
+    expect(res.body).toContain('<th>row</th>');
+    expect(res.body).toContain('<code>code</code>');
+    expect(res.body).toContain('<code>invalid_product_code</code>');
+    expect(res.body).toContain('Use a short code');
+    expect(res.body).toContain('<code>image_url</code>');
+    expect(res.body).toContain('<span class="meta">not shown</span>');
+    expect(res.body.includes('BAD CODE')).toBeFalse();
+    expect(res.body.includes('localhost')).toBeFalse();
+    expect(res.body.includes('token=abc')).toBeFalse();
+    expect(res.body.includes('Raw Product')).toBeFalse();
+    expect(res.body.includes('raw csv')).toBeFalse();
+  });
+
+  it('product import HTML validate-only returns preview without redirect', async () => {
+    const app = createApp();
+    const productImports = createProductImportServiceStub({
+      result: {
+        shop_id: 'adult-shop',
+        rows_received: 1,
+        products_created: 0,
+        products_updated: 0,
+        product_images_created: 0,
+        product_images_updated: 0,
+        product_images_skipped: 0,
+        image_assets_touched: 0,
+        ignored_columns: [],
+        errors: [],
+        validate_only: true,
+        preview_rows: [{
+          row: 2,
+          code: 'M7',
+          name: 'Demo Product',
+          status: 'active',
+          sort_order: 1,
+          has_image_url: true,
+          metadata_keys: ['priceText']
+        }]
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: productImports,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { validate_only: 'true', csv: 'code,name\nM7,Demo Product' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers.location).toBe(undefined);
+    expect(res.body).toContain('Validation passed. No products were written.');
+    expect(res.body).toContain('Server Preview');
+    expect(res.body).toContain('<code>M7</code>');
+    expect(res.body.includes('Demo Product')).toBeFalse();
+    expect(productImports.calls[0].input.body.validate_only).toBe('true');
   });
 
   it('product update API succeeds and keeps write scoped to route shop/product', async () => {

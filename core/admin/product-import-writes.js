@@ -48,6 +48,15 @@ const HEADERLESS_FLEXIBLE_COLUMNS = Object.freeze([
   'sort_order'
 ]);
 const SAFE_CODE_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._:-]{0,79}$/u;
+const SAFE_VALUE_FIELDS = Object.freeze(new Set([
+  'code',
+  'status'
+]));
+const SAFE_PRODUCT_CODE_ECHO_PATTERN = /^(?=.{2,16}$)(?=.*[a-z])(?=.*\d)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/i;
+const SAFE_STATUS_ECHO_PATTERN = /^[a-z]{1,16}$/i;
+const SENSITIVE_VALUE_PATTERN = /(?:token|secret|password|bearer|authorization|metadata_json|phone|tel|sdt|sđt|address|dia chi|địa chỉ|pageid|pageref|customerid|senderid|userid|psid|fbid)/i;
+const URL_LIKE_VALUE_PATTERN = /(?:[a-z][a-z0-9+.-]*:\/\/|www\.)/i;
+const JSON_LIKE_VALUE_PATTERN = /(?:^\s*[\[{]|[\]}]\s*$|":|'\s*:)/;
 
 function loadPgClient() {
   try {
@@ -136,13 +145,70 @@ function normalizeTags(value = '') {
     .slice(0, 20))];
 }
 
-function safeRowError(row, field, code, message) {
+function looksSensitiveSubmittedValue(value = '') {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return true;
+  if (text.length > 80) return true;
+  if (SENSITIVE_VALUE_PATTERN.test(text)) return true;
+  if (URL_LIKE_VALUE_PATTERN.test(text)) return true;
+  if (JSON_LIKE_VALUE_PATTERN.test(text)) return true;
+  if ((text.match(/\d/g) || []).length >= 7) return true;
+  if (text.split(/\s+/).filter(Boolean).length >= 3) return true;
+
+  const compact = text.toLowerCase().replace(/[\s._:-]+/g, '_');
+  if (String(text).toLowerCase().startsWith('p:')) return true;
+  return /(^|_)(page|customer|cust|sender|user|uid|psid|fbid)(_|$|\d)/i.test(compact);
+}
+
+function safeSubmittedValue(field = '', value = '') {
+  const normalizedField = normalizeHeader(field);
+  if (!SAFE_VALUE_FIELDS.has(normalizedField)) return undefined;
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (looksSensitiveSubmittedValue(text)) return undefined;
+  if (normalizedField === 'code') {
+    return SAFE_PRODUCT_CODE_ECHO_PATTERN.test(text) ? text : undefined;
+  }
+  if (normalizedField === 'status') {
+    return SAFE_STATUS_ECHO_PATTERN.test(text) ? text : undefined;
+  }
+  return undefined;
+}
+
+function suggestedFixForImportError(code = '') {
   return {
+    csv_required: 'Paste CSV text with a header row and at least one product.',
+    invalid_csv: 'Check quotes, commas, and line breaks, then try again.',
+    no_rows: 'Add at least one product row below the header.',
+    too_many_rows: `Split the file into batches of ${PRODUCT_IMPORT_MAX_ROWS} rows or fewer.`,
+    missing_required_column: 'Add the required column to the header row.',
+    invalid_product_code: 'Use a short code starting with a letter or number; allowed punctuation is dot, underscore, colon, and hyphen.',
+    duplicate_product_code_in_csv: 'Keep one row for each product code or merge the duplicated rows.',
+    invalid_product_name: 'Add a product name.',
+    invalid_product_status: 'Use active, hidden, archived, enabled, or disabled.',
+    invalid_sort_order: 'Use a whole number between -100000 and 100000.',
+    invalid_metadata_json: 'Use a valid JSON object such as {"size":"M"}.',
+    metadata_json_not_supported: 'Remove metadata_json for this environment.',
+    invalid_image_url: 'Use a public https image URL; private and internal hosts are rejected.'
+  }[String(code || '')] || 'Edit this cell and validate again.';
+}
+
+function safeRowError(row, field, code, message, value, extra = {}) {
+  const error = {
     row,
     field,
     code,
-    message
+    message,
+    suggested_fix: suggestedFixForImportError(code)
   };
+  const safeValue = safeSubmittedValue(field, value);
+  if (safeValue !== undefined) error.value = safeValue;
+  if (Array.isArray(extra.related_rows)) {
+    error.related_rows = extra.related_rows
+      .map(item => Number(item || 0))
+      .filter(item => Number.isInteger(item) && item > 0)
+      .slice(0, 10);
+  }
+  return error;
 }
 
 function parseCsvText(csvText = '') {
@@ -252,18 +318,18 @@ function normalizeImportRow({ rowNumber, values }) {
   let imageUrl = '';
 
   if (!code) {
-    errors.push(safeRowError(rowNumber, 'code', 'invalid_product_code', 'Product code is required.'));
+    errors.push(safeRowError(rowNumber, 'code', 'invalid_product_code', 'Product code is required.', values.code));
   } else if (!SAFE_CODE_PATTERN.test(code)) {
-    errors.push(safeRowError(rowNumber, 'code', 'invalid_product_code', 'Product code format is invalid.'));
+    errors.push(safeRowError(rowNumber, 'code', 'invalid_product_code', 'Product code format is invalid.', values.code));
   }
   if (!name) {
-    errors.push(safeRowError(rowNumber, 'name', 'invalid_product_name', 'Product name is required.'));
+    errors.push(safeRowError(rowNumber, 'name', 'invalid_product_name', 'Product name is required.', values.name));
   }
   if (!PRODUCT_STATUSES.has(status)) {
-    errors.push(safeRowError(rowNumber, 'status', 'invalid_product_status', 'Product status is invalid.'));
+    errors.push(safeRowError(rowNumber, 'status', 'invalid_product_status', 'Product status is invalid.', values.status));
   }
   if (!sortOrder.ok) {
-    errors.push(safeRowError(rowNumber, 'sort_order', 'invalid_sort_order', 'Sort order must be an integer.'));
+    errors.push(safeRowError(rowNumber, 'sort_order', 'invalid_sort_order', 'Sort order must be an integer.', values.sort_order));
   }
 
   if (hasOwn(values, 'metadata_json') && String(values.metadata_json ?? '').trim()) {
@@ -339,7 +405,9 @@ function parseImportInput(body = {}) {
           normalized.row.rowNumber,
           'code',
           'duplicate_product_code_in_csv',
-          'Product code is duplicated in this CSV.'
+          `Product code is duplicated in this CSV with row ${seenCodes.get(codeKey)}.`,
+          normalized.row.code,
+          { related_rows: [seenCodes.get(codeKey), normalized.row.rowNumber] }
         ));
       } else {
         seenCodes.set(codeKey, normalized.row.rowNumber);
@@ -363,6 +431,36 @@ function parseImportInput(body = {}) {
   };
 }
 
+function isValidateOnly(body = {}) {
+  return /^(1|true|yes|on|validate_only)$/i.test(String(body?.validate_only ?? body?.validateOnly ?? '').trim());
+}
+
+function presentImportPreview(rows = []) {
+  return rows.slice(0, 10).map(row => ({
+    row: Number(row.rowNumber || 0),
+    code: safeSubmittedValue('code', row.code) || '',
+    name: safeSubmittedValue('name', row.name) || '',
+    status: safeSubmittedValue('status', row.status) || '',
+    sort_order: Number(row.sortOrder || 0),
+    has_image_url: Boolean(row.imageUrl),
+    metadata_keys: Object.keys(jsonObject(row.metadataPatch)).sort().slice(0, 20)
+  }));
+}
+
+function presentImportPreviewRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).slice(0, 10).map(row => ({
+    row: Number(row?.row || row?.rowNumber || 0),
+    code: safeSubmittedValue('code', row?.code) || '',
+    name: safeSubmittedValue('name', row?.name) || '',
+    status: safeSubmittedValue('status', row?.status) || '',
+    sort_order: Number(row?.sort_order ?? row?.sortOrder ?? 0),
+    has_image_url: Boolean(row?.has_image_url ?? row?.imageUrl),
+    metadata_keys: Array.isArray(row?.metadata_keys)
+      ? row.metadata_keys.map(key => normalizeText(key, 80)).filter(Boolean).slice(0, 20)
+      : []
+  }));
+}
+
 function presentImportSummary(summary = {}) {
   return {
     shop_id: summary.shop_id || summary.shopId || '',
@@ -377,6 +475,8 @@ function presentImportSummary(summary = {}) {
       ? summary.ignored_columns.map(column => normalizeText(column, 80)).filter(Boolean)
       : [],
     errors: Array.isArray(summary.errors) ? summary.errors : [],
+    validate_only: Boolean(summary.validate_only),
+    preview_rows: presentImportPreviewRows(summary.preview_rows),
     metadata_json_supported: PRODUCT_IMPORT_METADATA_JSON_SUPPORTED
   };
 }
@@ -614,6 +714,22 @@ function createPostgresProductImportService({
   async function importProducts({ principal, shopId, body = {}, requestContext = {} } = {}) {
     assertWritePermission(principal);
     const input = parseImportInput(body);
+    if (isValidateOnly(body)) {
+      return presentImportSummary({
+        shop_id: normalizeText(shopId, 160),
+        rows_received: input.rowsReceived,
+        products_created: 0,
+        products_updated: 0,
+        product_images_created: 0,
+        product_images_updated: 0,
+        product_images_skipped: input.rowsReceived - input.rows.filter(row => row.imageUrl).length,
+        image_assets_touched: 0,
+        ignored_columns: input.ignoredColumns,
+        errors: [],
+        validate_only: true,
+        preview_rows: presentImportPreview(input.rows)
+      });
+    }
     return withTransaction(async client => {
       const shop = await repository.resolveShop(client, shopId);
       const codeKeys = [...new Set(input.rows.map(row => row.code.toLowerCase()))];
@@ -758,5 +874,6 @@ module.exports = {
   createProductImportRepository,
   isMissingProductImportSchemaError: isMissingMultiShopSchemaError,
   parseImportInput,
-  presentImportSummary
+  presentImportSummary,
+  safeSubmittedValue
 };

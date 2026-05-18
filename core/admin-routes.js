@@ -24,7 +24,8 @@ const {
 const {
   createPostgresProductImportService,
   isMissingProductImportSchemaError,
-  presentImportSummary
+  presentImportSummary,
+  safeSubmittedValue: safeProductImportSubmittedValue
 } = require('./admin/product-import-writes');
 const {
   createPostgresProductWriteService,
@@ -64,6 +65,7 @@ const {
 const {
   maskAddress,
   maskPhone,
+  renderProductImportResultHtml,
   renderShopCreateHtml
 } = require('./admin/views');
 
@@ -298,12 +300,23 @@ function presentProductImportApi(result = {}) {
 }
 
 function presentImportErrors(errors = []) {
-  return (Array.isArray(errors) ? errors : []).slice(0, 100).map(error => ({
-    row: Number(error?.row || 0),
-    field: String(error?.field || '').trim().slice(0, 80),
-    code: String(error?.code || 'invalid_row').trim().slice(0, 120),
-    message: String(error?.message || 'Row is invalid.').trim().slice(0, 180)
-  }));
+  return (Array.isArray(errors) ? errors : []).slice(0, 100).map(error => {
+    const field = String(error?.field || '').trim().slice(0, 80);
+    const safeValue = typeof error?.value === 'string'
+      ? safeProductImportSubmittedValue(field, error.value)
+      : '';
+    return {
+      row: Number(error?.row || 0),
+      field,
+      code: String(error?.code || 'invalid_row').trim().slice(0, 120),
+      message: String(error?.message || 'Row is invalid.').trim().slice(0, 180),
+      value: safeValue || '',
+      related_rows: Array.isArray(error?.related_rows)
+        ? error.related_rows.map(row => Number(row || 0)).filter(row => Number.isInteger(row) && row > 0).slice(0, 10)
+        : [],
+      suggested_fix: String(error?.suggested_fix || 'Edit this cell and validate again.').trim().slice(0, 240)
+    };
+  });
 }
 
 function presentProductImportError(err) {
@@ -375,6 +388,10 @@ function presentProductImportTextError(err) {
     statusCode: response.statusCode,
     text: response.body?.message || 'Product import could not be completed.'
   };
+}
+
+function isProductImportValidateOnly(body = {}) {
+  return /^(1|true|yes|on|validate_only)$/i.test(String(body?.validate_only ?? body?.validateOnly ?? '').trim());
 }
 
 function presentShopSettingsWriteError(err) {
@@ -1343,16 +1360,25 @@ function registerAdminRoutes(app, {
     });
     if (!principal) return;
     try {
-      await productImports.importProducts({
+      const result = await productImports.importProducts({
         principal,
         shopId,
         body: req.body || {},
         requestContext: buildProductWriteRequestContext(req)
       });
+      if (isProductImportValidateOnly(req.body || {})) {
+        return res.status(200).type('html').send(renderProductImportResultHtml({
+          shopId,
+          result: presentProductImportApi(result)
+        }));
+      }
       return res.redirect(303, shopProductRedirect(shopId, 'imported'));
     } catch (err) {
-      const response = presentProductImportTextError(err);
-      return res.status(response.statusCode).type('text').send(response.text);
+      const response = presentProductImportError(err);
+      return res.status(response.statusCode).type('html').send(renderProductImportResultHtml({
+        shopId,
+        error: response.body
+      }));
     }
   }
 

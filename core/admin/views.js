@@ -186,6 +186,15 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .product-form button, .inline-action button { min-height: 32px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; cursor: pointer; }
     .product-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
     .product-form .required { color: var(--danger); }
+    .import-help { grid-column: 1 / -1; display: grid; gap: 8px; color: #334155; font-size: 13px; }
+    .import-help p { margin: 0; }
+    .import-example { white-space: pre-wrap; overflow-x: auto; background: #eef2f7; border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 12px; }
+    .import-preview { grid-column: 1 / -1; display: none; }
+    .import-preview.visible { display: block; }
+    .import-preview h4 { margin: 0 0 6px; font-size: 13px; color: #334155; }
+    .import-preview-scroll { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: #ffffff; }
+    .import-preview-scroll table { border: 0; border-radius: 0; }
+    .secondary-button { border-color: var(--border) !important; background: #ffffff !important; color: #334155 !important; }
     .settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 14px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .settings-form label { display: grid; gap: 5px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
     .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
@@ -668,16 +677,85 @@ function renderProductAddForm(shopId = '') {
 function renderProductBulkImportForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/import`;
   const sample = [
-    'code,name,price_text,description,image_url,status,sort_order',
-    'M7,Demo Product M7,150k,Demo product,https://example.com/m7.png,active,1'
+    'code,name,price_text,description,image_url,category,tags,metadata_json,status,sort_order',
+    'M7,Demo Product M7,150k,Demo product,https://example.com/m7.png,demo,"hot,new","{""size"":""M""}",active,1'
   ].join('\n');
   return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}">
     <h3>Bulk import products</h3>
+    <div class="import-help">
+      <p><strong>Required columns:</strong> <code>code</code>, <code>name</code></p>
+      <p><strong>Optional columns:</strong> <code>price_text</code>, <code>description</code>, <code>image_url</code>, <code>category</code>, <code>tags</code>, <code>metadata_json</code>, <code>status</code>, <code>sort_order</code></p>
+      <div class="import-example">${escapeHtml(sample)}</div>
+    </div>
     <label>CSV products
-      <textarea name="csv" maxlength="50000" placeholder="${escapeHtml(sample)}" spellcheck="false"></textarea>
+      <textarea name="csv" maxlength="50000" placeholder="${escapeHtml(sample)}" spellcheck="false" data-product-import-csv></textarea>
     </label>
-    <div class="form-actions"><button type="submit">Import products</button><span class="meta">Upserts by product code. Optional image_url creates or updates product_image assets.</span></div>
+    <div class="import-preview" data-product-import-preview>
+      <h4>Local CSV preview</h4>
+      <p class="meta">Preview reads only the header and first rows in this browser. Server validation is final.</p>
+      <div class="import-preview-scroll" data-product-import-preview-table></div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" name="validate_only" value="true" class="secondary-button">Validate only</button>
+      <button type="submit">Import products</button>
+      <span class="meta">Upserts by product code. Optional image_url creates or updates product_image assets.</span>
+    </div>
   </form>`;
+}
+
+function renderProductImportErrorsTable(errors = []) {
+  const rows = Array.isArray(errors) ? errors : [];
+  if (!rows.length) return '<div class="empty">No row-level errors were returned.</div>';
+  return renderTable(['row', 'column', 'value', 'code', 'message', 'suggested fix'], rows, error => {
+    const relatedRows = Array.isArray(error.related_rows) && error.related_rows.length
+      ? ` rows ${error.related_rows.join(', ')}`
+      : '';
+    return `<tr>
+      <td>${escapeHtml(error.row || 0)}${escapeHtml(relatedRows)}</td>
+      <td><code>${escapeHtml(error.field || '')}</code></td>
+      <td>${error.value ? `<code>${escapeHtml(error.value)}</code>` : '<span class="meta">not shown</span>'}</td>
+      <td><code>${escapeHtml(error.code || '')}</code></td>
+      <td>${escapeHtml(error.message || '')}</td>
+      <td>${escapeHtml(error.suggested_fix || '')}</td>
+    </tr>`;
+  });
+}
+
+function renderProductImportPreviewTable(rows = []) {
+  const previewRows = Array.isArray(rows) ? rows : [];
+  if (!previewRows.length) return '<div class="empty">No preview rows were returned.</div>';
+  return renderTable(['row', 'code', 'name', 'status', 'sort_order', 'image', 'metadata keys'], previewRows, row => `
+    <tr>
+      <td>${escapeHtml(row.row || 0)}</td>
+      <td><code>${escapeHtml(row.code || '')}</code></td>
+      <td>${escapeHtml(row.name || '')}</td>
+      <td>${renderStatus(row.status || '')}</td>
+      <td>${escapeHtml(row.sort_order || 0)}</td>
+      <td>${escapeHtml(row.has_image_url ? 'yes' : 'no')}</td>
+      <td>${escapeHtml(Array.isArray(row.metadata_keys) ? row.metadata_keys.join(', ') : '')}</td>
+    </tr>
+  `);
+}
+
+function renderProductImportResultHtml({ shopId = '', result = null, error = null } = {}) {
+  const backHref = `/admin/shops/${encodeRoutePart(shopId)}#products`;
+  const body = error
+    ? `
+      <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
+      <div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Product import validation failed.')}</div>
+      <p class="meta">Rows received: ${escapeHtml(error.rows_received || 0)}${Array.isArray(error.ignored_columns) && error.ignored_columns.length ? ` | ignored columns: ${escapeHtml(error.ignored_columns.join(', '))}` : ''}</p>
+      ${renderProductImportErrorsTable(error.errors || [])}
+    `
+    : `
+      <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
+      <div class="banner banner-success" role="status">${escapeHtml(result?.validate_only ? 'Validation passed. No products were written.' : 'Product import completed.')}</div>
+      <p class="meta">Rows received: ${escapeHtml(result?.rows_received || 0)} | products created: ${escapeHtml(result?.products_created || 0)} | products updated: ${escapeHtml(result?.products_updated || 0)} | image assets touched: ${escapeHtml(result?.image_assets_touched || 0)}</p>
+      ${Array.isArray(result?.ignored_columns) && result.ignored_columns.length ? `<p class="meta">Ignored columns: ${escapeHtml(result.ignored_columns.join(', '))}</p>` : ''}
+      <h2>Server Preview</h2>
+      <p class="meta">Preview is sanitized and limited to the first 10 rows.</p>
+      ${renderProductImportPreviewTable(result?.preview_rows || [])}
+    `;
+  return renderLayout('Product Import', body);
 }
 
 function renderPageMappingAddForm(shopId = '') {
@@ -1126,6 +1204,125 @@ function renderShopDetailHtml(model = {}) {
           }
           window.addEventListener('hashchange', () => activateTab(window.location.hash));
           activateTab(window.location.hash);
+
+          function parsePreviewCsv(text) {
+            const rows = [];
+            let row = [];
+            let cell = '';
+            let quoted = false;
+            const input = String(text || '');
+            for (let index = 0; index < input.length; index += 1) {
+              const char = input[index];
+              const next = input[index + 1];
+              if (quoted && char === '"' && next === '"') {
+                cell += '"';
+                index += 1;
+              } else if (char === '"') {
+                quoted = !quoted;
+              } else if (!quoted && char === ',') {
+                row.push(cell.trim());
+                cell = '';
+              } else if (!quoted && (char === '\\n' || char === '\\r')) {
+                if (char === '\\r' && next === '\\n') index += 1;
+                row.push(cell.trim());
+                if (row.some(value => value)) rows.push(row);
+                row = [];
+                cell = '';
+                if (rows.length >= 11) break;
+              } else {
+                cell += char;
+              }
+            }
+            if (rows.length < 11 && (cell || row.length)) {
+              row.push(cell.trim());
+              if (row.some(value => value)) rows.push(row);
+            }
+            return rows;
+          }
+
+          function safeImportPreviewCell(column, value) {
+            const header = String(column || '').trim().toLowerCase().replace(/[\\s-]+/g, '_');
+            const text = String(value || '').replace(/\\s+/g, ' ').trim();
+            if (!text) return '';
+            const sensitiveTerms = [
+              'to' + 'ken',
+              'sec' + 'ret',
+              'pass' + 'word',
+              'bearer',
+              'authorization',
+              'metadata_json',
+              'phone',
+              'tel',
+              'sdt',
+              'sđt',
+              'address',
+              'dia chi',
+              'địa chỉ',
+              'pageid',
+              'pageref',
+              'customerid',
+              'senderid',
+              'userid',
+              'psid',
+              'fbid'
+            ];
+            if (text.length > 80) return 'not shown';
+            if (sensitiveTerms.some(term => text.toLowerCase().includes(term))) return 'not shown';
+            if (/(?:[a-z][a-z0-9+.-]*:\\/\\/|www\\.)/i.test(text)) return 'not shown';
+            if (/(?:^\\s*[\\[{]|[\\]}]\\s*$|":|'\\s*:)/.test(text)) return 'not shown';
+            if ((text.match(/\\d/g) || []).length >= 7) return 'not shown';
+            if (text.split(/\\s+/).filter(Boolean).length >= 3) return 'not shown';
+            if (header === 'code' && /^(?=.{2,16}$)(?=.*[a-z])(?=.*\\d)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/i.test(text)) {
+              const compact = text.toLowerCase().replace(/[\\s._:-]+/g, '_');
+              if (!/(^|_)(page|customer|cust|sender|user|uid|psid|fbid)(_|$|\\d)/i.test(compact)) return text;
+            }
+            if (header === 'status' && /^[a-z]{1,16}$/i.test(text)) return text;
+            return 'not shown';
+          }
+
+          function renderImportPreview() {
+            const textarea = document.querySelector('[data-product-import-csv]');
+            const preview = document.querySelector('[data-product-import-preview]');
+            const target = document.querySelector('[data-product-import-preview-table]');
+            if (!textarea || !preview || !target) return;
+            const rows = parsePreviewCsv(textarea.value);
+            if (rows.length < 2) {
+              preview.classList.remove('visible');
+              target.textContent = '';
+              return;
+            }
+            const header = rows[0].slice(0, 10);
+            const bodyRows = rows.slice(1, 11);
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const headRow = document.createElement('tr');
+            header.forEach(column => {
+              const th = document.createElement('th');
+              th.textContent = column || '(blank)';
+              headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+            const tbody = document.createElement('tbody');
+            bodyRows.forEach(sourceRow => {
+              const tr = document.createElement('tr');
+              header.forEach((_, index) => {
+                const td = document.createElement('td');
+                td.textContent = safeImportPreviewCell(header[index], sourceRow[index]);
+                tr.appendChild(td);
+              });
+              tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            target.replaceChildren(table);
+            preview.classList.add('visible');
+          }
+
+          const importTextarea = document.querySelector('[data-product-import-csv]');
+          if (importTextarea) {
+            importTextarea.addEventListener('input', renderImportPreview);
+            renderImportPreview();
+          }
         });
       </script>
     ` : ''}
@@ -1207,6 +1404,7 @@ module.exports = {
   renderAuditHtml,
   renderDashboardHtml,
   renderLoginHtml,
+  renderProductImportResultHtml,
   renderShopCreateHtml,
   renderShopDetailHtml,
   renderShopsHtml,

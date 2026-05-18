@@ -440,8 +440,190 @@ describe('product bulk import persistence', () => {
 
     expect(err && err.code).toBe('product_import_validation_failed');
     expect(err.errors[0].code).toBe('duplicate_product_code_in_csv');
+    expect(err.errors[0].row).toBe(3);
+    expect(err.errors[0].related_rows).toEqual([2, 3]);
+    expect(err.errors[0].value).toBe('m10');
+    expect(err.errors[0].message).toContain('row 2');
     expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
     expect(state.products.length).toBe(1);
+  });
+
+  it('redacts unsafe short identifiers from duplicate code errors', async () => {
+    for (const item of [{
+      csv: 'code,name\npage_1,First\npage_1,Second',
+      leaked: 'page_1'
+    }, {
+      csv: 'code,name\ncustomer_abc,First\ncustomer_abc,Second',
+      leaked: 'customer_abc'
+    }]) {
+      const state = createState();
+      const queries = [];
+      const service = createService(state, queries);
+      let err = null;
+
+      try {
+        await service.importProducts({
+          principal,
+          shopId: 'onboarding-shop',
+          body: { csv: item.csv }
+        });
+      } catch (caught) {
+        err = caught;
+      }
+
+      const bodyText = JSON.stringify(err);
+      const error = err?.errors?.[0] || {};
+
+      expect(err && err.code).toBe('product_import_validation_failed');
+      expect(error.code).toBe('duplicate_product_code_in_csv');
+      expect(error.field).toBe('code');
+      expect(error.row).toBe(3);
+      expect(error.related_rows).toEqual([2, 3]);
+      expect(error.value).toBe(undefined);
+      expect(error.suggested_fix).toContain('one row');
+      expect(bodyText.includes(item.leaked)).toBeFalse();
+      expect(queries.some(query => query.sql === 'BEGIN')).toBeFalse();
+      expect(state.audits.length).toBe(0);
+    }
+  });
+
+  it('redacts message-like invalid status values while keeping row guidance', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+    let err = null;
+
+    try {
+      await service.importProducts({
+        principal,
+        shopId: 'onboarding-shop',
+        body: { csv: 'code,name,status\nM10,Demo,hello customer message' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    const error = err?.errors?.[0] || {};
+    const bodyText = JSON.stringify(err);
+
+    expect(err && err.code).toBe('product_import_validation_failed');
+    expect(error.row).toBe(2);
+    expect(error.field).toBe('status');
+    expect(error.code).toBe('invalid_product_status');
+    expect(error.message).toContain('status');
+    expect(error.suggested_fix).toContain('active');
+    expect(error.value).toBe(undefined);
+    expect(bodyText.includes('hello customer message')).toBeFalse();
+    expect(queries.some(query => query.sql === 'BEGIN')).toBeFalse();
+    expect(state.audits.length).toBe(0);
+  });
+
+  it('keeps invalid product code errors useful without echoing unsafe code text', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+    let err = null;
+
+    try {
+      await service.importProducts({
+        principal,
+        shopId: 'onboarding-shop',
+        body: { csv: 'code,name\nBAD CODE,Name' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    const error = err?.errors?.[0] || {};
+    const bodyText = JSON.stringify(err);
+
+    expect(err && err.code).toBe('product_import_validation_failed');
+    expect(error.row).toBe(2);
+    expect(error.field).toBe('code');
+    expect(error.code).toBe('invalid_product_code');
+    expect(error.message).toContain('Product code');
+    expect(error.suggested_fix).toContain('short code');
+    expect(error.value).toBe(undefined);
+    expect(bodyText.includes('BAD CODE')).toBeFalse();
+    expect(queries.some(query => query.sql === 'BEGIN')).toBeFalse();
+    expect(state.audits.length).toBe(0);
+  });
+
+  it('reports private image URLs and invalid metadata_json by row and column without unsafe values', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+    let err = null;
+
+    try {
+      await service.importProducts({
+        principal,
+        shopId: 'onboarding-shop',
+        body: {
+          csv: [
+            'code,name,image_url,metadata_json',
+            'M10,Demo,http://localhost/m10.png?token=do-not-echo,"{""secret"":}"'
+          ].join('\n')
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    const bodyText = JSON.stringify(err);
+    const fields = Object.fromEntries((err.errors || []).map(error => [error.field, error]));
+
+    expect(err && err.code).toBe('product_import_validation_failed');
+    expect(fields.image_url.row).toBe(2);
+    expect(fields.image_url.code).toBe('invalid_image_url');
+    expect(fields.image_url.value).toBe(undefined);
+    expect(fields.image_url.suggested_fix).toContain('public https image URL');
+    expect(fields.metadata_json.row).toBe(2);
+    expect(fields.metadata_json.code).toBe('invalid_metadata_json');
+    expect(fields.metadata_json.value).toBe(undefined);
+    expect(bodyText.includes('localhost')).toBeFalse();
+    expect(bodyText.includes('do-not-echo')).toBeFalse();
+    expect(bodyText.includes('secret')).toBeFalse();
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(state.audits.length).toBe(0);
+  });
+
+  it('validate_only validates and previews without database writes or audit', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+
+    const result = await service.importProducts({
+      principal,
+      shopId: 'onboarding-shop',
+      body: {
+        validate_only: 'true',
+        csv: [
+          'code,name,price_text,description,image_url,category,tags,metadata_json,status,sort_order',
+          'M14,Preview Product,300k,Preview,https://cdn.example.test/m14.png,demo,"new","{""size"":""small""}",active,14'
+        ].join('\n')
+      }
+    });
+
+    expect(result.validate_only).toBeTrue();
+    expect(result.rows_received).toBe(1);
+    expect(result.products_created).toBe(0);
+    expect(result.products_updated).toBe(0);
+    expect(result.image_assets_touched).toBe(0);
+    expect(result.preview_rows.length).toBe(1);
+    expect(result.preview_rows[0]).toEqual({
+      row: 2,
+      code: 'M14',
+      name: '',
+      status: 'active',
+      sort_order: 14,
+      has_image_url: true,
+      metadata_keys: ['category', 'priceText', 'size', 'tags']
+    });
+    expect(state.products.some(product => product.code === 'M14')).toBeFalse();
+    expect(state.assets.some(asset => asset.public_url === 'https://cdn.example.test/m14.png')).toBeFalse();
+    expect(state.audits.length).toBe(0);
+    expect(queries.length).toBe(0);
   });
 
   it('rejects principals without product write permission before opening a transaction', async () => {
