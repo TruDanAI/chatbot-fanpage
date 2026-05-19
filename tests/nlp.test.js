@@ -60,10 +60,24 @@ describe('nlp.levenshtein', () => {
 });
 
 describe('nlp.extractRequestedProductCodes', () => {
-  const known = ['MÃ1', 'MÃ2', 'MÃ8', 'MÃ12', 'MÃ13'];
+  const known = ['MÃ1', 'MÃ2', 'MÃ8', 'MÃ11', 'MÃ12', 'MÃ13'];
 
   it('regex chuẩn "ma 8"', () => {
     expect(nlp.extractRequestedProductCodes('cho xem ma 8 nhé', known)).toContain('MÃ8');
+  });
+  it('nhận mã trần khi toàn bộ tin nhắn là mã sản phẩm đã biết', () => {
+    expect(nlp.extractRequestedProductCodes('11', known)).toEqual(['MÃ11']);
+  });
+  it('nhận "mã số" có dấu', () => {
+    expect(nlp.extractRequestedProductCodes('mã số 11', known)).toEqual(['MÃ11']);
+  });
+  it('nhận "ma so" không dấu', () => {
+    expect(nlp.extractRequestedProductCodes('ma so 11', known)).toEqual(['MÃ11']);
+  });
+  it('giữ các dạng prefixed hiện có cho mã 11', () => {
+    for (const text of ['MÃ11', 'MA11', 'mã 11', 'ma 11', 'mã11', 'ma11', 'm11', 'sp 11', 'sản phẩm 11']) {
+      expect(nlp.extractRequestedProductCodes(text, known)).toContain('MÃ11');
+    }
   });
   it('nhận danh sách "mã 2, 8 và 10" dù chỉ có tiền tố ở mã đầu', () => {
     expect(nlp.extractRequestedProductCodes('cho xem mã 2, 8 và 10 đi', ['MÃ2', 'MÃ8', 'MÃ10'])).toEqual(['MÃ2', 'MÃ8', 'MÃ10']);
@@ -85,6 +99,12 @@ describe('nlp.extractRequestedProductCodes', () => {
   });
   it('không nhận nhầm SĐT', () => {
     expect(nlp.extractRequestedProductCodes('sdt 0987654321', known)).toEqual([]);
+  });
+  it('không nhận số điện thoại dài làm mã trần', () => {
+    expect(nlp.extractRequestedProductCodes('0987654321', known)).toEqual([]);
+  });
+  it('không nhận số ngẫu nhiên trong câu dài khi không có từ khóa mã', () => {
+    expect(nlp.extractRequestedProductCodes('cho mình 11 cái nhé', known)).toEqual([]);
   });
   it('không nhận nhầm ngân sách "200k"', () => {
     expect(nlp.extractRequestedProductCodes('ngân sách 200k', known)).toEqual([]);

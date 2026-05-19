@@ -607,6 +607,22 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.storage.inHandoff('minimal_product_list')).toBeFalse();
   });
 
+  it('explicit menu request from returning customer still sends menu images', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'minimal_menu_still_works', 1);
+
+    await h.handleText('menu', 'minimal_menu_still_works', 'm_menu_still_works');
+
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+    expect(h.storage.inHandoff('minimal_menu_still_works')).toBeFalse();
+  });
+
   it('"Giá" sends price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
@@ -644,6 +660,44 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getTelegramOperationalAlertCalls()).toBe(0);
     expect(h.getFallbackAttentionCalls()).toBe(0);
     expect(h.getConversationTurnCalls()).toBe(0);
+  });
+
+  it('product-code wording for product 11 sends the product image', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => (
+        String(text || '').includes('11')
+          ? [{ file: 'ma11.jpg', url: `${base}/media/ma11.jpg` }]
+          : []
+      )
+    });
+
+    await h.handleText('mã số 11', 'minimal_code_11_wording', 'm_code_11_wording');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma11.jpg'))).toBeTrue();
+    expect(h.storage.getLastProductCode('minimal_code_11_wording')).toBe('MÃ11');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('minimal_code_11_wording')).toBeTrue();
+  });
+
+  it('bare product 11 code sends the product image', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => (
+        String(text || '').includes('11')
+          ? [{ file: 'ma11.jpg', url: `${base}/media/ma11.jpg` }]
+          : []
+      )
+    });
+
+    await h.handleText('11', 'minimal_code_11_bare', 'm_code_11_bare');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma11.jpg'))).toBeTrue();
+    expect(h.storage.getLastProductCode('minimal_code_11_bare')).toBe('MÃ11');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('minimal_code_11_bare')).toBeTrue();
   });
 
   it('product-code message with sibling ads referral does not also send menu or fallback', async () => {

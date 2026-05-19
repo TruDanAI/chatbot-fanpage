@@ -77,20 +77,36 @@ function levenshtein(a, b) {
 }
 
 // ===== Trích mã sản phẩm =====
-// Pass 1: regex các mẫu hay gặp (ma 8, mau 8, max 8, m8, sp8, san pham 8...).
+// Pass 1: regex các mẫu hay gặp (ma 8, ma so 8, mau 8, max 8, m8, sp8, san pham 8...)
+// và mã trần khi toàn bộ tin nhắn là một mã ngắn đã biết.
 // Pass 2 (fuzzy): tách token có chứa số, so sánh Levenshtein với danh sách mã đã biết.
 //   - Ngưỡng: ≤ 4 ký tự cho phép sai 1, > 4 cho phép sai 2.
 function extractRequestedProductCodes(text, knownCodes = []) {
   const t = preprocess(text);
+  const knownCodeByNaturalNumber = new Map();
+  for (const code of knownCodes) {
+    const normalized = normalizeText(code).replace(/[^\p{L}\p{N}]/gu, '');
+    const match = normalized.match(/^(?:ma|m)(\d{1,4})$/);
+    if (match && !knownCodeByNaturalNumber.has(Number(match[1]))) {
+      knownCodeByNaturalNumber.set(Number(match[1]), code);
+    }
+  }
+
   const codes = new Set();
-  const addCode = numberText => {
+  const addCode = (numberText, { requireKnown = false } = {}) => {
     const number = Number(numberText);
-    if (Number.isFinite(number) && number > 0) codes.add(`MÃ${number}`);
+    if (!Number.isFinite(number) || number <= 0) return;
+    const knownCode = knownCodeByNaturalNumber.get(number);
+    if (knownCode) {
+      codes.add(knownCode);
+      return;
+    }
+    if (!requireKnown) codes.add(`MÃ${number}`);
   };
 
   // Pass 1a: danh sách mã có tiền tố một lần: "mã 2, 8 và 10".
   // Không nhận số lượng/phụ kiện ngay sau đó, ví dụ "mã 8 và 1 chai gel".
-  const productPrefix = '(?:ma|mau|max|sp|san\\s*pham|m)';
+  const productPrefix = '(?:ma\\s*so|ma|mau|max|sp|san\\s*pham|m)';
   const listSeparator = '(?:[,;/+&]|\\bva\\b|\\bvoi\\b|\\bvs\\b|\\band\\b|\\bcung\\s*voi\\b)';
   const codeNumber = '0*(\\d{1,2})(?!\\d)(?!\\s*(?:k|nghin|trieu|tr|chai|lo|tuyp|gel|cm|x))';
   const listRe = new RegExp(`\\b${productPrefix}\\s*${codeNumber}(?:\\s*${listSeparator}\\s*(?:${productPrefix}\\s*)?${codeNumber})+`, 'g');
@@ -102,10 +118,17 @@ function extractRequestedProductCodes(text, knownCodes = []) {
   }
 
   // Pass 1b: regex tường minh cho từng mã riêng lẻ.
-  const re = /\b(?:ma|mau|max|sp|san\s*pham|m)\s*0*(\d{1,2})\b/g;
+  const re = /\b(?:ma\s*so|ma|mau|max|sp|san\s*pham|m)\s*0*(\d{1,2})\b/g;
   let m;
   while ((m = re.exec(t)) !== null) {
     addCode(m[1]);
+  }
+
+  // Pass 1c: mã trần chỉ được nhận khi toàn bộ tin nhắn là 1-2 chữ số
+  // và mã đó tồn tại trong danh sách sản phẩm hiện tại.
+  const bareShortCode = t.match(/^(\d{1,2})$/);
+  if (bareShortCode) {
+    addCode(bareShortCode[1], { requireKnown: true });
   }
 
   // Pass 2: fuzzy với danh sách mã có sẵn (chỉ chạy khi cần thiết).
@@ -124,7 +147,7 @@ function extractRequestedProductCodes(text, knownCodes = []) {
       // Bỏ qua token đã hit ở Pass 1 (số khớp chính xác).
       const numMatch = token.match(/^\D*(\d{1,2})\D*$/);
       if (numMatch) {
-        const exact = `MÃ${Number(numMatch[1])}`;
+        const exact = knownCodeByNaturalNumber.get(Number(numMatch[1])) || `MÃ${Number(numMatch[1])}`;
         if (codes.has(exact)) continue;
       }
 
