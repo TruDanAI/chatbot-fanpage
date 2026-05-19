@@ -5,6 +5,7 @@ require('./nlp.test');
 require('./responses.test');
 require('./quick-replies.test');
 require('./messenger-client.test');
+require('./messenger-send-errors.test');
 require('./image-service.test');
 require('./rules.test');
 require('./webhook.test');

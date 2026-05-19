@@ -10,10 +10,17 @@ const {
   isProductCodeLookupEnabled
 } = require('./bot-mode');
 const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
+const {
+  getMessengerSendBlockReason,
+  getMessengerSendError,
+  isNonRetryableMessengerSendError
+} = require('./messenger-send-errors');
 const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
 const { pageRef } = require('./utils/log-refs');
 
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
+const STALE_AUTO_REPLY_EVENT_MS = 23 * 60 * 60 * 1000;
+const FUTURE_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const MESSAGE_TEXT_DEDUPE_TTL_MS = 5 * 1000;
 const MESSAGE_TEXT_DEDUPE_MAX_KEYS = 2000;
 const MENU_SEND_COOLDOWN_MS = 15 * 1000;
@@ -141,6 +148,63 @@ function createWebhook({
     recentMenuSendKeys.set(key, nowMs + MENU_SEND_COOLDOWN_MS);
     pruneExpiringMap(recentMenuSendKeys, MENU_SEND_COOLDOWN_MAX_KEYS, nowMs);
     return false;
+  }
+
+  function parseEventTimestampMs(value) {
+    if (value == null || value === '') return null;
+    if (value instanceof Date) {
+      const ms = value.getTime();
+      return Number.isFinite(ms) ? ms : null;
+    }
+
+    const number = Number(value);
+    if (Number.isFinite(number)) {
+      return number > 0 && number < 100000000000 ? number * 1000 : number;
+    }
+
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function getEventTimestampMs(event = {}, options = {}) {
+    return parseEventTimestampMs(
+      event.timestamp
+      ?? event.message?.timestamp
+      ?? event.postback?.timestamp
+      ?? options.entryTime
+      ?? event.entry_time
+    );
+  }
+
+  function getStaleEventAgeMs(event = {}, options = {}) {
+    const timestampMs = getEventTimestampMs(event, options);
+    if (!Number.isFinite(timestampMs)) return null;
+
+    const ageMs = Date.now() - timestampMs;
+    if (ageMs < -FUTURE_EVENT_CLOCK_SKEW_MS) return null;
+    return ageMs > STALE_AUTO_REPLY_EVENT_MS ? ageMs : null;
+  }
+
+  function logStaleWebhookEvent({ pageId, senderId, ageMs }) {
+    const ageMinutes = Math.round(Number(ageMs || 0) / 60000);
+    console.warn(
+      `[webhook] skip stale auto-reply page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)} age_min=${ageMinutes}`
+    );
+  }
+
+  function logMessengerSendBlock({ pageId, senderId, phase = '' }, err) {
+    const error = getMessengerSendError(err) || {};
+    const reason = getMessengerSendBlockReason(err);
+    const parts = [
+      `[messenger-send] blocked reason=${reason}`,
+      `page_ref=${pageRef(pageId)}`,
+      `sender_ref=${pageRef(senderId)}`
+    ];
+    if (phase) parts.push(`phase=${safeLogReason(phase)}`);
+    if (error.code != null) parts.push(`code=${error.code}`);
+    if (error.subcode != null) parts.push(`subcode=${error.subcode}`);
+    if (error.fbtraceId) parts.push(`fbtrace_id=${safeLogReason(error.fbtraceId)}`);
+    console.warn(parts.join(' '));
   }
 
   function verifySignature(req) {
@@ -386,7 +450,7 @@ function createWebhook({
 
       for (const entry of body.entry || []) {
         for (const event of entry.messaging || []) {
-          requestEvents.push({ event, pageId: entry.id });
+          requestEvents.push({ event, pageId: entry.id, entryTime: entry.time });
           if (hasMessagePayload(event) && event.sender?.id) {
             requestMessageSenders.add(event.sender.id);
           }
@@ -421,13 +485,14 @@ function createWebhook({
   }
 
   async function enqueueWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions = {}) {
-    for (const { event, pageId } of requestEvents) {
+    for (const { event, pageId, entryTime } of requestEvents) {
       await webhookQueue.enqueueEvent({
         pageId: getEventPageId(event, { pageId }),
         event,
         payload: {
           pageId,
           baseUrl: inferredBaseUrl || '',
+          entryTime: entryTime || '',
           requestMessageSenderIds: requestSetToArray(requestOptions.requestMessageSenders),
           requestAdsReferralSenderIds: requestSetToArray(requestOptions.requestAdsReferralSenders)
         }
@@ -436,13 +501,22 @@ function createWebhook({
   }
 
   async function processWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions) {
-    for (const { event, pageId } of requestEvents) {
+    for (const { event, pageId, entryTime } of requestEvents) {
       try {
         await handleEvent(event, inferredBaseUrl, {
           ...requestOptions,
-          pageId
+          pageId,
+          entryTime
         });
       } catch (err) {
+        if (isNonRetryableMessengerSendError(err)) {
+          logMessengerSendBlock({
+            pageId,
+            senderId: event?.sender?.id,
+            phase: 'request'
+          }, err);
+          continue;
+        }
         console.error('❌ handleEvent:', err.response?.data || err.message);
       }
     }
@@ -452,12 +526,25 @@ function createWebhook({
     const payload = job.payloadJson || job.payload_json || {};
     const event = job.eventJson || job.event_json || {};
     const pageId = String(payload.pageId || job.pageId || job.page_id || getEventPageId(event)).trim();
-    await handleEvent(event, payload.baseUrl || '', {
-      pageId,
-      requestMessageSenders: new Set(queuedArray(payload.requestMessageSenderIds)),
-      requestAdsReferralSenders: new Set(queuedArray(payload.requestAdsReferralSenderIds)),
-      requestImageDedupe: new Set()
-    });
+    try {
+      await handleEvent(event, payload.baseUrl || '', {
+        pageId,
+        entryTime: payload.entryTime || '',
+        requestMessageSenders: new Set(queuedArray(payload.requestMessageSenderIds)),
+        requestAdsReferralSenders: new Set(queuedArray(payload.requestAdsReferralSenderIds)),
+        requestImageDedupe: new Set()
+      });
+    } catch (err) {
+      if (isNonRetryableMessengerSendError(err)) {
+        logMessengerSendBlock({
+          pageId,
+          senderId: event?.sender?.id,
+          phase: 'queue'
+        }, err);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function handleEvent(event, baseUrlOverride = '', options = {}) {
@@ -480,6 +567,12 @@ function createWebhook({
         );
         return;
       }
+    }
+
+    const staleAgeMs = getStaleEventAgeMs(event, options);
+    if (Number.isFinite(staleAgeMs)) {
+      logStaleWebhookEvent({ pageId, senderId, ageMs: staleAgeMs });
+      return;
     }
 
     const runtime = await resolveEventRuntime(event, options);
@@ -584,11 +677,20 @@ function createWebhook({
 
     console.log(`📩 customer_message page_ref=${pageRef(pageId)} text_len=${String(userText || '').length}`);
     if (menuCodeHandoffHandler) {
-      const handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
-        adsReferral: effectiveAdsReferralEvent,
-        pageId,
-        requestImageDedupe
-      });
+      let handled = false;
+      try {
+        handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
+          adsReferral: effectiveAdsReferralEvent,
+          pageId,
+          requestImageDedupe
+        });
+      } catch (err) {
+        if (isNonRetryableMessengerSendError(err)) {
+          logMessengerSendBlock({ pageId, senderId, phase: 'menu_code_handoff' }, err);
+          return;
+        }
+        throw err;
+      }
       if (handled) return;
       return;
     }
@@ -849,6 +951,13 @@ function createWebhook({
       recordConversationTurn(senderId, userText, reply);
       console.log(`✉️  Đã gửi tin tới sender_ref=${pageRef(senderId)}`);
     } catch (err) {
+      if (isNonRetryableMessengerSendError(err)) {
+        logMessengerSendBlock({ pageId, senderId, phase: 'reply' }, err);
+        trackEvent(senderId, 'messenger_send_blocked', '', {
+          reason: getMessengerSendBlockReason(err)
+        });
+        return;
+      }
       const geminiInfo = getGeminiErrorInfo(err);
       console.error('❌ Lỗi xử lý tin:', err.response?.data || err.message || geminiInfo);
       void sendTelegramOperationalAlert({

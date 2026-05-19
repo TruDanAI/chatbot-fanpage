@@ -107,6 +107,30 @@ function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`, pa
   };
 }
 
+function makeTimestampedEvent(text, timestamp, senderId = 'sender_1', mid = `mid_${Math.random()}`, pageId = '') {
+  return {
+    ...makeEvent(text, senderId, mid, pageId),
+    timestamp
+  };
+}
+
+function makeFacebookSendError(code, subcode, message) {
+  const err = new Error(message || 'Facebook send failed');
+  err.response = {
+    status: 400,
+    data: {
+      error: {
+        message,
+        type: 'OAuthException',
+        code,
+        error_subcode: subcode,
+        fbtrace_id: 'trace-test'
+      }
+    }
+  };
+  return err;
+}
+
 function makeReferralEvent(senderId = 'sender_1', source = 'ADS', pageId = '') {
   return {
     sender: { id: senderId },
@@ -202,9 +226,18 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     getGeminiErrorInfo: err => ({ message: err.message }),
     shouldUseFallbackReply: () => false,
     isProbablyIncompleteReply: () => false,
-    sendMessage: async (senderId, text) => sent.push({ type: 'text', senderId, text }),
-    sendQuickReplies: async (senderId, text, quickReplies) => sent.push({ type: 'quick_replies', senderId, text, quickReplies }),
-    sendImage: async (senderId, url) => sent.push({ type: 'image', senderId, url }),
+    sendMessage: async (senderId, text) => {
+      if (options.sendMessageError) throw options.sendMessageError;
+      sent.push({ type: 'text', senderId, text });
+    },
+    sendQuickReplies: async (senderId, text, quickReplies) => {
+      if (options.sendQuickRepliesError) throw options.sendQuickRepliesError;
+      sent.push({ type: 'quick_replies', senderId, text, quickReplies });
+    },
+    sendImage: async (senderId, url) => {
+      if (options.sendImageError) throw options.sendImageError;
+      sent.push({ type: 'image', senderId, url });
+    },
     showTyping: () => {},
     sendHotCarousel: async () => false,
     isGreetingText: text => /^(?:chào|chao|hi|hello|alo|shop)/i.test(String(text || '').trim()),
@@ -391,6 +424,128 @@ describe('webhook: menu_code_handoff mode', () => {
     } finally {
       console.error = originalError;
     }
+  });
+
+  it('skips stale webhook events before sending automated replies', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const staleTimestamp = Date.now() - (24 * 60 * 60 * 1000);
+
+    await h.handleRawEvent(makeTimestampedEvent(
+      'chào shop',
+      staleTimestamp,
+      'stale_event_user',
+      'm_stale_event',
+      'page_stale'
+    ));
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].mid).toBe('m_stale_event');
+  });
+
+  it('does not skip fresh timestamped customer messages', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleRawEvent(makeTimestampedEvent(
+      'chào shop',
+      Date.now(),
+      'fresh_event_user',
+      'm_fresh_event',
+      'page_fresh'
+    ));
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].mid).toBe('m_fresh_event');
+  });
+
+  it('does not retry or escalate non-retryable Messenger send blocks', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(
+        10,
+        2018278,
+        '(#10) This message is sent outside of allowed window.'
+      )
+    });
+
+    await h.handleText('chào shop', 'outside_window_user', 'm_outside_window', 'page_window');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('logs non-retryable send blocks without raw identifiers or customer text', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(
+        10,
+        2018278,
+        '(#10) This message is sent outside of allowed window.'
+      )
+    });
+
+    console.warn = message => warnings.push(String(message));
+    try {
+      await h.handleText('private customer body', 'sender_private_block', 'm_private_block', 'page_private_block');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const warningText = warnings.join('\n');
+    expect(warningText).toContain('[messenger-send] blocked');
+    expect(warningText).toContain('reason=outside_allowed_window');
+    expect(warningText.includes('page_private_block')).toBeFalse();
+    expect(warningText.includes('sender_private_block')).toBeFalse();
+    expect(warningText.includes('private customer body')).toBeFalse();
+  });
+
+  it('handles queued recipient-unavailable send blocks without retrying or alerting', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(
+        551,
+        1545041,
+        '(#551) This person is not available right now.'
+      )
+    });
+
+    await h.processQueuedWebhookJob({
+      payloadJson: {
+        pageId: 'page_queue_blocked',
+        baseUrl: 'https://example.test'
+      },
+      eventJson: makeEvent('chào shop', 'queue_blocked_user', 'm_queue_blocked', 'page_queue_blocked')
+    });
+
+    expect(h.sent.length).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('still surfaces retryable queued send errors', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(2, null, 'Temporary send failure')
+    });
+    let thrown = null;
+
+    try {
+      await h.processQueuedWebhookJob({
+        payloadJson: {
+          pageId: 'page_queue_retryable',
+          baseUrl: 'https://example.test'
+        },
+        eventJson: makeEvent('chào shop', 'queue_retryable_user', 'm_queue_retryable', 'page_queue_retryable')
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(Boolean(thrown)).toBeTrue();
+    expect(thrown.message).toBe('Temporary send failure');
   });
 
   it('uses DB runtime config when resolver returns a page config', async () => {
@@ -1201,6 +1356,24 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
+  it('uses queued entryTime to skip stale auto-replies', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const staleEntryTimeSeconds = Math.floor((Date.now() - (24 * 60 * 60 * 1000)) / 1000);
+
+    await h.processQueuedWebhookJob({
+      payloadJson: {
+        pageId: 'page_queue_stale',
+        baseUrl: 'https://example.test',
+        entryTime: staleEntryTimeSeconds
+      },
+      eventJson: makeEvent('chào shop', 'queue_stale_user', 'm_queue_stale', 'page_queue_stale')
+    });
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].mid).toBe('m_queue_stale');
+  });
+
   it('queue disabled keeps current webhook path', async () => {
     let enqueueCalls = 0;
     const h = createWebhookHarness(undefined, {
@@ -1255,6 +1428,7 @@ describe('webhook: menu_code_handoff mode', () => {
 
   it('queue enabled enqueues request events instead of inline processing', async () => {
     const enqueued = [];
+    const entryTime = Math.floor(Date.now() / 1000);
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
       webhookQueueEnabled: true,
@@ -1281,6 +1455,7 @@ describe('webhook: menu_code_handoff mode', () => {
         object: 'page',
         entry: [{
           id: 'page_queue',
+          time: entryTime,
           messaging: [makeEvent('chào shop', 'queue_enabled_sender', 'm_queue_enabled')]
         }]
       },
@@ -1305,6 +1480,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(enqueued[0].pageId).toBe('page_queue');
     expect(enqueued[0].event.message.mid).toBe('m_queue_enabled');
     expect(enqueued[0].payload.baseUrl).toBe('https://example.test');
+    expect(enqueued[0].payload.entryTime).toBe(entryTime);
     expect(enqueued[0].payload.requestMessageSenderIds).toEqual(['queue_enabled_sender']);
   });
 
