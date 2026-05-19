@@ -203,46 +203,44 @@ function createDashboardRepository({
       }
 
       const params = [shop.id];
-      const [pagesResult, settingsResult, productsResult, assetSummaryResult, assetsResult] = await Promise.all([
-        client.query(`
-          SELECT id, page_id, page_name, status, created_at, updated_at
-          FROM shop_pages
-          WHERE shop_id = $1
-          ORDER BY status ASC, updated_at DESC, id ASC
-        `, params),
-        client.query(`
-          SELECT bot_mode, handoff_enabled, handoff_message, menu_intro_text,
-                 fallback_text, settings_json, updated_at
-          FROM shop_settings
-          WHERE shop_id = $1
-          LIMIT 1
-        `, params),
-        client.query(`
-          SELECT id, code, name, description, price, currency, status,
-                 sort_order, metadata_json, updated_at
-          FROM shop_products
-          WHERE shop_id = $1
-          ORDER BY sort_order ASC, code ASC, id ASC
-        `, params),
-        client.query(`
-          SELECT asset_type,
-                 COUNT(*)::int AS total,
-                 COUNT(*) FILTER (WHERE status = 'active')::int AS active
-          FROM shop_assets
-          WHERE shop_id = $1
-          GROUP BY asset_type
-          ORDER BY asset_type ASC
-        `, params),
-        client.query(`
-          SELECT a.id, a.product_id, p.code AS product_code, a.asset_type,
-                 a.storage_provider, a.public_url, a.content_type, a.size_bytes,
-                 a.status, a.sort_order, a.updated_at
-          FROM shop_assets a
-          LEFT JOIN shop_products p ON p.id = a.product_id AND p.shop_id = a.shop_id
-          WHERE a.shop_id = $1
-          ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
-        `, params)
-      ]);
+      const pagesResult = await client.query(`
+        SELECT id, page_id, page_name, status, created_at, updated_at
+        FROM shop_pages
+        WHERE shop_id = $1
+        ORDER BY status ASC, updated_at DESC, id ASC
+      `, params);
+      const settingsResult = await client.query(`
+        SELECT bot_mode, handoff_enabled, handoff_message, menu_intro_text,
+               fallback_text, settings_json, updated_at
+        FROM shop_settings
+        WHERE shop_id = $1
+        LIMIT 1
+      `, params);
+      const productsResult = await client.query(`
+        SELECT id, code, name, description, price, currency, status,
+               sort_order, metadata_json, updated_at
+        FROM shop_products
+        WHERE shop_id = $1
+        ORDER BY sort_order ASC, code ASC, id ASC
+      `, params);
+      const assetSummaryResult = await client.query(`
+        SELECT asset_type,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE status = 'active')::int AS active
+        FROM shop_assets
+        WHERE shop_id = $1
+        GROUP BY asset_type
+        ORDER BY asset_type ASC
+      `, params);
+      const assetsResult = await client.query(`
+        SELECT a.id, a.product_id, p.code AS product_code, a.asset_type,
+               a.storage_provider, a.public_url, a.content_type, a.size_bytes,
+               a.status, a.sort_order, a.updated_at
+        FROM shop_assets a
+        LEFT JOIN shop_products p ON p.id = a.product_id AND p.shop_id = a.shop_id
+        WHERE a.shop_id = $1
+        ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
+      `, params);
 
       const summary = {
         total: 0,

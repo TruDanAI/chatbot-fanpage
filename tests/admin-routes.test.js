@@ -4830,6 +4830,62 @@ describe('admin dashboard PostgreSQL reader', () => {
     }
   });
 
+  it('reader không chạy song song nhiều query trên cùng PostgreSQL client khi đọc shop detail', async () => {
+    const queries = [];
+    class FakeClient {
+      constructor() {
+        this.active = false;
+      }
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        if (this.active) throw new Error('overlapping query on one client');
+        this.active = true;
+        queries.push({ sql, params });
+        try {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (sql.includes('FROM shops') && sql.includes('WHERE id = $1 OR slug = $1')) {
+            return {
+              rows: [{
+                id: 'adult-shop',
+                slug: 'adult-shop',
+                name: 'Adult Shop',
+                status: 'active',
+                default_locale: 'vi',
+                timezone: 'Asia/Bangkok',
+                created_at: '2026-05-12T00:00:00.000Z',
+                updated_at: '2026-05-12T00:00:00.000Z'
+              }]
+            };
+          }
+          if (sql.includes('FROM shop_pages') && sql.includes('ORDER BY status ASC')) return { rows: [] };
+          if (sql.includes('FROM shop_settings')) return { rows: [] };
+          if (sql.includes('FROM shop_products') && sql.includes('ORDER BY sort_order ASC')) return { rows: [] };
+          if (sql.includes('FROM shop_assets') && sql.includes('GROUP BY asset_type')) return { rows: [] };
+          if (sql.includes('FROM shop_assets a')) return { rows: [] };
+          if (sql.includes('FROM shop_page_credentials')) {
+            return { rows: [{ active_fb_page_token_count: 0 }] };
+          }
+          throw new Error(`unexpected query: ${sql}`);
+        } finally {
+          this.active = false;
+        }
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    const model = await reader.getShopDetail('adult-shop');
+
+    expect(model.schemaReady).toBeTrue();
+    expect(model.shop.id).toBe('adult-shop');
+    expect(queries.length).toBe(7);
+  });
+
   it('reader dùng filter parameterized và giới hạn limit', async () => {
     const queries = [];
     class FakeClient {
