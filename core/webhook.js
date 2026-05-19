@@ -134,7 +134,7 @@ function createWebhook({
     ]);
     const expiresAt = recentMenuSendKeys.get(key);
     if (expiresAt && expiresAt > nowMs) {
-      console.log(`skipped duplicate menu within cooldown: page_ref=${pageRef(pageId)} sender=${senderId}`);
+      console.log(`skipped duplicate menu within cooldown: page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)}`);
       return true;
     }
 
@@ -476,7 +476,7 @@ function createWebhook({
         if (!marked) return;
       } catch (err) {
         console.error(
-          `[webhook] MID idempotency fail-closed page_ref=${pageRef(pageId)} sender=${senderId}: ${err.message}`
+          `[webhook] MID idempotency fail-closed page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)}: ${err.message}`
         );
         return;
       }
@@ -492,7 +492,7 @@ function createWebhook({
         const customerId = getEchoCustomerId(event);
         if (customerId) {
           runtimeStorage.setHandoff(customerId, Date.now() + handoffMs);
-          console.log(`⏸️  Bật handoff do người trực trả lời: ${customerId}`);
+          console.log(`⏸️  Bật handoff do người trực trả lời: customer_ref=${pageRef(customerId)}`);
         }
       }
       return;
@@ -547,6 +547,7 @@ function createWebhook({
     } = runtime;
 
     const adsReferralEvent = menuCodeHandoffHandler?.isAdsReferralEvent(event) === true;
+    const referralOnlyAutoMenuEvent = menuCodeHandoffHandler?.isReferralOnlyAutoMenuEvent(event) === true;
     const requestAdsReferralEvent = options.requestAdsReferralSenders?.has?.(senderId) === true;
     const effectiveAdsReferralEvent = adsReferralEvent || requestAdsReferralEvent;
     const requestImageDedupe = options.requestImageDedupe || new Set();
@@ -562,8 +563,11 @@ function createWebhook({
 
     if (!userText) {
       const siblingMessageInRequest = options.requestMessageSenders?.has?.(senderId) === true;
-      if (menuCodeHandoffMode && effectiveAdsReferralEvent && !siblingMessageInRequest) {
-        console.log(`📣 [${senderId}]: referral từ quảng cáo (không kèm tin nhắn)`);
+      if (menuCodeHandoffMode && referralOnlyAutoMenuEvent && !siblingMessageInRequest) {
+        await menuCodeHandoffHandler.handleReferralOnly(senderId, baseUrlOverride, {
+          pageId,
+          requestImageDedupe
+        });
       }
       return;
     }
@@ -574,7 +578,7 @@ function createWebhook({
       userText,
       normalize: normalizeText
     })) {
-      console.log(`🔁 Bỏ qua tin trùng trong TTL: page_ref=${pageRef(pageId)} sender=${senderId}`);
+      console.log(`🔁 Bỏ qua tin trùng trong TTL: page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)}`);
       return;
     }
 
@@ -600,7 +604,7 @@ function createWebhook({
       const captured = orderFlowEnabled
         ? captureHandoffOrderUpdate(senderId, userText, { messageId: mid || '' })
         : false;
-      console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}${captured ? ' — đã ghi nhận cập nhật đơn' : ''}`);
+      console.log(`⏸️  Bỏ qua tin (handoff): sender_ref=${pageRef(senderId)}${captured ? ' — đã ghi nhận cập nhật đơn' : ''}`);
       return;
     }
 
@@ -723,7 +727,7 @@ function createWebhook({
           const nowConfirmed = runtimeStorage.getSessionState(senderId) === STATES.CONFIRMED;
           const justConfirmed = nowConfirmed && sessionBeforeConfirm !== STATES.CONFIRMED;
           if (justConfirmed) {
-            console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (${senderId}).`);
+            console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (sender_ref=${pageRef(senderId)}).`);
             const confirmedLead = buildConfirmedSheetLead(senderId, { messageId: mid || '', userText });
             trackEvent(senderId, 'order_confirmed', userText, {
               productCode: confirmedLead.productCode || '',
@@ -736,7 +740,7 @@ function createWebhook({
             });
             runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
           }
-          console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
+          console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: sender_ref=${pageRef(senderId)}`);
           return;
         }
       }
@@ -758,7 +762,7 @@ function createWebhook({
         if (shouldSendHotCarousel) {
           try {
             const sent = await sendHotCarousel(senderId, baseUrlOverride);
-            if (sent) console.log(`🖼️  Gửi hot carousel cho ${senderId}`);
+            if (sent) console.log(`🖼️  Gửi hot carousel cho sender_ref=${pageRef(senderId)}`);
           } catch (e) {
             const msg = e.response?.data?.error?.message || e.message;
             console.error(`❌ Gửi hot carousel fail: ${msg}`);
@@ -843,7 +847,7 @@ function createWebhook({
         await sendMessage(senderId, reply);
       }
       recordConversationTurn(senderId, userText, reply);
-      console.log(`✉️  Đã gửi tin tới ${senderId}`);
+      console.log(`✉️  Đã gửi tin tới sender_ref=${pageRef(senderId)}`);
     } catch (err) {
       const geminiInfo = getGeminiErrorInfo(err);
       console.error('❌ Lỗi xử lý tin:', err.response?.data || err.message || geminiInfo);

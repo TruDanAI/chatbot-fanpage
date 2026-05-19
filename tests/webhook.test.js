@@ -246,9 +246,10 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   return {
     handleText: (text, senderId = 'sender_1', mid, pageId = '') => webhook.handleEvent(makeEvent(text, senderId, mid, pageId), 'https://example.test'),
     handleReferral: (senderId = 'sender_1', source = 'ADS', pageId = '') => webhook.handleEvent(makeReferralEvent(senderId, source, pageId), 'https://example.test'),
-    handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid) =>
-      webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid), 'https://example.test'),
+    handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid, pageId = '') =>
+      webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid, pageId), 'https://example.test'),
     handleRawEvent: (event, options = {}) => webhook.handleEvent(event, 'https://example.test', options),
+    processQueuedWebhookJob: webhook.processQueuedWebhookJob,
     registerWebhookRoutes: webhook.registerWebhookRoutes,
     sent,
     storage,
@@ -866,15 +867,22 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.length).toBe(3);
   });
 
-  it('pure ads referral event without message text logs only and sends no reply', async () => {
+  it('pure ads referral event without message text sends price/menu reply and menu images', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleReferral('ads_referral_only', 'ADS');
 
-    expect(h.sent.length).toBe(0);
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+    expect(h.storage.inHandoff('ads_referral_only')).toBeFalse();
   });
 
-  it('SHORTLINK referral (m.me link) logs only and sends no reply', async () => {
+  it('SHORTLINK referral (m.me link) does not auto-send menu without a message', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     markReturningCustomer(h.storage, 'shortlink_returning', 5);
 
@@ -883,7 +891,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.length).toBe(0);
   });
 
-  it('ads referral followed by a real message sends one menu reply', async () => {
+  it('ads referral-only followed by a real menu message sends one menu reply', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     const senderId = 'ads_then_real_message';
 
@@ -895,6 +903,18 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
+  it('referral-only skips menu when one was recently sent to the same page and sender', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'ads_referral_recent_menu';
+
+    await h.handleText('chào shop', senderId, 'm_recent_menu_first', 'page_recent_menu');
+    await h.handleReferral(senderId, 'ADS', 'page_recent_menu');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
   it('dedupes same sender and normalized text across webhook calls within TTL', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
@@ -903,6 +923,22 @@ describe('webhook: menu_code_handoff mode', () => {
 
     expect(h.sent.length).toBe(3);
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('duplicate customer message events in one request do not duplicate menu images', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'duplicate_message_event_sender';
+    const requestOptions = {
+      requestMessageSenders: new Set([senderId]),
+      requestImageDedupe: new Set()
+    };
+
+    await h.handleRawEvent(makeEvent('chào shop', senderId, 'm_duplicate_event_1', 'page_duplicate_event'), requestOptions);
+    await h.handleRawEvent(makeEvent('chào shop', senderId, 'm_duplicate_event_2', 'page_duplicate_event'), requestOptions);
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
   it('allows same sender and same menu text again after duplicate TTL and menu cooldown', async () => {
@@ -1081,6 +1117,31 @@ describe('webhook: menu_code_handoff mode', () => {
       'start:bên kia rẻ hơn shop',
       'end:bên kia rẻ hơn shop'
     ]);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
+  it('queued referral plus customer message from one request does not double-send menu', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'queue_referral_message_sender';
+    const payloadJson = {
+      pageId: 'page_queue_referral_message',
+      baseUrl: 'https://example.test',
+      requestMessageSenderIds: [senderId],
+      requestAdsReferralSenderIds: [senderId]
+    };
+
+    await h.processQueuedWebhookJob({
+      payloadJson,
+      eventJson: makeReferralEvent(senderId, 'ADS', 'page_queue_referral_message')
+    });
+    await h.processQueuedWebhookJob({
+      payloadJson,
+      eventJson: makeEvent('bên kia rẻ hơn shop', senderId, 'm_queue_referral_message', 'page_queue_referral_message')
+    });
+
+    expect(h.sent.length).toBe(3);
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
     expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);

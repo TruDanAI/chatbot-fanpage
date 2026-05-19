@@ -7,11 +7,13 @@ const MENU_CODE_HANDOFF_MESSAGE = [
 
 const MENU_CODE_MENU_PRICE_REPLY = 'Dạ sản phẩm bên em từ 150k tuỳ mã ạ. Em gửi mình xem qua menu, ưng mã nào nhắn em tư vấn kỹ hơn nhé.';
 const { uniqueImagesForRequest } = require('../runtime-image-dedupe');
+const { pageRef } = require('../utils/log-refs');
 
 // Khách quay lại sau ngần này mới được tự động chào lại bằng menu+cap.
 const MENU_CODE_REENGAGE_MS = 30 * 24 * 60 * 60 * 1000;
 // Các nguồn referral của Messenger được coi là "khách từ quảng cáo / link campaign".
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
+const MENU_CODE_REFERRAL_ONLY_AUTO_MENU_SOURCES = new Set(['ADS']);
 
 function getMenuCodeHandoffMessage(config = {}) {
   const mode = config.botMode || {};
@@ -57,15 +59,23 @@ function createMenuCodeHandoffHandler({
       || /^gia\s*(?:the nao|sao|ntn|ra sao|nhu nao|nhu the nao)$/.test(t);
   }
 
-  function isAdsReferralEvent(event) {
+  function hasReferralSource(event, sources) {
     if (!event) return false;
     const refs = [event.referral, event.message?.referral, event.postback?.referral];
     for (const ref of refs) {
       if (!ref) continue;
       const source = String(ref.source || '').toUpperCase();
-      if (MENU_CODE_ADS_REFERRAL_SOURCES.has(source)) return true;
+      if (sources.has(source)) return true;
     }
     return false;
+  }
+
+  function isAdsReferralEvent(event) {
+    return hasReferralSource(event, MENU_CODE_ADS_REFERRAL_SOURCES);
+  }
+
+  function isReferralOnlyAutoMenuEvent(event) {
+    return hasReferralSource(event, MENU_CODE_REFERRAL_ONLY_AUTO_MENU_SOURCES);
   }
 
   function isFirstTouchOrLapsedCustomer(senderId) {
@@ -95,6 +105,19 @@ function createMenuCodeHandoffHandler({
     }
   }
 
+  async function sendMenu(senderId, baseUrlOverride, options = {}) {
+    if (shouldSkipRecentMenuSend({ pageId: options.pageId, senderId })) {
+      return false;
+    }
+
+    const sentImages = options.requestImageDedupe || new Set();
+    showTyping(senderId);
+    await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
+    console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
+    await sendImages(senderId, getMenuImageUrls(baseUrlOverride), sentImages);
+    return true;
+  }
+
   function getSuccessfulRequestedProductCodes(userText, senderId) {
     if (!productCodeLookupEnabled) return [];
     const requestedCodes = extractRequestedProductCodes(userText)
@@ -112,6 +135,18 @@ function createMenuCodeHandoffHandler({
     return number ? `ma ${number}` : String(code || '');
   }
 
+  async function handleReferralOnly(senderId, baseUrlOverride, options = {}) {
+    if (storage.inHandoff(senderId)) {
+      return true;
+    }
+
+    if (!menuSendingEnabled) return false;
+
+    const sent = await sendMenu(senderId, baseUrlOverride, options);
+    if (sent) markLastUserAt(senderId);
+    return true;
+  }
+
   async function handleEvent(senderId, userText, baseUrlOverride, options = {}) {
     const adsReferral = options.adsReferral === true;
     const sentImages = options.requestImageDedupe || new Set();
@@ -120,7 +155,7 @@ function createMenuCodeHandoffHandler({
     const firstTouch = isFirstTouchOrLapsedCustomer(senderId);
 
     if (storage.inHandoff(senderId)) {
-      console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}`);
+      console.log(`⏸️  Bỏ qua tin (handoff): sender_ref=${pageRef(senderId)}`);
       markLastUserAt(senderId);
       return true;
     }
@@ -143,7 +178,7 @@ function createMenuCodeHandoffHandler({
         if (postProductHandoffEnabled) {
           await sendMessage(senderId, getMenuCodeHandoffMessage(shopConfig));
           storage.setHandoff(senderId, Date.now() + handoffMs);
-          console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): ${senderId}`);
+          console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): sender_ref=${pageRef(senderId)}`);
         }
         markLastUserAt(senderId);
         return true;
@@ -151,14 +186,10 @@ function createMenuCodeHandoffHandler({
     }
 
     if (menuSendingEnabled && (adsReferral || firstTouch || isMenuQuestion(userText))) {
-      if (shouldSkipRecentMenuSend({ pageId: options.pageId, senderId })) {
-        markLastUserAt(senderId);
-        return true;
-      }
-      showTyping(senderId);
-      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
-      console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
-      await sendImages(senderId, getMenuImageUrls(baseUrlOverride), sentImages);
+      await sendMenu(senderId, baseUrlOverride, {
+        ...options,
+        requestImageDedupe: sentImages
+      });
       markLastUserAt(senderId);
       return true;
     }
@@ -168,8 +199,10 @@ function createMenuCodeHandoffHandler({
   }
 
   return {
+    handleReferralOnly,
     handleEvent,
     isAdsReferralEvent,
+    isReferralOnlyAutoMenuEvent,
     isMenuQuestion
   };
 }
