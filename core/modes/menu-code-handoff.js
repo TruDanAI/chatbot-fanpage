@@ -37,8 +37,8 @@ function createMenuCodeHandoffHandler({
   isGreetingText,
   getMenuImageUrls,
   buildRequestedImageUrls,
-  redactSensitiveText,
-  shouldSkipRecentMenuSend = () => false
+  shouldSkipRecentMenuSend = () => false,
+  clearRecentMenuSend = () => {}
 }) {
   function isMenuQuestion(userText) {
     const t = normalizeText(userText).replace(/\s+/g, ' ').trim();
@@ -93,11 +93,20 @@ function createMenuCodeHandoffHandler({
     }
   }
 
-  async function sendImages(senderId, images, sentImages) {
+  function safeLogToken(value) {
+    return String(value || 'unknown')
+      .replace(/[^a-zA-Z0-9_.:-]/g, '_')
+      .slice(0, 120) || 'unknown';
+  }
+
+  async function sendImages(senderId, images, sentImages, options = {}) {
     for (const { file, url } of uniqueImagesForRequest(senderId, images, sentImages)) {
       try {
         await sendImage(senderId, url);
-        console.log(`🖼️  Gửi ảnh: ${file}`);
+        const phase = safeLogToken(options.phase || 'image');
+        console.log(
+          `[${phase}] image sent file=${safeLogToken(file)} page_ref=${pageRef(options.pageId)} sender_ref=${pageRef(senderId)}`
+        );
       } catch (e) {
         const msg = e.response?.data?.error?.message || e.message;
         console.error(`❌ Gửi ảnh ${file} fail: ${msg}`);
@@ -106,15 +115,24 @@ function createMenuCodeHandoffHandler({
   }
 
   async function sendMenu(senderId, baseUrlOverride, options = {}) {
-    if (shouldSkipRecentMenuSend({ pageId: options.pageId, senderId })) {
+    const cooldownKey = { pageId: options.pageId, senderId };
+    if (shouldSkipRecentMenuSend(cooldownKey)) {
       return false;
     }
 
     const sentImages = options.requestImageDedupe || new Set();
-    showTyping(senderId);
-    await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
-    console.log(`🤖 reply: ${redactSensitiveText(MENU_CODE_MENU_PRICE_REPLY).slice(0, 120).replace(/\n/g, ' ')}`);
-    await sendImages(senderId, getMenuImageUrls(baseUrlOverride), sentImages);
+    try {
+      showTyping(senderId);
+      await sendMessage(senderId, MENU_CODE_MENU_PRICE_REPLY);
+    } catch (err) {
+      clearRecentMenuSend(cooldownKey);
+      throw err;
+    }
+    console.log(`[menu] text sent page_ref=${pageRef(options.pageId)} sender_ref=${pageRef(senderId)}`);
+    await sendImages(senderId, getMenuImageUrls(baseUrlOverride), sentImages, {
+      pageId: options.pageId,
+      phase: 'menu'
+    });
     return true;
   }
 
@@ -172,7 +190,8 @@ function createMenuCodeHandoffHandler({
         await sendImages(
           senderId,
           buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride),
-          sentImages
+          sentImages,
+          { pageId: options.pageId, phase: 'product' }
         );
         await sendMessage(senderId, reply);
         if (postProductHandoffEnabled) {

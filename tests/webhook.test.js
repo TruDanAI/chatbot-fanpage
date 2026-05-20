@@ -131,6 +131,15 @@ function makeFacebookSendError(code, subcode, message) {
   return err;
 }
 
+function failSendOnce(err) {
+  let failed = false;
+  return () => {
+    if (failed) return null;
+    failed = true;
+    return err;
+  };
+}
+
 function makeReferralEvent(senderId = 'sender_1', source = 'ADS', pageId = '') {
   return {
     sender: { id: senderId },
@@ -227,7 +236,10 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     shouldUseFallbackReply: () => false,
     isProbablyIncompleteReply: () => false,
     sendMessage: async (senderId, text) => {
-      if (options.sendMessageError) throw options.sendMessageError;
+      const sendError = typeof options.sendMessageError === 'function'
+        ? options.sendMessageError({ senderId, text })
+        : options.sendMessageError;
+      if (sendError) throw sendError;
       sent.push({ type: 'text', senderId, text });
     },
     sendQuickReplies: async (senderId, text, quickReplies) => {
@@ -501,6 +513,72 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(warningText.includes('page_private_block')).toBeFalse();
     expect(warningText.includes('sender_private_block')).toBeFalse();
     expect(warningText.includes('private customer body')).toBeFalse();
+  });
+
+  it('blocked menu text send #551 does not leave active menu cooldown', async () => {
+    const logs = [];
+    const warnings = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const senderId = 'blocked_menu_551_sender';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: failSendOnce(makeFacebookSendError(
+        551,
+        1545041,
+        '(#551) This person is not available right now.'
+      ))
+    });
+
+    console.log = message => logs.push(String(message));
+    console.warn = message => warnings.push(String(message));
+    try {
+      await h.handleText('chào shop', senderId, 'm_blocked_menu_551_1', 'page_blocked_menu_551');
+      await h.handleText('Giá Sản Phẩm Từ Bao Nhiêu', senderId, 'm_blocked_menu_551_2', 'page_blocked_menu_551');
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
+
+    const logText = logs.join('\n');
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(logText.includes('skipped duplicate menu within cooldown')).toBeFalse();
+    expect(warnings.join('\n')).toContain('reason=recipient_unavailable');
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('blocked menu text send #10 does not leave active menu cooldown', async () => {
+    const logs = [];
+    const warnings = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const senderId = 'blocked_menu_10_sender';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: failSendOnce(makeFacebookSendError(
+        10,
+        2018278,
+        '(#10) This message is sent outside of allowed window.'
+      ))
+    });
+
+    console.log = message => logs.push(String(message));
+    console.warn = message => warnings.push(String(message));
+    try {
+      await h.handleText('chào shop', senderId, 'm_blocked_menu_10_1', 'page_blocked_menu_10');
+      await h.handleText('Cho tôi xem danh sách sản phẩm', senderId, 'm_blocked_menu_10_2', 'page_blocked_menu_10');
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
+
+    const logText = logs.join('\n');
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(logText.includes('skipped duplicate menu within cooldown')).toBeFalse();
+    expect(warnings.join('\n')).toContain('reason=outside_allowed_window');
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
   });
 
   it('handles queued recipient-unavailable send blocks without retrying or alerting', async () => {
@@ -1168,7 +1246,7 @@ describe('webhook: menu_code_handoff mode', () => {
     }
   });
 
-  it('suppresses different menu-trigger text from the same sender within menu cooldown', async () => {
+  it('successful menu send sets cooldown and duplicate attempt is skipped', async () => {
     const logs = [];
     const originalLog = console.log;
     console.log = message => logs.push(String(message));
@@ -1181,10 +1259,36 @@ describe('webhook: menu_code_handoff mode', () => {
       expect(h.sent.length).toBe(3);
       expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
       expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+      expect(logs.join('\n')).toContain('[menu] text sent');
       expect(logs.join('\n')).toContain('skipped duplicate menu within cooldown');
     } finally {
       console.log = originalLog;
     }
+  });
+
+  it('successful menu logs include hashed sender_ref and exclude raw message text', async () => {
+    const logs = [];
+    const originalLog = console.log;
+    const rawSenderId = 'raw_sender_success_log';
+    const rawPageId = 'raw_page_success_log';
+    const rawText = 'chào shop private customer body';
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    console.log = message => logs.push(String(message));
+    try {
+      await h.handleText(rawText, rawSenderId, 'm_success_safe_log', rawPageId);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const logText = logs.join('\n');
+    expect(logText).toContain('[menu] text sent');
+    expect(logText).toContain('[menu] image sent');
+    expect(logText).toMatch(/sender_ref=p:[a-f0-9]{10}/);
+    expect(logText.includes(rawSenderId)).toBeFalse();
+    expect(logText.includes(rawPageId)).toBeFalse();
+    expect(logText.includes(rawText)).toBeFalse();
+    expect(logText.includes(MENU_CODE_MENU_PRICE_REPLY)).toBeFalse();
   });
 
   it('allows same sender to receive menu again after menu cooldown', async () => {

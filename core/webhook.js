@@ -150,6 +150,16 @@ function createWebhook({
     return false;
   }
 
+  function clearRecentMenuSend({ pageId, senderId }) {
+    if (!senderId) return;
+
+    const key = JSON.stringify([
+      String(pageId || ''),
+      String(senderId || '')
+    ]);
+    recentMenuSendKeys.delete(key);
+  }
+
   function parseEventTimestampMs(value) {
     if (value == null || value === '') return null;
     if (value instanceof Date) {
@@ -338,8 +348,8 @@ function createWebhook({
       isGreetingText: runtime.isGreetingText,
       getMenuImageUrls: runtime.getMenuImageUrls,
       buildRequestedImageUrls: runtime.buildRequestedImageUrls,
-      redactSensitiveText: runtime.redactSensitiveText,
-      shouldSkipRecentMenuSend
+      shouldSkipRecentMenuSend,
+      clearRecentMenuSend
     });
   }
 
