@@ -16,6 +16,14 @@ const EXPECTED_TABLES = Object.freeze({
       slug: { dataType: 'text', nullable: false },
       name: { dataType: 'text', nullable: false },
       status: { dataType: 'text', nullable: false },
+      package: { dataType: 'text', nullable: false },
+      lifecycle: { dataType: 'text', nullable: false },
+      live_enabled: { dataType: 'boolean', nullable: false },
+      last_readiness_status: { dataType: 'text', nullable: false },
+      last_readiness_checked_at: { dataType: 'timestamp with time zone', nullable: true },
+      last_manual_test_status: { dataType: 'text', nullable: false },
+      last_manual_test_at: { dataType: 'timestamp with time zone', nullable: true },
+      last_ready_by: { dataType: 'text', nullable: false },
       default_locale: { dataType: 'text', nullable: false },
       timezone: { dataType: 'text', nullable: false },
       created_at: { dataType: 'timestamp with time zone', nullable: false },
@@ -369,6 +377,10 @@ async function verifyConstraints(client, schemaName) {
   assertCondition(shopsChecks.some(def => def.includes('id') && def.includes('<>')), 'Missing shops id non-empty CHECK constraint.');
   assertCondition(shopsChecks.some(def => def.includes('slug') && def.includes('<>')), 'Missing shops slug non-empty CHECK constraint.');
   assertCondition(shopsChecks.some(def => def.includes('status') && def.includes('active') && def.includes('paused') && def.includes('archived')), 'Missing shops status CHECK constraint.');
+  assertCondition(shopsChecks.some(def => def.includes('package') && def.includes('basic') && def.includes('sales_flow') && def.includes('self_closing_addons')), 'Missing shops package CHECK constraint.');
+  assertCondition(shopsChecks.some(def => def.includes('lifecycle') && def.includes('draft') && def.includes('configuring') && def.includes('ready') && def.includes('live') && def.includes('paused') && def.includes('archived')), 'Missing shops lifecycle CHECK constraint.');
+  assertCondition(shopsChecks.some(def => def.includes('last_readiness_status') && def.includes('unknown') && def.includes('passed') && def.includes('failed') && def.includes('warnings')), 'Missing shops readiness status CHECK constraint.');
+  assertCondition(shopsChecks.some(def => def.includes('last_manual_test_status') && def.includes('unknown') && def.includes('passed') && def.includes('failed')), 'Missing shops manual test status CHECK constraint.');
 
   const pageChecks = (byTable.get('shop_pages') || []).filter(item => item.type === 'c').map(item => item.definition);
   assertCondition(pageChecks.some(def => def.includes('id') && def.includes('<>')), 'Missing shop_pages id non-empty CHECK constraint.');

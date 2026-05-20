@@ -304,6 +304,7 @@ const PUBLIC_BASE_URL =
   process.env.RENDER_EXTERNAL_URL ||
   '';
 const MULTI_SHOP_DB_CONFIG_ENABLED = envBoolean('MULTI_SHOP_DB_CONFIG_ENABLED', false);
+const SHOP_LIVE_GATE_ENABLED = envBoolean('SHOP_LIVE_GATE_ENABLED', false);
 const FILE_CONFIG_PAGE_IDS = envList('FB_PAGE_ID')
   .concat(envList('PAGE_ID'))
   .map(String)
@@ -348,6 +349,24 @@ function evaluateDbShopRuntimeAdmission({
     return { failClosed: true, reason: 'shop_not_allowed' };
   }
 
+  return null;
+}
+
+function evaluateDbShopRuntimeLiveGate({
+  result,
+  enabled = SHOP_LIVE_GATE_ENABLED
+} = {}) {
+  if (!enabled) return null;
+  if (!result?.found) return null;
+  const shop = result.shop || {};
+  if (shop.controlPlaneColumnsAvailable === false) {
+    return { failClosed: true, reason: 'shop_live_gate_schema_missing' };
+  }
+  const status = String(shop.status || '').trim().toLowerCase();
+  if (status !== 'active') return { failClosed: true, reason: 'shop_status_not_active' };
+  const lifecycle = String(shop.lifecycle || '').trim().toLowerCase();
+  if (lifecycle !== 'live') return { failClosed: true, reason: 'lifecycle_not_live' };
+  if (!shop.live_enabled) return { failClosed: true, reason: 'live_disabled' };
   return null;
 }
 
@@ -691,7 +710,8 @@ async function resolveDbShopRuntimeForPage({
   db,
   credentialMasterKey = process.env.CREDENTIAL_MASTER_KEY,
   credentialResolver = resolvePageCredential,
-  messengerFactory
+  messengerFactory,
+  shopLiveGateEnabled = SHOP_LIVE_GATE_ENABLED
 } = {}) {
   const normalizedPageId = String(pageId || '').trim();
   const queryable = db || getMultiShopDbPool();
@@ -707,6 +727,12 @@ async function resolveDbShopRuntimeForPage({
     knownFileConfigPage: isKnownFileConfigPage(normalizedPageId)
   });
   if (admission) return admission;
+
+  const liveGate = evaluateDbShopRuntimeLiveGate({
+    result,
+    enabled: shopLiveGateEnabled
+  });
+  if (liveGate) return liveGate;
 
   if (!result.products.length) return { failClosed: true, reason: 'db_products_empty' };
   const modeName = String(result.config?.botMode?.name || '').trim();
@@ -934,6 +960,7 @@ module.exports = {
   buildAbandonedCartReminderText,
   createRuntimeAllowlist,
   evaluateDbShopRuntimeAdmission,
+  evaluateDbShopRuntimeLiveGate,
   buildGeminiRuntimeContext,
   buildGeminiRequestHistory,
   buildHealthPayload,

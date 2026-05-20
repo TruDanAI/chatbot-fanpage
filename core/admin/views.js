@@ -583,10 +583,14 @@ function renderShopsHtml(model = {}) {
     ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
     <h2>Shops</h2>
     ${createLink}
-    ${renderTable(['shop', 'status', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
+    ${renderTable(['shop', 'status', 'package', 'lifecycle', 'live', 'readiness', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
       <tr>
         <td><a href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(shop.name || shop.slug || shop.id)}</a><br><span class="meta"><code>${escapeHtml(shop.id)}</code> ${escapeHtml(shop.slug)}</span></td>
         <td>${renderStatus(shop.status)}</td>
+        <td>${escapeHtml(shop.package || 'basic')}</td>
+        <td>${renderStatus(shop.lifecycle || 'unknown')}</td>
+        <td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td>
+        <td>${renderStatus(shop.last_readiness_status || 'unknown')}</td>
         <td>${escapeHtml(shop.active_page_count || 0)} / ${escapeHtml(shop.page_count || 0)}</td>
         <td>${escapeHtml(shop.product_count || 0)}</td>
         <td>${escapeHtml(shop.asset_count || 0)}</td>
@@ -600,6 +604,8 @@ function renderShopsHtml(model = {}) {
 
 function renderShopCreateHtml({ values = {}, error = '' } = {}) {
   const status = String(values.status || 'active');
+  const packageName = String(values.package || values.shop_package || 'basic');
+  const lifecycle = String(values.lifecycle || 'draft');
   const botMode = String(values.bot_mode || 'menu_code_handoff');
   const statusOptions = ['active', 'paused', 'archived']
     .map(value => `<option value="${escapeHtml(value)}"${status === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
@@ -611,6 +617,16 @@ function renderShopCreateHtml({ values = {}, error = '' } = {}) {
     ['disabled', 'Disabled']
   ]
     .map(([value, label]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const packageOptions = [
+    ['basic', 'Gói Cơ Bản'],
+    ['sales_flow', 'Gói Tự Động'],
+    ['self_closing_addons', 'Gói Chốt Đơn / add-ons']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${packageName === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const lifecycleOptions = ['draft', 'configuring', 'ready', 'live', 'paused', 'archived']
+    .map(value => `<option value="${escapeHtml(value)}"${lifecycle === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
     .join('');
   const body = `
     <p><a href="/admin/shops">Back to shops</a></p>
@@ -624,6 +640,12 @@ function renderShopCreateHtml({ values = {}, error = '' } = {}) {
       </label>
       <label>Status
         <select name="status">${statusOptions}</select>
+      </label>
+      <label>Package
+        <select name="package">${packageOptions}</select>
+      </label>
+      <label>Lifecycle
+        <select name="lifecycle">${lifecycleOptions}</select>
       </label>
       <label>Bot mode
         <select name="bot_mode">${botModeOptions}</select>
@@ -846,6 +868,67 @@ function renderOnboardingChecklist(onboarding = {}) {
         </tr>`;
       }).join('')}
     </tbody></table>
+  </section>`;
+}
+
+function renderControlPlaneOptions(values = [], selected = '') {
+  const current = String(selected || '');
+  return values
+    .map(value => `<option value="${escapeHtml(value)}"${current === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+    .join('');
+}
+
+function renderControlPlaneForm(shop = {}, onboarding = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shop.id)}/control-plane`;
+  const liveChecked = shop.live_enabled ? ' checked' : '';
+  const blockers = (onboarding.checklist || []).filter(row => !row.passed);
+  return `<section class="checklist-card" id="control-plane" aria-label="Shop control plane">
+    <h2>Control Plane</h2>
+    <p class="meta">Internal operator controls. Runtime lifecycle/live gate remains disabled unless <code>SHOP_LIVE_GATE_ENABLED</code> is explicitly enabled.</p>
+    <table><tbody>
+      <tr><th>Existing status</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
+      <tr><th>Package</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
+      <tr><th>Lifecycle</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
+      <tr><th>Live enabled</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
+      <tr><th>Readiness</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}</td></tr>
+      <tr><th>Readiness checked</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
+      <tr><th>Manual test</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
+      <tr><th>Manual test at</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
+      <tr><th>Last ready by</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
+    </tbody></table>
+    ${blockers.length ? `<div class="banner banner-error" role="status">Readiness blockers: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">No current readiness blockers.</div>'}
+    <form class="settings-form" method="post" action="${escapeHtml(action)}">
+      <label>Package
+        <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>
+      </label>
+      <label>Lifecycle
+        <select name="lifecycle">${renderControlPlaneOptions(['draft', 'configuring', 'ready', 'live', 'paused', 'archived'], shop.lifecycle || 'draft')}</select>
+      </label>
+      <input type="hidden" name="live_enabled" value="false">
+      <label class="checkbox-label">
+        <input type="checkbox" name="live_enabled" value="true"${liveChecked}>
+        live_enabled
+      </label>
+      <label>Manual test status
+        <select name="manual_test_status">${renderControlPlaneOptions(['unknown', 'passed', 'failed'], shop.last_manual_test_status || 'unknown')}</select>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="confirm_live" value="true">
+        Confirm live enable / live lifecycle change
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="override_readiness" value="true">
+        Override readiness blockers for this internal save
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="confirm_pause_archive" value="true">
+        Confirm pause/archive lifecycle change
+      </label>
+      <div class="form-actions">
+        <button type="submit">Save control plane</button>
+        <span class="meta">Dangerous changes are audited. This form does not enable unfinished features.</span>
+      </div>
+    </form>
   </section>`;
 }
 
@@ -1191,6 +1274,8 @@ function renderShopDetailHtml(model = {}) {
       </nav>
 
       <div id="overview" class="tab-section active">
+        ${renderProductFlash(model.controlFlash || {})}
+        ${renderControlPlaneForm(shop, model.onboarding || {})}
         ${renderOnboardingChecklist(model.onboarding || {})}
         ${renderHealthCard(model.health)}
         <h2 id="metadata">Metadata</h2>

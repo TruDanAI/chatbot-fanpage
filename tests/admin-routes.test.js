@@ -350,6 +350,11 @@ function createDashboardReaderStub() {
           slug: 'adult-shop',
           name: 'Adult Shop',
           status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed',
           page_count: 2,
           active_page_count: 1,
           product_count: 2,
@@ -369,6 +374,14 @@ function createDashboardReaderStub() {
           slug: 'adult-shop',
           name: 'Adult Shop',
           status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_readiness_checked_at: '2026-05-12T00:30:00.000Z',
+          last_manual_test_status: 'passed',
+          last_manual_test_at: '2026-05-12T00:20:00.000Z',
+          last_ready_by: 'admin-1',
           default_locale: 'vi-VN',
           timezone: 'Asia/Bangkok',
           created_at: '2026-05-11T00:00:00.000Z',
@@ -483,6 +496,11 @@ function createDashboardReaderStub() {
           slug: 'adult-shop',
           name: 'Adult Shop',
           status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed',
           updated_at: '2026-05-12T00:00:00.000Z',
           encrypted_value: 'do-not-return',
           page_access_token: 'do-not-return'
@@ -542,6 +560,14 @@ function createOnboardingShopDetailModel(overrides = {}) {
       slug: 'new-shop',
       name: 'New Shop',
       status: 'active',
+      package: 'basic',
+      lifecycle: 'configuring',
+      live_enabled: false,
+      last_readiness_status: 'unknown',
+      last_readiness_checked_at: '',
+      last_manual_test_status: 'unknown',
+      last_manual_test_at: '',
+      last_ready_by: '',
       default_locale: 'vi-VN',
       timezone: 'Asia/Bangkok',
       created_at: '2026-05-16T00:00:00.000Z',
@@ -834,6 +860,41 @@ function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) 
   };
 }
 
+function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async updateControlPlane(input = {}) {
+      calls.push({ method: 'updateControlPlane', input });
+      if (failWith) throw failWith;
+      const body = input.body || {};
+      return {
+        shopId: input.shopId,
+        shop: updatedShop || {
+          id: input.shopId,
+          slug: input.shopId,
+          name: 'Control Shop',
+          status: 'active',
+          package: String(body.package || 'basic').trim(),
+          lifecycle: String(body.lifecycle || 'configuring').trim(),
+          live_enabled: /^(1|true|yes|on|enabled|active)$/i.test(String(body.live_enabled || '').trim()),
+          last_readiness_status: 'warnings',
+          last_readiness_checked_at: '2026-05-17T00:00:00.000Z',
+          last_manual_test_status: String(body.manual_test_status || 'unknown').trim(),
+          last_manual_test_at: '2026-05-17T00:00:00.000Z',
+          last_ready_by: 'admin-1',
+          updated_at: '2026-05-17T00:00:00.000Z'
+        },
+        readiness: readiness || {
+          status: 'warnings',
+          hardBlockers: [],
+          warnings: [{ key: 'product_assets_ready', label: 'No active product images' }]
+        }
+      };
+    }
+  };
+}
+
 function createShopWriteServiceStub({ failWith, createdShop } = {}) {
   const calls = [];
   return {
@@ -851,6 +912,11 @@ function createShopWriteServiceStub({ failWith, createdShop } = {}) {
           slug: shopId,
           name,
           status: String(body.status || 'active').trim(),
+          package: String(body.package || 'basic').trim(),
+          lifecycle: String(body.lifecycle || 'draft').trim(),
+          live_enabled: false,
+          last_readiness_status: 'unknown',
+          last_manual_test_status: 'unknown',
           default_locale: String(body.locale || body.default_locale || 'vi-VN').trim(),
           timezone: String(body.timezone || 'Asia/Ho_Chi_Minh').trim(),
           created_at: '2026-05-16T00:00:00.000Z',
@@ -2541,6 +2607,11 @@ describe('admin dashboard routes', () => {
       slug: 'adult-shop',
       name: 'Adult Shop',
       status: 'active',
+      package: 'basic',
+      lifecycle: 'live',
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_manual_test_status: 'passed',
       page_count: 2,
       active_page_count: 1,
       product_count: 2,
@@ -2847,6 +2918,11 @@ describe('admin dashboard routes', () => {
       slug: 'adult-shop',
       name: 'Adult Shop',
       status: 'active',
+      package: 'basic',
+      lifecycle: 'live',
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_manual_test_status: 'passed',
       updated_at: '2026-05-12T00:00:00.000Z'
     });
     expect(body.pageMappings.total).toBe(2);
@@ -4488,6 +4564,85 @@ describe('admin dashboard routes', () => {
     }
   });
 
+  it('shop control API updates package lifecycle live state and returns safe readiness', async () => {
+    const app = createApp();
+    const controlWrites = createShopControlWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopControlWriteService: controlWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['PATCH /admin/api/shops/:shopId/control-plane'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: {
+        package: 'sales_flow',
+        lifecycle: 'live',
+        live_enabled: 'true',
+        manual_test_status: 'passed',
+        confirm_live: 'true',
+        override_readiness: 'true',
+        token: 'do-not-return'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.shop.package).toBe('sales_flow');
+    expect(body.shop.lifecycle).toBe('live');
+    expect(body.shop.live_enabled).toBeTrue();
+    expect(body.shop.last_manual_test_status).toBe('passed');
+    expect(body.readiness.status).toBe('warnings');
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(controlWrites.calls[0].method).toBe('updateControlPlane');
+    expect(controlWrites.calls[0].input.shopId).toBe('new-shop');
+    expect(controlWrites.calls[0].input.body.confirm_live).toBe('true');
+  });
+
+  it('shop control API maps validation and schema errors safely', async () => {
+    for (const item of [
+      { code: 'invalid_shop_package', status: 400, error: 'invalid_shop_package' },
+      { code: 'live_confirmation_required', status: 400, error: 'live_confirmation_required' },
+      { code: 'readiness_blockers_present', status: 400, error: 'readiness_blockers_present' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'shop_control_commit_failed', status: 500, error: 'shop_control_commit_failed' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shops" at postgres://secret`);
+      err.code = item.code;
+      if (item.code === 'readiness_blockers_present') err.details = { blockers: ['page_mapping_ready'] };
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopControlWriteService: createShopControlWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['PATCH /admin/api/shops/:shopId/control-plane'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' },
+        body: { package: 'bad', lifecycle: 'live', live_enabled: 'true' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
   it('shop settings HTML update redirects with success banner key', async () => {
     const app = createApp();
     const settingsWrites = createShopSettingsWriteServiceStub();
@@ -5457,6 +5612,9 @@ describe('admin dashboard PostgreSQL reader', () => {
             'new-shop',
             'New Shop',
             'active',
+            'basic',
+            'draft',
+            false,
             'vi-VN',
             'Asia/Ho_Chi_Minh'
           ]);
@@ -5466,8 +5624,13 @@ describe('admin dashboard PostgreSQL reader', () => {
               slug: params[1],
               name: params[2],
               status: params[3],
-              default_locale: params[4],
-              timezone: params[5],
+              package: params[4],
+              lifecycle: params[5],
+              live_enabled: params[6],
+              last_readiness_status: 'unknown',
+              last_manual_test_status: 'unknown',
+              default_locale: params[7],
+              timezone: params[8],
               created_at: '2026-05-16T00:00:00.000Z',
               updated_at: '2026-05-16T00:00:00.000Z'
             }]
@@ -5505,6 +5668,9 @@ describe('admin dashboard PostgreSQL reader', () => {
           expect(params[7]).toBe('new-shop');
           expect(metadata.shop_id).toBe('new-shop');
           expect(metadata.slug).toBe('new-shop');
+          expect(metadata.package).toBe('basic');
+          expect(metadata.lifecycle).toBe('draft');
+          expect(metadata.live_enabled).toBe(false);
           expect(metadata.bot_mode).toBe('menu_code_handoff');
           expect(metadata.display_name_length).toBe('New Shop'.length);
           expect(JSON.stringify(metadata).includes('token')).toBeFalse();

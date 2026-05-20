@@ -9,12 +9,19 @@ class FakeShopConfigClient {
       assets: seed.assets || []
     };
     this.calls = [];
+    this.failControlPlaneOnce = Boolean(seed.failControlPlaneOnce);
   }
 
   async query(sql, values = []) {
     this.calls.push({ sql, values });
     const normalized = String(sql).replace(/\s+/g, ' ').trim();
     if (normalized.includes('FROM shop_pages sp')) {
+      if (this.failControlPlaneOnce && normalized.includes('shop_package')) {
+        this.failControlPlaneOnce = false;
+        const err = new Error('column s.package does not exist');
+        err.code = '42703';
+        throw err;
+      }
       const pageId = values[0];
       const rows = this.seed.mappings.filter(row => row.page_id === pageId);
       return { rows };
@@ -37,6 +44,12 @@ function makeSeed() {
       shop_id: 'adult-shop',
       shop_slug: 'adult-shop',
       shop_name: 'Adult Shop',
+      shop_status: 'active',
+      shop_package: 'basic',
+      shop_lifecycle: 'live',
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_manual_test_status: 'passed',
       default_locale: 'vi-VN',
       timezone: 'Asia/Bangkok',
       page_mapping_id: 'page-map-1',
@@ -150,6 +163,10 @@ describe('db shop config resolver', () => {
     expect(result.shop.id).toBe('adult-shop');
     expect(result.page.page_id).toBe('page_adult');
     expect(result.config.shopName).toBe('Adult Shop');
+    expect(result.shop.status).toBe('active');
+    expect(result.shop.package).toBe('basic');
+    expect(result.shop.lifecycle).toBe('live');
+    expect(result.shop.live_enabled).toBeTrue();
     expect(result.config.botMode.name).toBe('menu_code_handoff');
     expect(result.config.botMode.handoffEnabled).toBeTrue();
     expect(result.config.botMode.handoffMessage).toBe('DB handoff message');
@@ -181,6 +198,25 @@ describe('db shop config resolver', () => {
     expect(result.config.__assets.menuImages.length).toBe(1);
     expect(result.config.__assets.productImagesByCode.DB1.length).toBe(1);
     expect(JSON.stringify(result.config).includes('hidden.png')).toBeFalse();
+  });
+
+  it('falls back to legacy mapping query when control-plane columns are missing', async () => {
+    const client = new FakeShopConfigClient({
+      ...makeSeed(),
+      failControlPlaneOnce: true
+    });
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeTrue();
+    expect(result.shop.controlPlaneColumnsAvailable).toBeFalse();
+    expect(result.shop.package).toBe('basic');
+    expect(result.shop.lifecycle).toBe('live');
+    expect(result.shop.live_enabled).toBeTrue();
+    expect(client.calls.filter(call => String(call.sql).includes('FROM shop_pages sp')).length).toBe(2);
   });
 
   it('returns missing without leaking another shop when page is not mapped', async () => {

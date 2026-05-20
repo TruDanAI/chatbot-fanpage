@@ -130,6 +130,11 @@ function createDashboardRepository({
           s.slug,
           s.name,
           s.status,
+          s.package,
+          s.lifecycle,
+          s.live_enabled,
+          s.last_readiness_status,
+          s.last_manual_test_status,
           COALESCE(pages.page_count, 0)::int AS page_count,
           COALESCE(pages.active_page_count, 0)::int AS active_page_count,
           COALESCE(products.product_count, 0)::int AS product_count,
@@ -183,7 +188,10 @@ function createDashboardRepository({
 
     try {
       const shopResult = await client.query(`
-        SELECT id, slug, name, status, default_locale, timezone, created_at, updated_at
+        SELECT id, slug, name, status, package, lifecycle, live_enabled,
+               last_readiness_status, last_readiness_checked_at,
+               last_manual_test_status, last_manual_test_at, last_ready_by,
+               default_locale, timezone, created_at, updated_at
         FROM shops
         WHERE id = $1 OR slug = $1
         ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
@@ -320,7 +328,8 @@ function createDashboardRepository({
 
     try {
       const shopResult = await client.query(`
-        SELECT id, slug, name, status, updated_at
+        SELECT id, slug, name, status, package, lifecycle, live_enabled,
+               last_readiness_status, last_manual_test_status, updated_at
         FROM shops
         WHERE id = $1 OR slug = $1
         ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC

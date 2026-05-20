@@ -15,6 +15,12 @@ const PRODUCTION_MISSING_TABLES_PATCH_PATH = path.join(
   'db',
   'production-missing-multishop-tables-patch.sql'
 );
+const SHOP_LIFECYCLE_READINESS_PATCH_PATH = path.join(
+  __dirname,
+  '..',
+  'db',
+  'shop-lifecycle-readiness-patch.sql'
+);
 
 function readSql(filePath = SQL_PATH) {
   return fs.readFileSync(filePath, 'utf8');
@@ -78,7 +84,24 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toContain("CHECK (page_id <> '')");
     expect(normalized).toContain("CHECK (code <> '')");
     expect(normalized).toContain("CHECK (status IN ('active', 'paused', 'archived'))");
+    expect(normalized).toContain("CHECK (package IN ('basic', 'sales_flow', 'self_closing_addons'))");
+    expect(normalized).toContain("CHECK (lifecycle IN ('draft', 'configuring', 'ready', 'live', 'paused', 'archived'))");
+    expect(normalized).toContain("CHECK (last_readiness_status IN ('unknown', 'passed', 'failed', 'warnings'))");
+    expect(normalized).toContain("CHECK (last_manual_test_status IN ('unknown', 'passed', 'failed'))");
     expect(normalized).toContain("CHECK (status IN ('active', 'hidden', 'archived'))");
+  });
+
+  it('adds shop control-plane defaults for new installs', () => {
+    const normalized = normalizeSql(readSql());
+
+    expect(normalized).toContain("package TEXT NOT NULL DEFAULT 'basic'");
+    expect(normalized).toContain("lifecycle TEXT NOT NULL DEFAULT 'draft'");
+    expect(normalized).toContain('live_enabled BOOLEAN NOT NULL DEFAULT false');
+    expect(normalized).toContain("last_readiness_status TEXT NOT NULL DEFAULT 'unknown'");
+    expect(normalized).toContain('last_readiness_checked_at TIMESTAMPTZ');
+    expect(normalized).toContain("last_manual_test_status TEXT NOT NULL DEFAULT 'unknown'");
+    expect(normalized).toContain('last_manual_test_at TIMESTAMPTZ');
+    expect(normalized).toContain("last_ready_by TEXT NOT NULL DEFAULT ''");
   });
 
   it('defines bot mode, asset type, and storage provider constraints', () => {
@@ -181,6 +204,53 @@ describe('production missing multi-shop tables SQL patch', () => {
     expect(normalized).toContain('key_version INTEGER NOT NULL DEFAULT 1');
     expect(normalized).toContain('CHECK (key_version > 0)');
     expect(normalized).toContain("CHECK (attempt_count <= max_attempts)");
+  });
+});
+
+describe('shop lifecycle readiness SQL patch', () => {
+  function readPatchSql() {
+    return readSql(SHOP_LIFECYCLE_READINESS_PATCH_PATH);
+  }
+
+  it('exists in db/shop-lifecycle-readiness-patch.sql', () => {
+    expect(fs.existsSync(SHOP_LIFECYCLE_READINESS_PATCH_PATH)).toBeTrue();
+  });
+
+  it('is additive and keeps shops.status intact', () => {
+    const normalized = normalizeSql(stripSqlComments(readPatchSql()));
+
+    expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS package TEXT\b/i);
+    expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS lifecycle TEXT\b/i);
+    expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS live_enabled BOOLEAN\b/i);
+    expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS last_readiness_status TEXT\b/i);
+    expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS last_manual_test_status TEXT\b/i);
+    expect(/\bDROP\b/i.test(normalized)).toBeFalse();
+    expect(/\bTRUNCATE\b/i.test(normalized)).toBeFalse();
+    expect(/\bDELETE\b/i.test(normalized)).toBeFalse();
+    expect(/\bRENAME\b/i.test(normalized)).toBeFalse();
+    expect(/\bDROP COLUMN\b/i.test(normalized)).toBeFalse();
+    expect(/\bALTER TABLE shops DROP\b/i.test(normalized)).toBeFalse();
+    expect(/\bALTER TABLE shops RENAME\b/i.test(normalized)).toBeFalse();
+  });
+
+  it('backfills active shops as live and unknown statuses as paused', () => {
+    const normalized = normalizeSql(readPatchSql());
+
+    expect(normalized).toContain("WHEN status = 'active' THEN 'live'");
+    expect(normalized).toContain("WHEN status = 'archived' THEN 'archived'");
+    expect(normalized).toContain("ELSE 'paused'");
+    expect(normalized).toContain("live_enabled = COALESCE(live_enabled, status = 'active')");
+  });
+
+  it('keeps package/lifecycle/readiness checks idempotent', () => {
+    const normalized = normalizeSql(readPatchSql());
+
+    expect(normalized).toContain('shops_package_check');
+    expect(normalized).toContain('shops_lifecycle_check');
+    expect(normalized).toContain('shops_last_readiness_status_check');
+    expect(normalized).toContain('shops_last_manual_test_status_check');
+    expect(normalized).toContain("CHECK (package IN ('basic', 'sales_flow', 'self_closing_addons'))");
+    expect(normalized).toContain("CHECK (lifecycle IN ('draft', 'configuring', 'ready', 'live', 'paused', 'archived'))");
   });
 });
 

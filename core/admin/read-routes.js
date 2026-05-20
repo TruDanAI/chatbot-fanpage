@@ -51,6 +51,9 @@ const CREDENTIAL_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Page credential saved.' },
   rotated: { type: 'success', text: 'Page credential rotated.' }
 };
+const CONTROL_FLASH_MESSAGES = {
+  updated: { type: 'success', text: 'Shop control plane updated.' }
+};
 
 function createAdminReadHandlers({
   reader,
@@ -136,6 +139,11 @@ function createAdminReadHandlers({
   function resolveCredentialFlash(query = {}) {
     const key = String(query.credentialMessage || '').trim().toLowerCase();
     return CREDENTIAL_FLASH_MESSAGES[key] || {};
+  }
+
+  function resolveControlFlash(query = {}) {
+    const key = String(query.controlMessage || '').trim().toLowerCase();
+    return CONTROL_FLASH_MESSAGES[key] || {};
   }
 
   function createUnavailableShopHealthPresentation(shop = null) {
@@ -481,6 +489,7 @@ function createAdminReadHandlers({
       presented.assetFlash = resolveAssetFlash(req.query || {});
       presented.pageFlash = resolvePageFlash(req.query || {});
       presented.credentialFlash = resolveCredentialFlash(req.query || {});
+      presented.controlFlash = resolveControlFlash(req.query || {});
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,

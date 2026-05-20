@@ -316,6 +316,11 @@ function presentShopListItem(shop = {}) {
     slug: shop.slug || '',
     name: limitText(shop.name, 120),
     status: shop.status || '',
+    package: shop.package || 'basic',
+    lifecycle: shop.lifecycle || '',
+    live_enabled: Boolean(shop.live_enabled),
+    last_readiness_status: shop.last_readiness_status || 'unknown',
+    last_manual_test_status: shop.last_manual_test_status || 'unknown',
     page_count: Number(shop.page_count || 0),
     active_page_count: Number(shop.active_page_count || 0),
     product_count: Number(shop.product_count || 0),
@@ -430,6 +435,7 @@ function presentShopOnboarding(model = {}, shop = null) {
     action_href: href
   });
   const shopActive = String(shop.status || '').toLowerCase() === 'active';
+  const manualTestPassed = String(shop.last_manual_test_status || '').toLowerCase() === 'passed';
   const checklist = [
     item('shop_active', 'Shop active', shopActive, shopActive ? 'review shop status' : 'activate shop', `${shopHref}#metadata`),
     item('settings_ready', 'Settings ready', settingsReady, settingsReady ? 'edit settings' : 'create settings', `${shopHref}#settings`),
@@ -438,6 +444,7 @@ function presentShopOnboarding(model = {}, shop = null) {
     item('product_ready', 'Product ready', counts.active_product_count > 0, 'add product', `${shopHref}#products`),
     item('menu_assets_ready', 'Menu assets ready', counts.active_menu_image_count > 0, 'add menu image', `${shopHref}#assets`),
     item('product_assets_ready', 'Product assets ready', counts.active_product_image_count > 0, 'add product image', `${shopHref}#assets`),
+    item('manual_test_ready', 'Manual test passed', manualTestPassed, 'run manual test and mark passed', `${shopHref}#control-plane`),
     item('health_ready', 'Health ready', Boolean(shop.id), 'view health', `/admin/api/shops/${encodeURIComponent(shopId)}/health`)
   ];
 
@@ -469,6 +476,11 @@ function presentShopHealthApi(model = {}) {
     slug: model.shop.slug || '',
     name: limitText(model.shop.name, 120),
     status: model.shop.status || '',
+    package: model.shop.package || 'basic',
+    lifecycle: model.shop.lifecycle || '',
+    live_enabled: Boolean(model.shop.live_enabled),
+    last_readiness_status: model.shop.last_readiness_status || 'unknown',
+    last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
     updated_at: model.shop.updated_at || ''
   } : null;
   const activity = model.activity || {};
@@ -514,6 +526,14 @@ function presentShopDetailApi(model = {}) {
     slug: model.shop.slug || '',
     name: limitText(model.shop.name, 120),
     status: model.shop.status || '',
+    package: model.shop.package || 'basic',
+    lifecycle: model.shop.lifecycle || '',
+    live_enabled: Boolean(model.shop.live_enabled),
+    last_readiness_status: model.shop.last_readiness_status || 'unknown',
+    last_readiness_checked_at: model.shop.last_readiness_checked_at || '',
+    last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
+    last_manual_test_at: model.shop.last_manual_test_at || '',
+    last_ready_by: model.shop.last_ready_by || '',
     default_locale: model.shop.default_locale || '',
     timezone: model.shop.timezone || '',
     created_at: model.shop.created_at || '',
@@ -555,6 +575,40 @@ function presentShopSettingsWriteApi(model = {}) {
   };
 }
 
+function presentShopControlWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || model.shop?.id || '',
+    shop: model.shop ? {
+      id: model.shop.id || '',
+      slug: model.shop.slug || '',
+      name: limitText(model.shop.name, 120),
+      status: model.shop.status || '',
+      package: model.shop.package || 'basic',
+      lifecycle: model.shop.lifecycle || '',
+      live_enabled: Boolean(model.shop.live_enabled),
+      last_readiness_status: model.shop.last_readiness_status || 'unknown',
+      last_readiness_checked_at: model.shop.last_readiness_checked_at || '',
+      last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
+      last_manual_test_at: model.shop.last_manual_test_at || '',
+      last_ready_by: model.shop.last_ready_by || '',
+      updated_at: model.shop.updated_at || ''
+    } : null,
+    readiness: {
+      status: model.readiness?.status || 'unknown',
+      hardBlockers: (model.readiness?.hardBlockers || []).map(item => ({
+        key: item.key || '',
+        label: limitText(item.label || '', 120)
+      })),
+      warnings: (model.readiness?.warnings || []).map(item => ({
+        key: item.key || '',
+        label: limitText(item.label || '', 120)
+      }))
+    }
+  };
+}
+
 function presentPageMappingWriteApi(model = {}) {
   return {
     ok: true,
@@ -589,6 +643,14 @@ function presentShopWriteApi(model = {}) {
       slug: model.shop.slug || '',
       name: limitText(model.shop.name, 120),
       status: model.shop.status || '',
+      package: model.shop.package || 'basic',
+      lifecycle: model.shop.lifecycle || '',
+      live_enabled: Boolean(model.shop.live_enabled),
+      last_readiness_status: model.shop.last_readiness_status || 'unknown',
+      last_readiness_checked_at: model.shop.last_readiness_checked_at || '',
+      last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
+      last_manual_test_at: model.shop.last_manual_test_at || '',
+      last_ready_by: model.shop.last_ready_by || '',
       default_locale: model.shop.default_locale || '',
       timezone: model.shop.timezone || '',
       created_at: model.shop.created_at || '',
@@ -628,6 +690,7 @@ module.exports = {
   presentProductWriteApi,
   presentShopSettingsReadApi,
   presentShopSettingsWriteApi,
+  presentShopControlWriteApi,
   presentShopWriteApi,
   presentShopDetailApi,
   presentShopHealthApi,
