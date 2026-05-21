@@ -16,6 +16,7 @@ require('./storage-file-adapter.test');
 require('./storage-postgres-adapter.test');
 require('./feature-flags.test');
 require('./db-shop-config.test');
+require('./demo-shop-fixture.test');
 require('./page-credentials.test');
 require('./page-token-health.test');
 require('./page-token-health-script.test');
