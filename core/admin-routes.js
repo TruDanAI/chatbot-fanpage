@@ -6,7 +6,9 @@ const {
 const { createPostgresAuditLogger } = require('./admin/audit');
 const {
   presentAssetWriteApi,
+  presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopControlWriteApi,
@@ -41,6 +43,11 @@ const {
   isMissingPageMappingWriteSchemaError
 } = require('./admin/page-mapping-writes');
 const {
+  PAGE_SETUP_PREVIEW_ACTIONS,
+  createPostgresPageSetupPreviewService,
+  isMissingPageSetupPreviewSchemaError
+} = require('./admin/page-setup-preview');
+const {
   createPostgresShopControlWriteService,
   isMissingShopControlWriteSchemaError
 } = require('./admin/shop-control-writes');
@@ -71,6 +78,7 @@ const {
   maskAddress,
   maskPhone,
   renderBulkMenuImageImportResultHtml,
+  renderPageSetupPreviewResultHtml,
   renderProductImportResultHtml,
   renderShopCreateHtml
 } = require('./admin/views');
@@ -594,6 +602,7 @@ function presentPageMappingWriteError(err) {
     invalid_page_id: ['invalid_page_id', 'Page id is invalid.', 400],
     invalid_page_mapping_status: ['invalid_page_mapping_status', 'Page mapping status is invalid.', 400],
     duplicate_active_page_id: ['duplicate_active_page_id', 'Page id already has an active mapping.', 409],
+    page_setup_preview_only: ['page_setup_preview_only', 'Demo-shop page setup is preview-only while configuring/non-live.', 409],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     permission_denied: ['permission_denied', 'Page mapping write permission is required.', 403],
     database_url_required: ['page_mapping_write_unavailable', 'Page mapping writes are unavailable.', 503],
@@ -652,6 +661,7 @@ function presentPageCredentialWriteError(err) {
     credential_token_invalid: ['credential_token_invalid', 'Credential token is invalid.', 400],
     credential_master_key_missing: ['credential_write_unavailable', 'Credential writes are unavailable.', 503],
     active_credential_exists: ['active_credential_exists', 'An active credential already exists. Use rotate mode to replace it.', 409],
+    page_setup_preview_only: ['page_setup_preview_only', 'Demo-shop page setup is preview-only while configuring/non-live.', 409],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     page_mapping_not_found: ['page_mapping_not_found', 'Page mapping was not found for this shop.', 404],
     permission_denied: ['permission_denied', 'Page credential write permission is required.', 403],
@@ -688,6 +698,60 @@ function presentPageCredentialWriteTextError(err) {
   return {
     statusCode: response.statusCode,
     text: response.body?.message || 'Page credential write could not be completed.'
+  };
+}
+
+function presentPageSetupPreviewError(err) {
+  if (isMissingPageSetupPreviewSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    page_id_required: ['page_id_required', 'Page id is required for preview.', 400],
+    credential_token_not_accepted_in_preview: ['credential_token_not_accepted_in_preview', 'Credential token is not accepted in preview.', 400],
+    setup_preview_not_allowed: ['setup_preview_not_allowed', 'Page setup preview is not available for this shop state.', 403],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    permission_denied: ['permission_denied', 'Page setup preview permission is required.', 403],
+    database_url_required: ['page_setup_preview_unavailable', 'Page setup preview is unavailable.', 503]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'page_setup_preview_failed',
+      message: 'Page setup preview could not be completed.'
+    }
+  };
+}
+
+function presentPageSetupPreviewTextError(err) {
+  const response = presentPageSetupPreviewError(err);
+  return {
+    statusCode: response.statusCode,
+    body: response.body
   };
 }
 
@@ -800,6 +864,7 @@ function registerAdminRoutes(app, {
   dashboardReader,
   internalNoteService,
   assetWriteService,
+  pageSetupPreviewService,
   pageCredentialWriteService,
   pageMappingWriteService,
   productImportService,
@@ -841,6 +906,9 @@ function registerAdminRoutes(app, {
     pageId
   });
   const assetWrites = assetWriteService || createPostgresAssetWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const pageSetupPreviews = pageSetupPreviewService || createPostgresPageSetupPreviewService({
     databaseUrl: dashboardDatabaseUrl
   });
   const pageCredentialWrites = pageCredentialWriteService || createPostgresPageCredentialWriteService({
@@ -1126,6 +1194,160 @@ function registerAdminRoutes(app, {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
     return safeMessage ? `${base}?credentialMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  function pageSetupPreviewAuditMetadata(result = {}, credentialType = '') {
+    return {
+      shop_ref: result.shop_ref || '',
+      page_ref: result.page_ref || '',
+      credential_type: credentialType || result.credential_type || '',
+      validate_only: true,
+      token_accepted: false,
+      health_check: false,
+      messenger_send: false
+    };
+  }
+
+  async function recordPageSetupPreviewAudit(req, { principal, action, result, credentialType = '' } = {}) {
+    await recordAdminAudit(req, {
+      principal,
+      action,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: result?.shop_ref || '',
+      outcome: 'success',
+      metadata: pageSetupPreviewAuditMetadata(result || {}, credentialType),
+      includeAuthMethod: false
+    });
+  }
+
+  async function previewPageMappingApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewPageMapping({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+        result
+      });
+      return res.json(presentPageMappingPreviewApi(result));
+    } catch (err) {
+      const response = presentPageSetupPreviewError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function previewPageMappingHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewPageMapping({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+        result
+      });
+      return res.type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Page Mapping Preview',
+        result: presentPageMappingPreviewApi(result)
+      }));
+    } catch (err) {
+      const response = presentPageSetupPreviewTextError(err);
+      return res.status(response.statusCode).type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Page Mapping Preview',
+        error: response.body
+      }));
+    }
+  }
+
+  async function previewPageCredentialApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewCredentialPrerequisites({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+        result,
+        credentialType: result.credential_type
+      });
+      return res.json(presentPageCredentialPreviewApi(result));
+    } catch (err) {
+      const response = presentPageSetupPreviewError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function previewPageCredentialHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewCredentialPrerequisites({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+        result,
+        credentialType: result.credential_type
+      });
+      return res.type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Credential Prerequisites Preview',
+        result: presentPageCredentialPreviewApi(result)
+      }));
+    } catch (err) {
+      const response = presentPageSetupPreviewTextError(err);
+      return res.status(response.statusCode).type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Credential Prerequisites Preview',
+        error: response.body
+      }));
+    }
   }
 
   async function createPageMappingApi(req, res) {
@@ -1825,6 +2047,8 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
   app.post('/admin/api/shops/:shopId/control-plane', updateShopControlApi);
+  app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
+  app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
   app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
@@ -1857,6 +2081,8 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
   app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
+  app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
+  app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);
   app.post('/admin/shops/:shopId/pages', createPageMappingHtml);
   app.post('/admin/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialHtml);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
@@ -1895,6 +2121,7 @@ module.exports = {
   createPostgresDashboardReader,
   createPostgresPageCredentialWriteService,
   createPostgresPageMappingWriteService,
+  createPostgresPageSetupPreviewService,
   createPostgresProductImportService,
   createPostgresProductWriteService,
   createPostgresShopControlWriteService,

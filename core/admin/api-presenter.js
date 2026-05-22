@@ -633,6 +633,55 @@ function presentPageCredentialWriteApi(model = {}) {
   };
 }
 
+function presentReadinessImpact(impact = {}) {
+  return {
+    validate_only: impact.validate_only !== false,
+    changes_readiness: Boolean(impact.changes_readiness),
+    blockers_remaining: Array.isArray(impact.blockers_remaining)
+      ? impact.blockers_remaining.map(item => limitText(item, 80)).filter(Boolean)
+      : [],
+    live_enabled_after_preview: Boolean(impact.live_enabled_after_preview)
+  };
+}
+
+function presentPageMappingPreviewApi(model = {}) {
+  const pageName = model.page_name || {};
+  return {
+    ok: true,
+    schemaReady: model.schemaReady !== false,
+    validate_only: true,
+    shop_ref: model.shop_ref || '',
+    page_ref: model.page_ref || '',
+    duplicate_active_mapping: Boolean(model.duplicate_active_mapping),
+    conflict: Boolean(model.conflict),
+    page_format_valid: Boolean(model.page_format_valid),
+    page_name: {
+      provided: Boolean(pageName.provided),
+      length: Number(pageName.length || 0),
+      max_length: Number(pageName.max_length || 0),
+      status: pageName.status || ''
+    },
+    readiness_impact: presentReadinessImpact(model.readiness_impact || {})
+  };
+}
+
+function presentPageCredentialPreviewApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: model.schemaReady !== false,
+    validate_only: true,
+    shop_ref: model.shop_ref || '',
+    page_ref: model.page_ref || '',
+    credential_type: model.credential_type || '',
+    credential_type_allowed: Boolean(model.credential_type_allowed),
+    credential_master_key_configured: Boolean(model.credential_master_key_configured),
+    token_accepted: false,
+    health_check: false,
+    messenger_send: false,
+    readiness_impact: presentReadinessImpact(model.readiness_impact || {})
+  };
+}
+
 function presentShopWriteApi(model = {}) {
   return {
     ok: true,
@@ -685,7 +734,9 @@ module.exports = {
   presentDashboardApi,
   presentInternalNotesApi,
   presentOperations,
+  presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopSettingsReadApi,

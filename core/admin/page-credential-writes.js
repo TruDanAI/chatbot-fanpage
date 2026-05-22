@@ -7,6 +7,7 @@ const {
 const { DEFAULT_CREDENTIAL_TYPE, encryptCredential } = require('../credentials/page-credentials');
 const { insertAuditLogEntry } = require('./audit');
 const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
+const { assertPageSetupDirectWriteAllowed } = require('./page-setup-preview');
 const { pageRef } = require('../utils/log-refs');
 
 const PAGE_CREDENTIAL_WRITE_ACTIONS = Object.freeze({
@@ -89,7 +90,7 @@ function createPageCredentialWriteRepository() {
     const normalized = normalizeText(shopId, 160);
     if (!normalized) throw createPageCredentialWriteError('shop_not_found', 'Shop was not found.', 404);
     const result = await client.query(`
-      SELECT id, slug
+      SELECT id, slug, lifecycle, live_enabled
       FROM shops
       WHERE id = $1 OR slug = $1
       ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
@@ -280,10 +281,10 @@ function createPostgresPageCredentialWriteService({
     const masterKey = getCredentialMasterKey();
     validatePageCredentialInput(input, { masterKey });
     const token = text(input.token).trim();
-    const encryptedValue = encryptCredential(token, masterKey);
 
     return withTransaction(async client => {
       const shop = await repository.resolveShop(client, shopId);
+      assertPageSetupDirectWriteAllowed(shop);
       const mapping = await repository.resolvePageMapping(client, {
         shopId: shop.id,
         pageMappingId
@@ -304,6 +305,7 @@ function createPostgresPageCredentialWriteService({
           credentialType: input.credentialType
         })
         : 0;
+      const encryptedValue = encryptCredential(token, masterKey);
       const credentialId = createCredentialId();
       const row = await repository.insertCredential(client, {
         shopId: shop.id,

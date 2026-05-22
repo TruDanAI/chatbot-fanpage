@@ -848,6 +848,58 @@ function renderPageCredentialForm(shopId = '', page = {}) {
   </form>`;
 }
 
+function isPageSetupPreviewMode(shop = {}) {
+  const isDemoShop = [shop.id, shop.slug]
+    .map(value => String(value || '').trim().toLowerCase())
+    .includes('demo-shop');
+  return isDemoShop
+    && String(shop.lifecycle || '').trim().toLowerCase() === 'configuring'
+    && shop.live_enabled === false;
+}
+
+function renderPageSetupPreviewSection(shopId = '') {
+  const pageAction = `/admin/shops/${encodeRoutePart(shopId)}/pages/preview`;
+  const credentialAction = `/admin/shops/${encodeRoutePart(shopId)}/page-credentials/preview`;
+  return `<section class="checklist-card" id="page-setup-preview" aria-label="Page setup preview">
+    <h2>Page Setup Preview</h2>
+    <p class="meta">Validate demo-shop setup inputs without creating mappings, saving credentials, running token health checks, or sending Messenger messages.</p>
+    <div class="ops-grid">
+      <form class="product-form" method="post" action="${escapeHtml(pageAction)}">
+        <h3>Page Mapping Preview</h3>
+        <input type="hidden" name="validate_only" value="true">
+        <label>Page ID <span class="required">required</span><input name="page_id" maxlength="64" required aria-required="true" autocomplete="off" inputmode="numeric" pattern="[0-9]{5,32}"></label>
+        <label>Page name<input name="page_name" maxlength="180"></label>
+        <div class="form-actions"><button type="submit">Preview mapping</button><span class="meta">Returns a hashed page reference and duplicate status only.</span></div>
+      </form>
+      <form class="product-form" method="post" action="${escapeHtml(credentialAction)}">
+        <h3>Credential Prerequisites Preview</h3>
+        <input type="hidden" name="validate_only" value="true">
+        <label>Credential type
+          <select name="credential_type"><option value="fb_page_token" selected>fb_page_token</option></select>
+        </label>
+        <div class="form-actions"><button type="submit">Preview credential</button><span class="meta">No token field is accepted in preview mode.</span></div>
+      </form>
+    </div>
+  </section>`;
+}
+
+function renderPageCredentialPreviewDisabled() {
+  return '<span class="meta">Credential writes are disabled in preview mode.</span>';
+}
+
+function renderPageSetupPreviewResultHtml({ shopId = '', title = 'Page Setup Preview', result = null, error = null } = {}) {
+  const backHref = `/admin/shops/${encodeRoutePart(shopId)}#page-setup-preview`;
+  const body = `
+    <p><a href="${escapeHtml(backHref)}">Back to page setup preview</a></p>
+    ${error ? `<div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Preview failed.')}</div>` : ''}
+    ${result ? `
+      <div class="banner banner-success" role="status">Preview completed. No setup data was written.</div>
+      ${renderJsonBlock(result)}
+    ` : ''}
+  `;
+  return renderLayout(title, body);
+}
+
 function renderOnboardingChecklist(onboarding = {}) {
   const rows = Array.isArray(onboarding.checklist) ? onboarding.checklist : [];
   if (!rows.length) return '';
@@ -1258,6 +1310,7 @@ function renderShopDetailHtml(model = {}) {
   const assets = model.assets || {};
   const summary = assets.summary || {};
   const assetRows = Array.isArray(assets.rows) ? assets.rows : [];
+  const pageSetupPreviewMode = isPageSetupPreviewMode(shop);
   const body = `
     <p><a href="/admin/shops">Back to shops</a></p>
     ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
@@ -1292,14 +1345,14 @@ function renderShopDetailHtml(model = {}) {
         <h2 id="page-mappings">Page Mappings</h2>
         ${renderProductFlash(model.pageFlash || {})}
         ${renderProductFlash(model.credentialFlash || {})}
-        ${renderPageMappingAddForm(shop.id)}
+        ${pageSetupPreviewMode ? renderPageSetupPreviewSection(shop.id) : renderPageMappingAddForm(shop.id)}
         ${renderTable(['page ref', 'name', 'status', 'updated', 'credential action'], model.pages || [], page => `
           <tr>
             <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
             <td>${escapeHtml(page.page_name)}</td>
             <td>${renderStatus(page.status)}</td>
             <td>${escapeHtml(formatDate(page.updated_at))}</td>
-            <td>${renderPageCredentialForm(shop.id, page)}</td>
+            <td>${pageSetupPreviewMode ? renderPageCredentialPreviewDisabled() : renderPageCredentialForm(shop.id, page)}</td>
           </tr>
         `)}
       </div>
@@ -1583,6 +1636,7 @@ module.exports = {
   renderDashboardHtml,
   renderLoginHtml,
   renderProductImportResultHtml,
+  renderPageSetupPreviewResultHtml,
   renderShopCreateHtml,
   renderShopDetailHtml,
   renderShopsHtml,

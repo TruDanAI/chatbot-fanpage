@@ -1000,6 +1000,60 @@ function createPageCredentialWriteServiceStub({ failWith, createdCredential } = 
   };
 }
 
+function createPageSetupPreviewServiceStub({ failWith, pageResult, credentialResult } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async previewPageMapping(input = {}) {
+      calls.push({ method: 'previewPageMapping', input });
+      if (failWith) throw failWith;
+      return pageResult || {
+        schemaReady: true,
+        validate_only: true,
+        shop_ref: 's:safe-shop',
+        page_ref: 'p:safe-page',
+        duplicate_active_mapping: false,
+        conflict: false,
+        page_format_valid: true,
+        page_name: {
+          provided: true,
+          length: 9,
+          max_length: 180,
+          status: 'ok'
+        },
+        readiness_impact: {
+          validate_only: true,
+          changes_readiness: false,
+          blockers_remaining: ['page_mapping_ready', 'credential_ready'],
+          live_enabled_after_preview: false
+        }
+      };
+    },
+    async previewCredentialPrerequisites(input = {}) {
+      calls.push({ method: 'previewCredentialPrerequisites', input });
+      if (failWith) throw failWith;
+      return credentialResult || {
+        schemaReady: true,
+        validate_only: true,
+        shop_ref: 's:safe-shop',
+        page_ref: '',
+        credential_type: 'fb_page_token',
+        credential_type_allowed: true,
+        credential_master_key_configured: true,
+        token_accepted: false,
+        health_check: false,
+        messenger_send: false,
+        readiness_impact: {
+          validate_only: true,
+          changes_readiness: false,
+          blockers_remaining: ['page_mapping_ready', 'credential_ready'],
+          live_enabled_after_preview: false
+        }
+      };
+    }
+  };
+}
+
 function createInternalNoteRouteFakeClientClass({
   failAudit = false,
   failNoteCode = '',
@@ -3191,6 +3245,59 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
   });
 
+  it('shop detail HTML switches demo-shop configuring/non-live page setup to preview-only controls', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          id: 'demo-shop',
+          slug: 'demo-shop',
+          name: 'Demo Shop',
+          status: 'active',
+          lifecycle: 'configuring',
+          live_enabled: false
+        },
+        pages: [{
+          id: 'demo-page-map',
+          page_id: '12345678901',
+          page_name: 'Demo Page',
+          status: 'active',
+          updated_at: '2026-05-16T00:00:00.000Z'
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 0
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Page Setup Preview');
+    expect(res.body).toContain('action="/admin/shops/demo-shop/pages/preview"');
+    expect(res.body).toContain('action="/admin/shops/demo-shop/page-credentials/preview"');
+    expect(res.body).toContain('Credential writes are disabled in preview mode.');
+    expect(res.body).toContain('name="credential_type"');
+    expect(res.body).toContain('value="fb_page_token"');
+    expect(res.body.includes('action="/admin/shops/demo-shop/pages"')).toBeFalse();
+    expect(res.body.includes('action="/admin/shops/demo-shop/pages/demo-page-map/credentials"')).toBeFalse();
+    expect(res.body.includes('type="password"')).toBeFalse();
+    expect(res.body.includes('name="token"')).toBeFalse();
+    expect(res.body.includes('Save credential')).toBeFalse();
+    expect(res.body.includes('Add mapping')).toBeFalse();
+    expect(res.body.includes('12345678901')).toBeFalse();
+    expect(res.body).toContain('p:');
+  });
+
   it('shop detail HTML renders chat behavior settings edit form', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -3534,6 +3641,139 @@ describe('admin dashboard routes', () => {
       expect(bodyText.includes('relation')).toBeFalse();
       expect(bodyText.includes('postgres://secret')).toBeFalse();
     }
+  });
+
+  it('page mapping preview API returns sanitized validate-only output and safe audit metadata', async () => {
+    const app = createApp();
+    const pageSetupPreviews = createPageSetupPreviewServiceStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageSetupPreviewService: pageSetupPreviews,
+      auditLogger,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/preview'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' },
+      body: { page_id: '98765432109', page_name: 'Demo Page' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+    const audit = auditLogger.entries[auditLogger.entries.length - 1];
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.validate_only).toBeTrue();
+    expect(body.shop_ref).toBe('s:safe-shop');
+    expect(body.page_ref).toBe('p:safe-page');
+    expect(body.page_format_valid).toBeTrue();
+    expect(body.duplicate_active_mapping).toBeFalse();
+    expect(body.readiness_impact.changes_readiness).toBeFalse();
+    expect(body.readiness_impact.blockers_remaining).toEqual(['page_mapping_ready', 'credential_ready']);
+    expect(body.readiness_impact.live_enabled_after_preview).toBeFalse();
+    expect(pageSetupPreviews.calls[0].method).toBe('previewPageMapping');
+    expect(audit.action).toBe('admin.shop_page.preview');
+    expect(audit.outcome).toBe('success');
+    expect(Object.keys(audit.metadata).sort()).toEqual([
+      'credential_type',
+      'health_check',
+      'messenger_send',
+      'page_ref',
+      'shop_ref',
+      'token_accepted',
+      'validate_only'
+    ].sort());
+    expect(audit.metadata.shop_ref).toBe('s:safe-shop');
+    expect(audit.metadata.page_ref).toBe('p:safe-page');
+    expect(audit.metadata.credential_type).toBe('');
+    expect(audit.metadata.validate_only).toBeTrue();
+    expect(audit.metadata.token_accepted).toBeFalse();
+    expect(audit.metadata.health_check).toBeFalse();
+    expect(audit.metadata.messenger_send).toBeFalse();
+    expect(bodyText.includes('98765432109')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(JSON.stringify(audit).includes('98765432109')).toBeFalse();
+    expect(JSON.stringify(audit).includes('auth_method')).toBeFalse();
+  });
+
+  it('credential preview API rejects submitted token safely and does not audit it', async () => {
+    const err = new Error('raw token EAAB-local-admin-page-token-value should not return');
+    err.code = 'credential_token_not_accepted_in_preview';
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageSetupPreviewService: createPageSetupPreviewServiceStub({ failWith: err }),
+      auditLogger,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/page-credentials/preview'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' },
+      body: { credential_type: 'fb_page_token', token: 'EAAB-local-admin-page-token-value' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(400);
+    expect(body.error).toBe('credential_token_not_accepted_in_preview');
+    expect(bodyText.includes('EAAB-local-admin-page-token-value')).toBeFalse();
+    expect(bodyText.includes('raw token')).toBeFalse();
+    expect(auditLogger.entries.some(entry => entry.action === 'admin.shop_page_credential.preview' && entry.outcome === 'success')).toBeFalse();
+  });
+
+  it('credential preview API returns prerequisites without health check or messenger flags enabled', async () => {
+    const app = createApp();
+    const pageSetupPreviews = createPageSetupPreviewServiceStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageSetupPreviewService: pageSetupPreviews,
+      auditLogger,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/page-credentials/preview'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' },
+      body: { credential_type: 'fb_page_token' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+    const audit = auditLogger.entries[auditLogger.entries.length - 1];
+
+    expect(res.statusCode).toBe(200);
+    expect(body.validate_only).toBeTrue();
+    expect(body.credential_type).toBe('fb_page_token');
+    expect(body.credential_type_allowed).toBeTrue();
+    expect(body.credential_master_key_configured).toBeTrue();
+    expect(body.token_accepted).toBeFalse();
+    expect(body.health_check).toBeFalse();
+    expect(body.messenger_send).toBeFalse();
+    expect(body.readiness_impact.blockers_remaining).toEqual(['page_mapping_ready', 'credential_ready']);
+    expect(audit.action).toBe('admin.shop_page_credential.preview');
+    expect(audit.metadata.credential_type).toBe('fb_page_token');
+    expect(audit.metadata.token_accepted).toBeFalse();
+    expect(audit.metadata.health_check).toBeFalse();
+    expect(audit.metadata.messenger_send).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('access_token')).toBeFalse();
+    expect(bodyText.includes('EAAB')).toBeFalse();
   });
 
   it('page credential create API requires auth and write permission before calling service', async () => {

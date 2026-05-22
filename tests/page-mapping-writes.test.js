@@ -218,4 +218,36 @@ describe('page mapping write persistence', () => {
     expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
   });
+
+  it('demo-shop configuring/non-live rejects direct page mapping writes in preview-only mode', async () => {
+    const state = createState();
+    state.shops.push({
+      id: 'demo-shop',
+      slug: 'demo-shop',
+      lifecycle: 'configuring',
+      live_enabled: false
+    });
+    const queries = [];
+    const service = createPostgresPageMappingWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries })
+    });
+
+    let err = null;
+    try {
+      await service.createPageMapping({
+        principal,
+        shopId: 'demo-shop',
+        body: { page_id: '12345678901', page_name: 'Demo Page' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('page_setup_preview_only');
+    expect(state.pages.some(row => row.shop_id === 'demo-shop')).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_pages/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
 });

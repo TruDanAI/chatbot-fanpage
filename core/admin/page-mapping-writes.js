@@ -6,6 +6,7 @@ const {
 } = require('../admin-auth');
 const { insertAuditLogEntry } = require('./audit');
 const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
+const { assertPageSetupDirectWriteAllowed } = require('./page-setup-preview');
 const { pageRef } = require('../utils/log-refs');
 
 const PAGE_MAPPING_WRITE_ACTIONS = Object.freeze({
@@ -75,7 +76,7 @@ function createPageMappingWriteRepository() {
     const normalized = normalizeText(shopId, 160);
     if (!normalized) throw createPageMappingWriteError('shop_not_found', 'Shop was not found.', 404);
     const result = await client.query(`
-      SELECT id, slug
+      SELECT id, slug, lifecycle, live_enabled
       FROM shops
       WHERE id = $1 OR slug = $1
       ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
@@ -199,6 +200,7 @@ function createPostgresPageMappingWriteService({
     validateCreatePageMappingInput(input);
     return withTransaction(async client => {
       const shop = await repository.resolveShop(client, shopId);
+      assertPageSetupDirectWriteAllowed(shop);
       if (input.status === 'active') {
         await repository.assertNoActivePageMapping(client, input.pageId);
       }

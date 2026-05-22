@@ -43,6 +43,9 @@ const WRITE_PERMISSIONS = Object.freeze(new Set([
 
 const AUDIT_OUTCOMES = Object.freeze(new Set(['success', 'denied', 'error', 'noop']));
 const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|database|authorization|cookie|phone|address|customer|service[_-]?account|fb[_-]?|telegram|google)/i;
+const SAFE_SENSITIVE_FLAG_KEYS = Object.freeze(new Set([
+  'token_accepted'
+]));
 const PHONE_PATTERN = /\b(?:\+?84|0)(?:[\s.-]?\d){8,10}\b/g;
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const ADDRESS_LABEL_PATTERN = /\b(address|dia chi|shipping_address)\b\s*[:=-]?\s*.+$/gi;
@@ -223,7 +226,10 @@ function redactString(value = '', max = 400) {
 }
 
 function redactAuditValue(value, key = '', depth = 0) {
-  if (SENSITIVE_KEY_PATTERN.test(String(key || ''))) return '[redacted]';
+  const normalizedKey = String(key || '').trim().toLowerCase();
+  if (SENSITIVE_KEY_PATTERN.test(normalizedKey) && !(SAFE_SENSITIVE_FLAG_KEYS.has(normalizedKey) && typeof value === 'boolean')) {
+    return '[redacted]';
+  }
   if (value == null) return value;
   if (depth > 5) return '[truncated]';
   if (typeof value === 'string') return redactString(value);

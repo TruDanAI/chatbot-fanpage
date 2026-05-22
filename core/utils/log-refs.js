@@ -10,6 +10,17 @@ function pageRef(pageId) {
     .slice(0, 10)}`;
 }
 
+function shopRef(shopId) {
+  const value = String(shopId || '').trim();
+  if (!value) return 'unknown';
+  return `s:${crypto
+    .createHash('sha256')
+    .update(value)
+    .digest('hex')
+    .slice(0, 10)}`;
+}
+
 module.exports = {
-  pageRef
+  pageRef,
+  shopRef
 };

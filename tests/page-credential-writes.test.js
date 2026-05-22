@@ -423,4 +423,42 @@ describe('page credential admin writes', () => {
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
   });
+
+  it('demo-shop configuring/non-live rejects direct credential writes before credential insert', async () => {
+    const state = createState();
+    state.shops.push({
+      id: 'demo-shop',
+      slug: 'demo-shop',
+      lifecycle: 'configuring',
+      live_enabled: false
+    });
+    state.pages.push({
+      id: 'demo-page-map',
+      shop_id: 'demo-shop',
+      page_id: '12345678901',
+      page_name: 'Demo Page',
+      status: 'active'
+    });
+    const queries = [];
+    const service = createService(state, queries);
+
+    let err = null;
+    try {
+      await service.createPageCredential({
+        principal,
+        shopId: 'demo-shop',
+        pageMappingId: 'demo-page-map',
+        body: { token }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('page_setup_preview_only');
+    expect(state.credentials.length).toBe(0);
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^UPDATE shop_page_credentials/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
 });
