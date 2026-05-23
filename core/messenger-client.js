@@ -7,10 +7,17 @@ function sleep(ms) {
 }
 
 function createMessengerClient({ fbPageToken, dryRun = false }) {
+  function resolveDryRun(options = {}) {
+    if (dryRun) return true;
+    return Object.prototype.hasOwnProperty.call(options, 'dryRun')
+      ? Boolean(options.dryRun)
+      : Boolean(dryRun);
+  }
+
   async function postFb(payload, attempts = 2, options = {}) {
     const hasPageTokenOverride = Object.prototype.hasOwnProperty.call(options, 'fbPageToken');
     const pageToken = hasPageTokenOverride ? options.fbPageToken : fbPageToken;
-    if (dryRun) {
+    if (resolveDryRun(options)) {
       return { data: { dryRun: true, payloadType: payload?.sender_action ? 'sender_action' : 'message' } };
     }
     if (!pageToken) {
@@ -141,16 +148,22 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     }
   }
 
-  function withPageToken(pageToken) {
+  function withPageToken(pageToken, pageOptions = {}) {
+    const scopedOptions = (options = {}) => ({
+      ...pageOptions,
+      ...options,
+      fbPageToken: pageToken
+    });
+
     return {
       BOT_MESSAGE_METADATA,
-      postFb: (payload, attempts = 2, options = {}) => postFb(payload, attempts, { ...options, fbPageToken: pageToken }),
-      sendCarousel: (recipientId, elements, options = {}) => sendCarousel(recipientId, elements, { ...options, fbPageToken: pageToken }),
-      sendImage: (recipientId, imageUrl, options = {}) => sendImage(recipientId, imageUrl, { ...options, fbPageToken: pageToken }),
-      sendMessage: (recipientId, text, options = {}) => sendMessage(recipientId, text, { ...options, fbPageToken: pageToken }),
+      postFb: (payload, attempts = 2, options = {}) => postFb(payload, attempts, scopedOptions(options)),
+      sendCarousel: (recipientId, elements, options = {}) => sendCarousel(recipientId, elements, scopedOptions(options)),
+      sendImage: (recipientId, imageUrl, options = {}) => sendImage(recipientId, imageUrl, scopedOptions(options)),
+      sendMessage: (recipientId, text, options = {}) => sendMessage(recipientId, text, scopedOptions(options)),
       sendQuickReplies: (recipientId, text, quickReplies = [], options = {}) =>
-        sendQuickReplies(recipientId, text, quickReplies, { ...options, fbPageToken: pageToken }),
-      showTyping: (recipientId, options = {}) => showTyping(recipientId, { ...options, fbPageToken: pageToken })
+        sendQuickReplies(recipientId, text, quickReplies, scopedOptions(options)),
+      showTyping: (recipientId, options = {}) => showTyping(recipientId, scopedOptions(options))
     };
   }
 

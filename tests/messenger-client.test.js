@@ -21,6 +21,53 @@ describe('messenger client dry-run', () => {
     expect(result.data.payloadType).toBe('message');
   });
 
+  it('keeps client dry-run as a kill switch even when scoped sends request live mode', async () => {
+    const calls = [];
+    const originalPost = axios.post;
+    axios.post = async url => {
+      calls.push(url);
+      return { data: { ok: true } };
+    };
+
+    try {
+      const client = createMessengerClient({
+        fbPageToken: 'global-token',
+        dryRun: true
+      });
+      const scoped = client.withPageToken('page-token', { dryRun: false });
+      const result = await scoped.postFb({ recipient: { id: 'sender_1' }, message: { text: 'ok' } });
+
+      expect(result.data.dryRun).toBeTrue();
+      expect(calls.length).toBe(0);
+    } finally {
+      axios.post = originalPost;
+    }
+  });
+
+  it('allows page-scoped dry-run while the shared client is otherwise live', async () => {
+    const calls = [];
+    const originalPost = axios.post;
+    axios.post = async url => {
+      calls.push(url);
+      return { data: { ok: true } };
+    };
+
+    try {
+      const client = createMessengerClient({
+        fbPageToken: 'global-token',
+        dryRun: false
+      });
+      const dryRunPage = client.withPageToken('page-token', { dryRun: true });
+      const dryRunResult = await dryRunPage.postFb({ recipient: { id: 'sender_1' }, message: { text: 'ok' } });
+      await client.withPageToken('page-token', { dryRun: false }).sendMessage('sender_1', 'hello');
+
+      expect(dryRunResult.data.dryRun).toBeTrue();
+      expect(calls.length).toBe(1);
+    } finally {
+      axios.post = originalPost;
+    }
+  });
+
   it('uses legacy FB_PAGE_TOKEN by default and page-scoped token for DB runtime sends', async () => {
     const calls = [];
     const originalPost = axios.post;

@@ -21,6 +21,12 @@ const SHOP_LIFECYCLE_READINESS_PATCH_PATH = path.join(
   'db',
   'shop-lifecycle-readiness-patch.sql'
 );
+const SHOP_DRY_RUN_PATCH_PATH = path.join(
+  __dirname,
+  '..',
+  'db',
+  'shop-dry-run-patch.sql'
+);
 
 function readSql(filePath = SQL_PATH) {
   return fs.readFileSync(filePath, 'utf8');
@@ -97,6 +103,7 @@ describe('multi-shop SQL proposal', () => {
     expect(normalized).toContain("package TEXT NOT NULL DEFAULT 'basic'");
     expect(normalized).toContain("lifecycle TEXT NOT NULL DEFAULT 'draft'");
     expect(normalized).toContain('live_enabled BOOLEAN NOT NULL DEFAULT false');
+    expect(normalized).toContain('dry_run BOOLEAN NOT NULL DEFAULT true');
     expect(normalized).toContain("last_readiness_status TEXT NOT NULL DEFAULT 'unknown'");
     expect(normalized).toContain('last_readiness_checked_at TIMESTAMPTZ');
     expect(normalized).toContain("last_manual_test_status TEXT NOT NULL DEFAULT 'unknown'");
@@ -251,6 +258,29 @@ describe('shop lifecycle readiness SQL patch', () => {
     expect(normalized).toContain('shops_last_manual_test_status_check');
     expect(normalized).toContain("CHECK (package IN ('basic', 'sales_flow', 'self_closing_addons'))");
     expect(normalized).toContain("CHECK (lifecycle IN ('draft', 'configuring', 'ready', 'live', 'paused', 'archived'))");
+  });
+});
+
+describe('shop dry-run SQL patch', () => {
+  function readPatchSql() {
+    return readSql(SHOP_DRY_RUN_PATCH_PATH);
+  }
+
+  it('exists in db/shop-dry-run-patch.sql', () => {
+    expect(fs.existsSync(SHOP_DRY_RUN_PATCH_PATH)).toBeTrue();
+  });
+
+  it('is additive and keeps existing shop rows safe', () => {
+    const normalized = normalizeSql(stripSqlComments(readPatchSql()));
+
+    expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS dry_run BOOLEAN\b/i);
+    expect(normalized).toContain('SET dry_run = COALESCE(dry_run, true)');
+    expect(normalized).toMatch(/\bALTER TABLE shops ALTER COLUMN dry_run SET DEFAULT true\b/i);
+    expect(normalized).toMatch(/\bALTER TABLE shops ALTER COLUMN dry_run SET NOT NULL\b/i);
+    expect(/\bDROP\b/i.test(normalized)).toBeFalse();
+    expect(/\bTRUNCATE\b/i.test(normalized)).toBeFalse();
+    expect(/\bDELETE\b/i.test(normalized)).toBeFalse();
+    expect(/\bRENAME\b/i.test(normalized)).toBeFalse();
   });
 });
 

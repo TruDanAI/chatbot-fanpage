@@ -41,7 +41,7 @@ const {
   isAiFallbackEnabled,
   isFollowUpEnabled
 } = require('./core/bot-mode');
-const { pageRef } = require('./core/utils/log-refs');
+const { pageRef, shopRef } = require('./core/utils/log-refs');
 
 const ROOT_DIR = __dirname;
 let multiShopDbPool = null;
@@ -370,6 +370,68 @@ function evaluateDbShopRuntimeLiveGate({
   return null;
 }
 
+function normalizeOptionalBoolean(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'boolean') return value;
+  return /^(1|true|yes|on)$/i.test(String(value).trim());
+}
+
+function resolveEffectiveMessengerDryRun({
+  globalDryRun = MESSENGER_DRY_RUN,
+  shopDryRun = null,
+  shopDryRunColumnAvailable = true
+} = {}) {
+  const normalizedGlobal = Boolean(globalDryRun);
+  const normalizedShop = normalizeOptionalBoolean(shopDryRun);
+  if (normalizedGlobal) {
+    return {
+      dryRun: true,
+      source: 'global',
+      globalDryRun: true,
+      shopDryRun: normalizedShop,
+      shopDryRunColumnAvailable: shopDryRunColumnAvailable !== false
+    };
+  }
+  if (normalizedShop === true) {
+    return {
+      dryRun: true,
+      source: 'shop',
+      globalDryRun: false,
+      shopDryRun: true,
+      shopDryRunColumnAvailable: shopDryRunColumnAvailable !== false
+    };
+  }
+  return {
+    dryRun: false,
+    source: normalizedShop === false ? 'shop' : 'legacy_missing_shop_dry_run',
+    globalDryRun: false,
+    shopDryRun: normalizedShop,
+    shopDryRunColumnAvailable: shopDryRunColumnAvailable !== false
+  };
+}
+
+function logMessengerDryRunDecision({
+  decision,
+  shopId = '',
+  pageId = '',
+  logger = console
+} = {}) {
+  if (!decision || typeof logger?.log !== 'function') return;
+  const shopDryRun = decision.shopDryRun == null
+    ? 'missing'
+    : (decision.shopDryRun ? 'true' : 'false');
+  logger.log([
+    '[messenger-dry-run]',
+    `effective=${decision.dryRun ? 'dry_run' : 'send_allowed'}`,
+    `source=${safeLogValue(decision.source)}`,
+    `global=${decision.globalDryRun ? 'true' : 'false'}`,
+    `shop=${shopDryRun}`,
+    `shop_column=${decision.shopDryRunColumnAvailable ? 'available' : 'missing'}`,
+    `shop_ref=${shopRef(shopId)}`,
+    `page_ref=${pageRef(pageId)}`
+  ].join(' '));
+}
+
 async function validateRuntimeAllowlistOnStartup({
   db,
   allowlist = RUNTIME_ALLOWLIST,
@@ -577,10 +639,11 @@ function buildDbShopRuntime(resolved, options = {}) {
   const runtimeStorage = options.storage || storage;
   const dbConfig = applyBotModeConfig(resolved.config);
   const dbProducts = resolved.products || [];
+  const messengerDryRun = Boolean(options.messengerDryRun);
   const messenger = options.messenger
     || (typeof options.messengerFactory === 'function'
-      ? options.messengerFactory(options.fbPageToken)
-      : withPageToken(options.fbPageToken));
+      ? options.messengerFactory(options.fbPageToken, { dryRun: messengerDryRun })
+      : withPageToken(options.fbPageToken, { dryRun: messengerDryRun }));
   const dbRules = createRuleEngine({
     products: dbProducts,
     config: dbConfig,
@@ -643,6 +706,7 @@ function buildDbShopRuntime(resolved, options = {}) {
   return {
     storage: runtimeStorage,
     shopConfig: dbConfig,
+    messengerDryRun,
     useGemini: USE_GEMINI && isAiFallbackEnabled(dbConfig),
     buildDeterministicReply: dbRules.buildDeterministicReply,
     buildFallbackReply: dbRules.buildFallbackReply,
@@ -711,7 +775,9 @@ async function resolveDbShopRuntimeForPage({
   credentialMasterKey = process.env.CREDENTIAL_MASTER_KEY,
   credentialResolver = resolvePageCredential,
   messengerFactory,
-  shopLiveGateEnabled = SHOP_LIVE_GATE_ENABLED
+  shopLiveGateEnabled = SHOP_LIVE_GATE_ENABLED,
+  globalMessengerDryRun = MESSENGER_DRY_RUN,
+  logger = console
 } = {}) {
   const normalizedPageId = String(pageId || '').trim();
   const queryable = db || getMultiShopDbPool();
@@ -759,10 +825,22 @@ async function resolveDbShopRuntimeForPage({
   } catch {
     return { failClosed: true, reason: 'runtime_storage_context_unavailable' };
   }
+  const dryRunDecision = resolveEffectiveMessengerDryRun({
+    globalDryRun: globalMessengerDryRun,
+    shopDryRun: result.shop?.dry_run,
+    shopDryRunColumnAvailable: result.shop?.dryRunColumnAvailable !== false
+  });
+  logMessengerDryRunDecision({
+    decision: dryRunDecision,
+    shopId: result.shop?.id,
+    pageId: result.page?.page_id || normalizedPageId,
+    logger
+  });
   return buildDbShopRuntime(result, {
     storage: runtimeStorage,
     fbPageToken: credential.secret,
-    messengerFactory
+    messengerFactory,
+    messengerDryRun: dryRunDecision.dryRun
   });
 }
 
@@ -972,6 +1050,7 @@ module.exports = {
   isAllowedResolvedRuntime,
   recordConversationTurn,
   redactSensitiveText,
+  resolveEffectiveMessengerDryRun,
   resolveDbShopRuntimeForPage,
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,

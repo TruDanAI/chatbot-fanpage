@@ -10,12 +10,19 @@ class FakeShopConfigClient {
     };
     this.calls = [];
     this.failControlPlaneOnce = Boolean(seed.failControlPlaneOnce);
+    this.failDryRunOnce = Boolean(seed.failDryRunOnce);
   }
 
   async query(sql, values = []) {
     this.calls.push({ sql, values });
     const normalized = String(sql).replace(/\s+/g, ' ').trim();
     if (normalized.includes('FROM shop_pages sp')) {
+      if (this.failDryRunOnce && normalized.includes('shop_dry_run')) {
+        this.failDryRunOnce = false;
+        const err = new Error('column s.dry_run does not exist');
+        err.code = '42703';
+        throw err;
+      }
       if (this.failControlPlaneOnce && normalized.includes('shop_package')) {
         this.failControlPlaneOnce = false;
         const err = new Error('column s.package does not exist');
@@ -48,6 +55,7 @@ function makeSeed() {
       shop_package: 'basic',
       shop_lifecycle: 'live',
       live_enabled: true,
+      shop_dry_run: false,
       last_readiness_status: 'passed',
       last_manual_test_status: 'passed',
       default_locale: 'vi-VN',
@@ -167,6 +175,9 @@ describe('db shop config resolver', () => {
     expect(result.shop.package).toBe('basic');
     expect(result.shop.lifecycle).toBe('live');
     expect(result.shop.live_enabled).toBeTrue();
+    expect(result.shop.dry_run).toBeFalse();
+    expect(result.shop.dryRunColumnAvailable).toBeTrue();
+    expect(result.config.__dbShop.dryRun).toBeFalse();
     expect(result.config.botMode.name).toBe('menu_code_handoff');
     expect(result.config.botMode.handoffEnabled).toBeTrue();
     expect(result.config.botMode.handoffMessage).toBe('DB handoff message');
@@ -216,6 +227,27 @@ describe('db shop config resolver', () => {
     expect(result.shop.package).toBe('basic');
     expect(result.shop.lifecycle).toBe('live');
     expect(result.shop.live_enabled).toBeTrue();
+    expect(client.calls.filter(call => String(call.sql).includes('FROM shop_pages sp')).length).toBe(2);
+  });
+
+  it('preserves old behavior when only the dry_run column is missing', async () => {
+    const client = new FakeShopConfigClient({
+      ...makeSeed(),
+      failDryRunOnce: true
+    });
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeTrue();
+    expect(result.shop.controlPlaneColumnsAvailable).toBeTrue();
+    expect(result.shop.dryRunColumnAvailable).toBeFalse();
+    expect(result.shop.dry_run).toBe(null);
+    expect(result.config.__dbShop.dryRun).toBe(null);
+    expect(result.config.__dbShop.dryRunColumnAvailable).toBeFalse();
+    expect(result.shop.lifecycle).toBe('live');
     expect(client.calls.filter(call => String(call.sql).includes('FROM shop_pages sp')).length).toBe(2);
   });
 

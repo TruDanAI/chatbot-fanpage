@@ -29,6 +29,15 @@ function boolValue(value, fallback = false) {
 const BOT_MODES = new Set(['menu_code_handoff', 'menu_only', 'handoff_only', 'disabled']);
 const CONTROL_PLANE_MISSING_COLUMN_CODES = new Set(['42703']);
 
+function isMissingColumnError(err) {
+  return CONTROL_PLANE_MISSING_COLUMN_CODES.has(String(err?.code || ''));
+}
+
+function isMissingDryRunColumnError(err) {
+  return isMissingColumnError(err)
+    && /dry_run/i.test(String(err?.column || err?.message || ''));
+}
+
 function botModeValue(value, fallback = 'disabled') {
   const normalized = trimText(value).toLowerCase();
   return BOT_MODES.has(normalized) ? normalized : fallback;
@@ -197,7 +206,9 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
       lifecycle: normalizeLifecycle(shop.lifecycle, defaultLifecycleForStatus(shop.status)),
       liveEnabled: boolValue(shop.live_enabled, trimText(shop.status).toLowerCase() === 'active'),
       pageId: trimText(page.page_id),
-      pageName: trimText(page.page_name)
+      pageName: trimText(page.page_name),
+      dryRun: shop.dry_run == null ? null : boolValue(shop.dry_run, true),
+      dryRunColumnAvailable: shop.dryRunColumnAvailable !== false
     },
     __assets: groupedAssets,
     __products: products
@@ -212,7 +223,7 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
     throw new Error('resolveShopConfigForPage requires a db/client with query().');
   }
 
-  async function queryMapping({ includeControlPlane = true } = {}) {
+  async function queryMapping({ includeControlPlane = true, includeDryRun = true } = {}) {
     const controlColumns = includeControlPlane ? `
         s.package AS shop_package,
         s.lifecycle AS shop_lifecycle,
@@ -223,6 +234,9 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
         s.last_manual_test_at,
         s.last_ready_by,
     ` : '';
+    const dryRunColumn = includeDryRun ? `
+        s.dry_run AS shop_dry_run,
+    ` : '';
     return queryable.query(
       `
       SELECT
@@ -231,6 +245,7 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
         s.name AS shop_name,
         s.status AS shop_status,
         ${controlColumns}
+        ${dryRunColumn}
         s.default_locale,
         s.timezone,
         sp.id AS page_mapping_id,
@@ -257,12 +272,24 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
 
   let mapping;
   let controlPlaneColumnsAvailable = true;
+  let dryRunColumnAvailable = true;
   try {
-    mapping = await queryMapping({ includeControlPlane: true });
+    mapping = await queryMapping({ includeControlPlane: true, includeDryRun: true });
   } catch (err) {
-    if (!CONTROL_PLANE_MISSING_COLUMN_CODES.has(String(err?.code || ''))) throw err;
-    controlPlaneColumnsAvailable = false;
-    mapping = await queryMapping({ includeControlPlane: false });
+    if (!isMissingColumnError(err)) throw err;
+    dryRunColumnAvailable = false;
+    if (isMissingDryRunColumnError(err)) {
+      try {
+        mapping = await queryMapping({ includeControlPlane: true, includeDryRun: false });
+      } catch (retryErr) {
+        if (!isMissingColumnError(retryErr)) throw retryErr;
+        controlPlaneColumnsAvailable = false;
+        mapping = await queryMapping({ includeControlPlane: false, includeDryRun: false });
+      }
+    } else {
+      controlPlaneColumnsAvailable = false;
+      mapping = await queryMapping({ includeControlPlane: false, includeDryRun: false });
+    }
   }
 
   if (!mapping.rows.length) return { found: false, reason: 'page_not_found' };
@@ -282,6 +309,8 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
     last_manual_test_status: trimText(row.last_manual_test_status || 'unknown'),
     last_manual_test_at: row.last_manual_test_at || null,
     last_ready_by: trimText(row.last_ready_by),
+    dry_run: dryRunColumnAvailable ? boolValue(row.shop_dry_run, true) : null,
+    dryRunColumnAvailable,
     defaultLocale: row.default_locale,
     timezone: row.timezone,
     controlPlaneColumnsAvailable

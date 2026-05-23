@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS shops (
   package TEXT NOT NULL DEFAULT 'basic',
   lifecycle TEXT NOT NULL DEFAULT 'draft',
   live_enabled BOOLEAN NOT NULL DEFAULT false,
+  dry_run BOOLEAN NOT NULL DEFAULT true,
   last_readiness_status TEXT NOT NULL DEFAULT 'unknown',
   last_readiness_checked_at TIMESTAMPTZ,
   last_manual_test_status TEXT NOT NULL DEFAULT 'unknown',

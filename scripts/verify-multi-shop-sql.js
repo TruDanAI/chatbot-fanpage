@@ -19,6 +19,7 @@ const EXPECTED_TABLES = Object.freeze({
       package: { dataType: 'text', nullable: false },
       lifecycle: { dataType: 'text', nullable: false },
       live_enabled: { dataType: 'boolean', nullable: false },
+      dry_run: { dataType: 'boolean', nullable: false },
       last_readiness_status: { dataType: 'text', nullable: false },
       last_readiness_checked_at: { dataType: 'timestamp with time zone', nullable: true },
       last_manual_test_status: { dataType: 'text', nullable: false },
