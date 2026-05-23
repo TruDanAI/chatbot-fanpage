@@ -1,6 +1,8 @@
 const { describe, it, expect } = require('./harness');
 const { decryptCredential } = require('../core/credentials/page-credentials');
 const {
+  DEMO_SHOP_CREDENTIAL_WRITE_UNLOCK_ENV,
+  isDemoShopCredentialWriteUnlockAllowed,
   createPostgresPageCredentialWriteService
 } = require('../core/admin/page-credential-writes');
 
@@ -12,6 +14,13 @@ const principal = Object.freeze({
   tenantId: 'default',
   pageId: 'admin-page',
   authMethod: 'static_bearer'
+});
+const stagingUnlockEnv = Object.freeze({
+  NODE_ENV: 'staging',
+  RAILWAY_ENVIRONMENT: 'staging',
+  RAILWAY_ENVIRONMENT_NAME: 'staging',
+  [DEMO_SHOP_CREDENTIAL_WRITE_UNLOCK_ENV]: 'true',
+  MESSENGER_DRY_RUN: 'true'
 });
 
 function cloneRows(rows = []) {
@@ -36,6 +45,24 @@ function createState() {
     products: [],
     assets: []
   };
+}
+
+function addDemoShop(state, shopOverrides = {}, pageOverrides = {}) {
+  state.shops.push({
+    id: 'demo-shop',
+    slug: 'demo-shop',
+    lifecycle: 'configuring',
+    live_enabled: false,
+    ...shopOverrides
+  });
+  state.pages.push({
+    id: 'demo-page-map',
+    shop_id: 'demo-shop',
+    page_id: 'demo-page-for-tests',
+    page_name: 'Demo Page',
+    status: 'active',
+    ...pageOverrides
+  });
 }
 
 function makeClientClass({ state, queries, failAudit = false, commitCommand = 'COMMIT' } = {}) {
@@ -162,7 +189,8 @@ function createService(state, queries, options = {}) {
   return createPostgresPageCredentialWriteService({
     databaseUrl: 'postgres://example.test/db',
     Client: makeClientClass({ state, queries, ...options }),
-    getCredentialMasterKey: () => options.masterKey == null ? masterKey : options.masterKey
+    getCredentialMasterKey: () => options.masterKey == null ? masterKey : options.masterKey,
+    env: options.env
   });
 }
 
@@ -426,19 +454,7 @@ describe('page credential admin writes', () => {
 
   it('demo-shop configuring/non-live rejects direct credential writes before credential insert', async () => {
     const state = createState();
-    state.shops.push({
-      id: 'demo-shop',
-      slug: 'demo-shop',
-      lifecycle: 'configuring',
-      live_enabled: false
-    });
-    state.pages.push({
-      id: 'demo-page-map',
-      shop_id: 'demo-shop',
-      page_id: '12345678901',
-      page_name: 'Demo Page',
-      status: 'active'
-    });
+    addDemoShop(state);
     const queries = [];
     const service = createService(state, queries);
 
@@ -460,5 +476,198 @@ describe('page credential admin writes', () => {
     expect(queries.some(item => /^UPDATE shop_page_credentials/i.test(item.sql))).toBeFalse();
     expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('allows demo-shop credential write with explicit staging dry-run unlock', async () => {
+    const state = createState();
+    addDemoShop(state);
+    const queries = [];
+    const service = createService(state, queries, { env: stagingUnlockEnv });
+
+    const result = await service.createPageCredential({
+      principal,
+      shopId: 'demo-shop',
+      pageMappingId: 'demo-page-map',
+      body: { token }
+    });
+
+    const inserted = state.credentials[0];
+    const auditInsert = queries.find(item => /^INSERT INTO admin_audit_log/i.test(item.sql));
+    const auditMetadata = JSON.parse(auditInsert.params[12]);
+    const responseText = JSON.stringify(result);
+    const metadataText = JSON.stringify(auditMetadata);
+    const pageId = state.pages.find(row => row.id === 'demo-page-map').page_id;
+
+    expect(result.shopId).toBe('demo-shop');
+    expect(result.pageMappingId).toBe('demo-page-map');
+    expect(result.page_ref.startsWith('p:')).toBeTrue();
+    expect(result.credential.credential_type).toBe('fb_page_token');
+    expect(result.credential.status).toBe('active');
+    expect(result.active_credential_count).toBe(1);
+    expect(result.archived_count).toBe(0);
+    expect(result.rotated).toBeFalse();
+    expect(inserted.encrypted_value).toMatch(/^v1:/);
+    expect(inserted.encrypted_value.includes(token)).toBeFalse();
+    expect(decryptCredential(inserted.encrypted_value, masterKey)).toBe(token);
+    expect(auditInsert.params[5]).toBe('admin.shop_page_credential.create');
+    expect(Object.keys(auditMetadata).sort()).toEqual([
+      'active_count',
+      'archived_count',
+      'credential_type',
+      'page_ref',
+      'previous_active_count',
+      'rotated'
+    ].sort());
+    expect(auditMetadata.page_ref.startsWith('p:')).toBeTrue();
+    expect(auditMetadata.credential_type).toBe('fb_page_token');
+    expect(auditMetadata.rotated).toBeFalse();
+    expect(auditMetadata.previous_active_count).toBe(0);
+    expect(auditMetadata.archived_count).toBe(0);
+    expect(auditMetadata.active_count).toBe(1);
+    expect(responseText.includes(token)).toBeFalse();
+    expect(responseText.includes('encrypted_value')).toBeFalse();
+    expect(responseText.includes(pageId)).toBeFalse();
+    expect(metadataText.includes('demo-shop')).toBeFalse();
+    expect(metadataText.includes('demo-page-map')).toBeFalse();
+    expect(metadataText.includes('shop_id')).toBeFalse();
+    expect(metadataText.includes('page_mapping_id')).toBeFalse();
+    expect(metadataText.includes(token)).toBeFalse();
+    expect(metadataText.includes('encrypted_value')).toBeFalse();
+    expect(metadataText.includes(pageId)).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeTrue();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeFalse();
+  });
+
+  it('allows demo-shop ready/non-live credential write only with the staging unlock', async () => {
+    const state = createState();
+    addDemoShop(state, { lifecycle: 'ready' });
+    const queries = [];
+    const service = createService(state, queries, { env: stagingUnlockEnv });
+
+    const result = await service.createPageCredential({
+      principal,
+      shopId: 'demo-shop',
+      pageMappingId: 'demo-page-map',
+      body: { token }
+    });
+
+    expect(result.active_credential_count).toBe(1);
+    expect(state.credentials.length).toBe(1);
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeTrue();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeTrue();
+  });
+
+  it('does not unlock demo-shop credential writes in production', async () => {
+    const state = createState();
+    addDemoShop(state);
+    const queries = [];
+    const service = createService(state, queries, {
+      env: {
+        ...stagingUnlockEnv,
+        NODE_ENV: 'production',
+        RAILWAY_ENVIRONMENT_NAME: 'production'
+      }
+    });
+
+    let err = null;
+    try {
+      await service.createPageCredential({
+        principal,
+        shopId: 'demo-shop',
+        pageMappingId: 'demo-page-map',
+        body: { token }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('page_setup_preview_only');
+    expect(state.credentials.length).toBe(0);
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('does not unlock demo-shop credential writes when dry-run is disabled', async () => {
+    const state = createState();
+    addDemoShop(state);
+    const queries = [];
+    const service = createService(state, queries, {
+      env: {
+        ...stagingUnlockEnv,
+        MESSENGER_DRY_RUN: 'false'
+      }
+    });
+
+    let err = null;
+    try {
+      await service.createPageCredential({
+        principal,
+        shopId: 'demo-shop',
+        pageMappingId: 'demo-page-map',
+        body: { token }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('page_setup_preview_only');
+    expect(state.credentials.length).toBe(0);
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('does not unlock demo-shop credential writes for inactive page mappings', async () => {
+    const state = createState();
+    addDemoShop(state, {}, { status: 'paused' });
+    const queries = [];
+    const service = createService(state, queries, { env: stagingUnlockEnv });
+
+    let err = null;
+    try {
+      await service.createPageCredential({
+        principal,
+        shopId: 'demo-shop',
+        pageMappingId: 'demo-page-map',
+        body: { token }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('page_setup_preview_only');
+    expect(state.credentials.length).toBe(0);
+    expect(queries.some(item => /^INSERT INTO shop_page_credentials/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^INSERT INTO admin_audit_log/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('limits the staging unlock predicate to demo-shop only', () => {
+    const activeAdultMapping = {
+      id: 'adult-page-map',
+      shop_id: 'adult-shop',
+      status: 'active'
+    };
+    const activeOtherMapping = {
+      id: 'other-page-map',
+      shop_id: 'other-shop',
+      status: 'active'
+    };
+
+    expect(isDemoShopCredentialWriteUnlockAllowed({
+      id: 'adult-shop',
+      slug: 'adult-shop',
+      lifecycle: 'configuring',
+      live_enabled: false
+    }, activeAdultMapping, stagingUnlockEnv)).toBeFalse();
+    expect(isDemoShopCredentialWriteUnlockAllowed({
+      id: 'other-shop',
+      slug: 'other-shop',
+      lifecycle: 'ready',
+      live_enabled: false
+    }, activeOtherMapping, stagingUnlockEnv)).toBeFalse();
   });
 });
