@@ -116,10 +116,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
   }
 
   function showTyping(recipientId, options = {}) {
-    const postOptions = { timeout: 5000 };
-    if (Object.prototype.hasOwnProperty.call(options, 'fbPageToken')) {
-      postOptions.fbPageToken = options.fbPageToken;
-    }
+    const postOptions = { ...options, timeout: options.timeout || 5000 };
 
     // Fire-and-forget: lỗi typing không chặn flow trả lời chính
     return postFb(
