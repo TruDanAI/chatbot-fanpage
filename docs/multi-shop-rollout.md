@@ -242,6 +242,17 @@ Safety boundary:
   documentation update.
 - `WEBHOOK_QUEUE_ENABLED` remains false and is a separate future gate.
 
+## Basic E2E Staging Checkpoint - 2026-05-24
+
+Staging-only checkpoint recorded after the completed Basic E2E test:
+
+- Staging `demo-shop` readiness passed.
+- Real Messenger menu test passed.
+- Real Messenger code `11` test passed.
+- No Messenger send errors were observed.
+- Staging was restored to `MESSENGER_DRY_RUN=true`.
+- Production and `adult-shop` were untouched.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
