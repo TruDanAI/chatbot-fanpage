@@ -644,6 +644,42 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(JSON.stringify(h.sent).includes('680k')).toBeFalse();
   });
 
+  it('DB runtime numeric product codes use exact code for product image lookup', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async ({ fallbackRuntime }) => {
+        const runtime = buildDbRuntimeForWebhook(fallbackRuntime, {
+          products: [{
+            code: '11',
+            price: '100k',
+            description: 'Numeric DB product',
+            size: '',
+            weight: '',
+            gift: '',
+            preorder: false,
+            imageFile: ''
+          }]
+        });
+        runtime.buildRequestedImageUrls = text => {
+          const codes = runtime.extractRequestedProductCodes(text);
+          return codes.includes('11')
+            ? [{ file: 'db-11.png', url: 'https://cdn.example.test/db-11.png' }]
+            : [];
+        };
+        return runtime;
+      }
+    });
+
+    await h.handleText('11', 'db_numeric_code_user', 'm_db_numeric_code', 'page_db_numeric');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('db-11.png'))).toBeTrue();
+    expect(textMessages[0]).toContain('100k');
+    expect(textMessages[1]).toBe('DB handoff message');
+    expect(h.storage.getLastProductCode('db_numeric_code_user')).toBe('11');
+    expect(h.storage.inHandoff('db_numeric_code_user')).toBeTrue();
+  });
+
   it('uses resolved runtime storage instead of the singleton storage', async () => {
     const senderId = 'same_sender_db_runtime';
     const pageStorage = {

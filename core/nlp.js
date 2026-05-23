@@ -86,7 +86,7 @@ function extractRequestedProductCodes(text, knownCodes = []) {
   const knownCodeByNaturalNumber = new Map();
   for (const code of knownCodes) {
     const normalized = normalizeText(code).replace(/[^\p{L}\p{N}]/gu, '');
-    const match = normalized.match(/^(?:ma|m)(\d{1,4})$/);
+    const match = normalized.match(/^(?:ma|m)(\d{1,4})$/) || normalized.match(/^(\d{1,4})$/);
     if (match && !knownCodeByNaturalNumber.has(Number(match[1]))) {
       knownCodeByNaturalNumber.set(Number(match[1]), code);
     }

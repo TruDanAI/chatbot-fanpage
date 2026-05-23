@@ -68,6 +68,11 @@ describe('nlp.extractRequestedProductCodes', () => {
   it('nhận mã trần khi toàn bộ tin nhắn là mã sản phẩm đã biết', () => {
     expect(nlp.extractRequestedProductCodes('11', known)).toEqual(['MÃ11']);
   });
+  it('giữ mã số DB khi known code là số trần', () => {
+    expect(nlp.extractRequestedProductCodes('11', ['11', '12'])).toEqual(['11']);
+    expect(nlp.extractRequestedProductCodes('ma 11', ['11', '12'])).toEqual(['11']);
+    expect(nlp.extractRequestedProductCodes('mã số 11', ['11', '12'])).toEqual(['11']);
+  });
   it('nhận "mã số" có dấu', () => {
     expect(nlp.extractRequestedProductCodes('mã số 11', known)).toEqual(['MÃ11']);
   });
