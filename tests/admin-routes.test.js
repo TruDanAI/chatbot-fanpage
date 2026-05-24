@@ -40,7 +40,7 @@ function createApp() {
   };
 }
 
-function createReq({ headers = {}, params = {}, query = {}, body = {} } = {}) {
+function createReq({ headers = {}, params = {}, query = {}, body = {}, file = undefined, files = undefined } = {}) {
   const normalized = Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -48,6 +48,8 @@ function createReq({ headers = {}, params = {}, query = {}, body = {} } = {}) {
     body,
     params,
     query,
+    file,
+    files,
     get(name) {
       return normalized[String(name).toLowerCase()] || '';
     }
@@ -99,6 +101,16 @@ function createRes() {
       this.body = JSON.stringify(body);
       return this;
     }
+  };
+}
+
+function createUploadFile(overrides = {}) {
+  const buffer = overrides.buffer || Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+  return {
+    originalname: overrides.originalname || 'upload.jpg',
+    mimetype: overrides.mimetype || 'image/jpeg',
+    buffer,
+    size: overrides.size == null ? buffer.length : overrides.size
   };
 }
 
@@ -818,6 +830,48 @@ function createAssetWriteServiceStub({ failWith, bulkFailWith, createdAsset, upd
           { ...baseAsset, id: 'asset-menu-1', product_id: '', product_code: '', asset_type: 'menu_image', public_url: 'https://cdn.example.test/menu-1.jpg', sort_order: 1 },
           { ...baseAsset, id: 'asset-menu-2', product_id: '', product_code: '', asset_type: 'menu_image', public_url: 'https://cdn.example.test/menu-2.jpg', sort_order: 2 }
         ]
+      };
+    }
+  };
+}
+
+function createAssetUploadServiceStub({ enabled = true, configured = true, failWith, createdAsset } = {}) {
+  const calls = [];
+  const baseAsset = {
+    id: 'asset-upload-1',
+    shop_id: 'adult-shop',
+    product_id: 'prod-1',
+    product_code: 'DB1',
+    asset_type: 'product_image',
+    storage_provider: 'object_storage',
+    public_url: 'https://res.cloudinary.com/example/image/upload/v1/admin_uploads/adult-shop/product_image/asset.jpg',
+    content_type: 'image/jpeg',
+    size_bytes: 12,
+    status: 'active',
+    sort_order: 1,
+    updated_at: '2026-05-12T04:00:00.000Z'
+  };
+  return {
+    calls,
+    isEnabled() {
+      return enabled;
+    },
+    getCloudinaryConfig() {
+      return configured ? { ok: true, folder: 'admin_uploads' } : { ok: false, reason: 'missing_cloudinary_config' };
+    },
+    getPolicy() {
+      return { maxBytes: 5242880, allowedMime: ['image/jpeg', 'image/png', 'image/webp'], allowedExt: ['.jpg', '.jpeg', '.png', '.webp'] };
+    },
+    async createUploadedAsset(input = {}) {
+      calls.push({ method: 'createUploadedAsset', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        asset: createdAsset || {
+          ...baseAsset,
+          asset_type: input.body?.asset_type || 'menu_image',
+          product_id: input.body?.asset_type === 'product_image' ? (input.body?.product_id || 'prod-1') : ''
+        }
       };
     }
   };
@@ -4470,6 +4524,219 @@ describe('admin dashboard routes', () => {
     }), resArchive);
     expect(JSON.parse(resArchive.body).asset.status).toBe('archived');
     expect(assetWrites.calls[3].method).toBe('archiveAsset');
+  });
+
+  it('admin image upload UI is hidden by default and API returns a safe disabled response', async () => {
+    const app = createApp();
+    const assetUploads = createAssetUploadServiceStub({ enabled: false });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: assetUploads,
+      adminImageUploadEnabled: false,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const htmlRes = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(200);
+    expect(htmlRes.body.includes('/assets/uploads')).toBeFalse();
+    expect(htmlRes.body.includes('Upload menu image')).toBeFalse();
+    expect(htmlRes.body).toContain('Add asset URL');
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), apiRes);
+    const body = JSON.parse(apiRes.body);
+
+    expect(apiRes.statusCode).toBe(404);
+    expect(body.error).toBe('feature_disabled');
+    expect(assetUploads.calls.length).toBe(0);
+  });
+
+  it('admin image upload UI appears only when enabled and missing Cloudinary config returns safe API/HTML errors', async () => {
+    const missingConfig = createAssetUploadServiceStub({ enabled: true, configured: false });
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: missingConfig,
+      adminImageUploadEnabled: true,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const htmlRes = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(200);
+    expect(htmlRes.body).toContain('Upload menu image');
+    expect(htmlRes.body).toContain('Upload product image');
+    expect(htmlRes.body).toContain('DB1 - DB Product');
+    expect(htmlRes.body).toContain('action="/admin/shops/adult-shop/assets/uploads"');
+    expect(htmlRes.body).toContain('enctype="multipart/form-data"');
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), apiRes);
+    const apiBody = JSON.parse(apiRes.body);
+    const apiText = JSON.stringify(apiBody);
+
+    expect(apiRes.statusCode).toBe(503);
+    expect(apiBody.error).toBe('feature_not_configured');
+    expect(apiText.includes('cloudinary://')).toBeFalse();
+    expect(apiText.includes('secret')).toBeFalse();
+    expect(missingConfig.calls.length).toBe(0);
+
+    const htmlPostRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), htmlPostRes);
+    expect(htmlPostRes.statusCode).toBe(503);
+    expect(htmlPostRes.body).toBe('Image upload storage is not configured.');
+    expect(htmlPostRes.body.includes('secret')).toBeFalse();
+  });
+
+  it('admin image upload API/HTML require auth and product write permission before calling service', async () => {
+    for (const route of [
+      'POST /admin/api/shops/:shopId/assets/uploads',
+      'POST /admin/shops/:shopId/assets/uploads'
+    ]) {
+      const assetUploads = createAssetUploadServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        assetUploadService: assetUploads,
+        auditLogger,
+        adminImageUploadEnabled: true,
+        adminPrincipalRoles: ['viewer']
+      });
+
+      const unauthRes = createRes();
+      await app.routes[route](createReq({
+        params: { shopId: 'adult-shop' },
+        body: { asset_type: 'menu_image' },
+        file: createUploadFile()
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes[route](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { asset_type: 'menu_image' },
+        file: createUploadFile()
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(assetUploads.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_asset.upload');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+    }
+  });
+
+  it('admin image upload API and HTML success call upload service without leaking storage keys', async () => {
+    const app = createApp();
+    const assetUploads = createAssetUploadServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: assetUploads,
+      adminImageUploadEnabled: true,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'product_image', product_id: 'prod-1', sort_order: '3' },
+      file: createUploadFile()
+    }), apiRes);
+    const apiBody = JSON.parse(apiRes.body);
+    const apiText = JSON.stringify(apiBody);
+
+    expect(apiRes.statusCode).toBe(201);
+    expect(apiBody.asset.storage_provider).toBe('object_storage');
+    expect(apiBody.asset.storage_key).toBe(undefined);
+    expect(apiText.includes('cloudinary://')).toBeFalse();
+    expect(apiText.includes('secret')).toBeFalse();
+    expect(assetUploads.calls[0].method).toBe('createUploadedAsset');
+    expect(assetUploads.calls[0].input.file.originalname).toBe('upload.jpg');
+
+    const htmlRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(303);
+    expect(htmlRes.headers.location).toBe('/admin/shops/adult-shop?assetMessage=uploaded');
+    expect(assetUploads.calls[1].method).toBe('createUploadedAsset');
+  });
+
+  it('admin image upload API and HTML map provider failures without leaking secrets', async () => {
+    const err = new Error('Cloudinary failed with cloudinary://key:secret@example-cloud and signed params');
+    err.code = 'cloudinary_upload_failed';
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: createAssetUploadServiceStub({ failWith: err }),
+      adminImageUploadEnabled: true,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), apiRes);
+    const apiText = apiRes.body;
+    expect(apiRes.statusCode).toBe(502);
+    expect(JSON.parse(apiRes.body).error).toBe('upload_failed');
+    expect(apiText.includes('cloudinary://')).toBeFalse();
+    expect(apiText.includes('secret')).toBeFalse();
+    expect(apiText.includes('signed params')).toBeFalse();
+
+    const htmlRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(502);
+    expect(htmlRes.body).toBe('Image upload could not be completed.');
   });
 
   it('bulk menu image import API requires auth and write permission before calling service', async () => {

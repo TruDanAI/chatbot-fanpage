@@ -38,6 +38,7 @@ const PRODUCT_FLASH_MESSAGES = {
 };
 const ASSET_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Asset created.' },
+  uploaded: { type: 'success', text: 'Image uploaded.' },
   updated: { type: 'success', text: 'Asset updated.' },
   enabled: { type: 'success', text: 'Asset enabled.' },
   disabled: { type: 'success', text: 'Asset disabled.' },
@@ -60,6 +61,7 @@ function createAdminReadHandlers({
   internalNoteService,
   tenantId = 'default',
   pageId = '',
+  adminImageUploadEnabled = false,
   authorizeAdminRequest,
   recordAdminAudit
 } = {}) {
@@ -470,6 +472,7 @@ function createAdminReadHandlers({
       const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
       const presented = presentShopDetailApi(model);
       presented.assets = presentShopAssetsForHtml(model.assets || {});
+      presented.adminImageUploadEnabled = Boolean(adminImageUploadEnabled && hasPermission(principal, PERMISSIONS.PRODUCT_WRITE));
       if (model.schemaReady !== false && model.shop) {
         try {
           presented.health = presentShopHealthApi(await reader.getShopHealth(shopId));
@@ -479,6 +482,7 @@ function createAdminReadHandlers({
       }
       const productFilters = normalizeShopProductFilters(req.query || {});
       const products = Array.isArray(presented.products) ? presented.products : [];
+      presented.assetProducts = products;
       presented.products = filterShopProducts(products, productFilters);
       presented.productFilters = productFilters;
       presented.productFilterSummary = {

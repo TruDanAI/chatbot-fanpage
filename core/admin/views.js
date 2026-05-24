@@ -1069,6 +1069,38 @@ function renderBulkMenuImageImportForm(shopId = '') {
   </form>`;
 }
 
+function activeProductsOnly(products = []) {
+  return (products || []).filter(product => String(product.status || '').toLowerCase() === 'active');
+}
+
+function renderImageUploadStatusOptions() {
+  return '<option value="active">active</option><option value="hidden">hidden</option>';
+}
+
+function renderAssetUploadForms(shopId = '', products = []) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/uploads`;
+  const uploadProducts = activeProductsOnly(products);
+  return `
+    <form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
+      <h3>Upload menu image</h3>
+      <input type="hidden" name="asset_type" value="menu_image">
+      <label>Image file <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
+      <label>Sort order<input name="sort_order" type="number" value="0"></label>
+      <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
+      <div class="form-actions"><button type="submit">Upload menu image</button><span class="meta">JPG, PNG, or WebP. Stored through the configured image provider.</span></div>
+    </form>
+    <form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
+      <h3>Upload product image</h3>
+      <input type="hidden" name="asset_type" value="product_image">
+      <label>Product <span class="required">required</span><select name="product_id" required aria-required="true">${renderProductOptions(uploadProducts, '', { includeEmpty: true })}</select></label>
+      <label>Image file <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
+      <label>Sort order<input name="sort_order" type="number" value="0"></label>
+      <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
+      <div class="form-actions"><button type="submit">Upload product image</button><span class="meta">Product image uploads require an active product.</span></div>
+    </form>
+  `;
+}
+
 function renderAssetEditForm(shopId = '', asset = {}, products = []) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/${encodeRoutePart(asset.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
@@ -1310,6 +1342,7 @@ function renderShopDetailHtml(model = {}) {
   const assets = model.assets || {};
   const summary = assets.summary || {};
   const assetRows = Array.isArray(assets.rows) ? assets.rows : [];
+  const assetProducts = model.assetProducts || model.products || [];
   const pageSetupPreviewMode = isPageSetupPreviewMode(shop);
   const body = `
     <p><a href="/admin/shops">Back to shops</a></p>
@@ -1407,6 +1440,7 @@ function renderShopDetailHtml(model = {}) {
         <h2 id="assets-heading">Assets</h2>
         ${renderProductFlash(model.assetFlash || {})}
         ${renderCounts(summary)}
+        ${model.adminImageUploadEnabled ? renderAssetUploadForms(shop.id, assetProducts) : ''}
         ${renderAssetAddForm(shop.id, model.products || [])}
         ${renderBulkMenuImageImportForm(shop.id)}
         ${renderAssetGroups(assetRows, shop.id, model.products || [])}

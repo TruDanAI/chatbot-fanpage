@@ -34,6 +34,7 @@ require('./page-mapping-writes.test');
 require('./product-writes.test');
 require('./product-import-writes.test');
 require('./asset-writes.test');
+require('./asset-uploads.test');
 require('./shop-control-writes.test');
 require('./admin-routes.test');
 require('./index.test');

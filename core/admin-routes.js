@@ -25,6 +25,12 @@ const {
   isMissingAssetWriteSchemaError
 } = require('./admin/asset-writes');
 const {
+  createPostgresAssetUploadService,
+  isAdminImageUploadEnabled,
+  isMissingAssetUploadSchemaError,
+  resolveImageUploadPolicy
+} = require('./admin/asset-uploads');
+const {
   createPostgresProductImportService,
   isMissingProductImportSchemaError,
   presentImportSummary,
@@ -107,6 +113,70 @@ function setAdminNoStoreHeaders(_req, res, next) {
   setResponseHeader(res, 'Referrer-Policy', 'no-referrer');
   if (typeof next === 'function') return next();
   return undefined;
+}
+
+function loadMulter() {
+  try {
+    return require('multer');
+  } catch (_) {
+    const err = new Error('Package "multer" is required for admin image uploads.');
+    err.code = 'feature_not_configured';
+    err.statusCode = 503;
+    throw err;
+  }
+}
+
+function getUploadedImageFile(req = {}) {
+  if (req.file) return req.file;
+  const files = req.files || {};
+  if (Array.isArray(files.image) && files.image[0]) return files.image[0];
+  if (Array.isArray(files.file) && files.file[0]) return files.file[0];
+  if (Array.isArray(files.upload) && files.upload[0]) return files.upload[0];
+  return null;
+}
+
+function createAssetUploadParser(policy = resolveImageUploadPolicy()) {
+  const multer = loadMulter();
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: Number(policy.maxBytes || 5242880),
+      files: 1,
+      fields: 12,
+      parts: 16
+    }
+  }).fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+    { name: 'upload', maxCount: 1 }
+  ]);
+}
+
+function parseAssetUploadRequest(req, res, assetUploads) {
+  if (getUploadedImageFile(req)) return Promise.resolve();
+  const policy = typeof assetUploads?.getPolicy === 'function'
+    ? assetUploads.getPolicy()
+    : resolveImageUploadPolicy();
+  const parser = createAssetUploadParser(policy);
+  return new Promise((resolve, reject) => {
+    parser(req, res, err => {
+      if (!err) {
+        resolve();
+        return;
+      }
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        err.code = 'file_too_large';
+        err.statusCode = 413;
+      } else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        err.code = 'invalid_file_field';
+        err.statusCode = 400;
+      } else {
+        err.code = 'upload_parse_failed';
+        err.statusCode = 400;
+      }
+      reject(err);
+    });
+  });
 }
 
 function getRequestHeader(req, name) {
@@ -815,6 +885,54 @@ function presentAssetWriteTextError(err) {
   };
 }
 
+function presentAssetUploadError(err) {
+  if (isMissingAssetUploadSchemaError(err)) {
+    return presentAssetWriteError(err);
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    feature_disabled: ['feature_disabled', 'Image upload is disabled.', 404],
+    feature_not_configured: ['feature_not_configured', 'Image upload storage is not configured.', 503],
+    missing_file: ['missing_file', 'Image file is required.', 400],
+    file_too_large: ['file_too_large', 'Image file is too large.', 413],
+    invalid_file_field: ['invalid_file_input', 'Image file field is invalid.', 400],
+    invalid_file_extension: ['invalid_file_input', 'Image extension is not allowed.', 400],
+    invalid_file_type: ['invalid_file_input', 'Image MIME type is not allowed.', 400],
+    invalid_file_signature: ['invalid_file_input', 'Image file signature is not allowed.', 400],
+    file_type_mismatch: ['invalid_file_input', 'Image file type does not match its extension or MIME type.', 400],
+    svg_not_allowed: ['invalid_file_input', 'SVG uploads are not allowed.', 400],
+    product_code_not_supported: ['invalid_asset_input', 'Product code is not accepted for image upload.', 400],
+    insecure_upload_url: ['upload_failed', 'Image upload could not be completed.', 502],
+    cloudinary_upload_failed: ['upload_failed', 'Image upload could not be completed.', 502],
+    upload_parse_failed: ['invalid_file_input', 'Image upload request is invalid.', 400],
+    asset_upload_commit_failed: ['asset_commit_failed', 'Asset upload could not be committed.', 500],
+    asset_persist_failed: ['asset_write_failed', 'Asset write could not be completed.', 500]
+  }[code];
+
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  return presentAssetWriteError(err);
+}
+
+function presentAssetUploadTextError(err) {
+  const response = presentAssetUploadError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Image upload could not be completed.'
+  };
+}
+
 function sanitizeBulkMenuImageErrors(errors = []) {
   return (Array.isArray(errors) ? errors : []).slice(0, 200).map(error => ({
     row: Number(error?.row || 0),
@@ -863,6 +981,7 @@ function registerAdminRoutes(app, {
   getClientIp,
   dashboardReader,
   internalNoteService,
+  assetUploadService,
   assetWriteService,
   pageSetupPreviewService,
   pageCredentialWriteService,
@@ -889,8 +1008,10 @@ function registerAdminRoutes(app, {
   adminLoginRateLimitMax = parsePositiveInteger(process.env.ADMIN_LOGIN_RATE_LIMIT_MAX, 10),
   auditLogger,
   adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
-  adminAuditFailClosed = false
+  adminAuditFailClosed = false,
+  adminImageUploadEnabled = isAdminImageUploadEnabled(process.env.ADMIN_IMAGE_UPLOAD_ENABLED)
 }) {
+  const imageUploadEnabled = isAdminImageUploadEnabled(adminImageUploadEnabled);
   const reader = dashboardReader || createPostgresDashboardReader({
     databaseUrl: dashboardDatabaseUrl,
     tenantId,
@@ -906,6 +1027,10 @@ function registerAdminRoutes(app, {
     pageId
   });
   const assetWrites = assetWriteService || createPostgresAssetWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const assetUploads = assetUploadService || createPostgresAssetUploadService({
+    enabled: imageUploadEnabled,
     databaseUrl: dashboardDatabaseUrl
   });
   const pageSetupPreviews = pageSetupPreviewService || createPostgresPageSetupPreviewService({
@@ -998,6 +1123,7 @@ function registerAdminRoutes(app, {
     internalNoteService: notes,
     tenantId,
     pageId,
+    adminImageUploadEnabled: imageUploadEnabled,
     authorizeAdminRequest,
     recordAdminAudit
   });
@@ -1633,6 +1759,35 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function createAssetUploadApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.upload',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const featureError = getAssetUploadFeatureError();
+      if (featureError) throw featureError;
+      await parseAssetUploadRequest(req, res, assetUploads);
+      const result = await assetUploads.createUploadedAsset({
+        principal,
+        shopId,
+        body: req.body || {},
+        file: getUploadedImageFile(req),
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentAssetWriteApi(result));
+    } catch (err) {
+      const response = presentAssetUploadError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function updateAssetApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const assetId = String(req.params.assetId || '').trim().slice(0, 160);
@@ -1879,6 +2034,25 @@ function registerAdminRoutes(app, {
     return safeMessage ? `${base}?assetMessage=${encodeURIComponent(safeMessage)}` : base;
   }
 
+  function getAssetUploadFeatureError() {
+    if (typeof assetUploads.isEnabled === 'function' && !assetUploads.isEnabled()) {
+      const err = new Error('Image upload is disabled.');
+      err.code = 'feature_disabled';
+      err.statusCode = 404;
+      return err;
+    }
+    if (typeof assetUploads.getCloudinaryConfig === 'function') {
+      const config = assetUploads.getCloudinaryConfig();
+      if (config && config.ok === false) {
+        const err = new Error('Image upload storage is not configured.');
+        err.code = 'feature_not_configured';
+        err.statusCode = 503;
+        return err;
+      }
+    }
+    return null;
+  }
+
   async function importMenuImagesHtml(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -1926,6 +2100,34 @@ function registerAdminRoutes(app, {
       return res.redirect(303, shopAssetRedirect(shopId, 'created'));
     } catch (err) {
       const response = presentAssetWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function createAssetUploadHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.upload',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const featureError = getAssetUploadFeatureError();
+      if (featureError) throw featureError;
+      await parseAssetUploadRequest(req, res, assetUploads);
+      await assetUploads.createUploadedAsset({
+        principal,
+        shopId,
+        body: req.body || {},
+        file: getUploadedImageFile(req),
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, 'uploaded'));
+    } catch (err) {
+      const response = presentAssetUploadTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
     }
   }
@@ -2054,6 +2256,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/products/import', importProductsApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
+  app.post('/admin/api/shops/:shopId/assets/uploads', createAssetUploadApi);
   app.post('/admin/api/shops/:shopId/assets/menu-images/import', importMenuImagesApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
   if (typeof app.patch === 'function') {
@@ -2092,6 +2295,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
   app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
   app.post('/admin/shops/:shopId/assets', createAssetHtml);
+  app.post('/admin/shops/:shopId/assets/uploads', createAssetUploadHtml);
   app.post('/admin/shops/:shopId/assets/menu-images/import', importMenuImagesHtml);
   app.post('/admin/shops/:shopId/assets/:assetId', updateAssetHtml);
   app.post('/admin/shops/:shopId/assets/:assetId/status', setAssetStatusHtml);
@@ -2117,6 +2321,7 @@ module.exports = {
   createAdminLoginRateLimiter,
   createAdminReadHandlers,
   createPostgresAuditLogger,
+  createPostgresAssetUploadService,
   createPostgresAssetWriteService,
   createPostgresDashboardReader,
   createPostgresPageCredentialWriteService,
