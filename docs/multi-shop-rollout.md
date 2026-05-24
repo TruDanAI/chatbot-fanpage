@@ -253,6 +253,38 @@ Staging-only checkpoint recorded after the completed Basic E2E test:
 - Staging was restored to `MESSENGER_DRY_RUN=true`.
 - Production and `adult-shop` were untouched.
 
+## Closed Pre-Shop-2 Isolation Gates - 2026-05-24
+
+The three pre-shop-2 isolation blockers are implemented and covered by local
+tests:
+
+- Per-shop `dry_run`: global `MESSENGER_DRY_RUN=true` remains the kill switch;
+  shop `dry_run=true` keeps that shop on the dry-run path; shop
+  `dry_run=false` is only for a controlled live test or live switch on the
+  target shop.
+- Unmapped Page fail-closed: DB-backed webhook requests for an unmapped Page
+  return HTTP `200`, fail closed, and produce no Messenger send, typing, or
+  storage side effects.
+- Two-shop isolation regression: `tests/multi-shop-isolation.test.js` covers
+  two mapped shops with different `dry_run` values plus an unmapped Page.
+
+Required local pre-flight before shop #2 readiness, manual Messenger testing,
+or go-live:
+
+1. Run the isolation regression:
+
+   ```bash
+   node -e "require('./tests/multi-shop-isolation.test.js'); require('./tests/harness').run().then(code => process.exit(code))"
+   ```
+
+2. Run `npm test`.
+3. Continue only if both pass.
+
+Shop #2 go-live remains blocked until readiness passes, the manual test passes,
+active mapping count is exactly `1`, active credential count is exactly `1`,
+the target shop is the only shop with `dry_run=false`, and all other shops
+remain `dry_run=true`.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -297,10 +329,11 @@ Audit writes remain fail-closed for product writes. Missing or broken audit
 schema must fail the product transaction safely instead of persisting a product
 without an audit record.
 
-## Next Engineering Steps Before Shop #2
+## Completed Engineering Foundation Before Shop #2
 
-This section is an engineering roadmap, not approval to deploy, change
-production environment variables, or write production data.
+This section records engineering foundation already implemented before shop #2.
+It is not approval to deploy, change production environment variables, or write
+production data.
 
 1. Per-page credential resolution: phase 1 deployed in
    `67efcbef921f5bf326f4e78120ea0c1d70c0295c` but gated.

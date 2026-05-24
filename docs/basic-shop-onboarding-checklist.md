@@ -20,6 +20,14 @@ Reference milestone from staging:
 - Staging was restored to `MESSENGER_DRY_RUN=true`.
 - Production and `adult-shop` were untouched.
 
+Isolation blocker update:
+
+- Per-shop `dry_run` is implemented for DB-backed shops.
+- Unmapped Page requests return HTTP `200` and fail closed.
+- `tests/multi-shop-isolation.test.js` covers two mapped shops plus an
+  unmapped Page, including per-shop dry-run behavior and no wrong-shop side
+  effects.
+
 ## 1. Purpose
 
 Use this checklist to onboard a Basic Handoff Bot shop with the smallest
@@ -101,6 +109,25 @@ Before any onboarding action:
 Stop if the Railway source branch is wrong, the selected environment is
 production, or the Page belongs to another active shop.
 
+### Pre-flight isolation check
+
+Before shop #2 readiness, manual testing, or any live switch:
+
+1. Run the local isolation regression:
+
+   ```bash
+   node -e "require('./tests/multi-shop-isolation.test.js'); require('./tests/harness').run().then(code => process.exit(code))"
+   ```
+
+2. Run the full local test suite:
+
+   ```bash
+   npm test
+   ```
+
+3. Continue only if both pass. Stop before mapping credentials, changing
+   dry-run state, or running any manual test if either command fails.
+
 ## 5. Shop creation steps
 
 1. Create the shop shell through the admin onboarding UI/API.
@@ -148,6 +175,14 @@ selected product code resolves to the intended active product and image.
 Expected result: readiness reports exactly one active page mapping for the new
 shop.
 
+Unmapped Page behavior is intentionally fail-closed:
+
+- The webhook returns HTTP `200` so Meta does not retry indefinitely.
+- The Page does not route to fallback, legacy, or another shop content.
+- No Messenger send, typing indicator, MID mark, customer row, event row,
+  handoff state, conversation turn, or message storage side effect is allowed.
+- Logs may include a safe `page_ref=p:<hash>`, never the raw Page ID.
+
 ## 8. Credential setup steps
 
 1. Add the Page credential through the approved admin or credential-seed path.
@@ -186,6 +221,16 @@ No-go if any readiness item fails.
 
 Run the webhook simulation with `MESSENGER_DRY_RUN=true`.
 
+Per-shop `dry_run` rules:
+
+- Global `MESSENGER_DRY_RUN=true` is the kill switch. It keeps all shops on
+  the dry-run path regardless of each shop's `dry_run` value.
+- Shop `dry_run=true` keeps that shop safe even if the global dry-run flag is
+  disabled for a controlled test.
+- Shop `dry_run=false` is allowed only for the target shop during an approved
+  controlled live test or live switch.
+- Other shops remain `dry_run=true` during a shop #2 test or live switch.
+
 Expected observations:
 
 - The simulated Page resolves to the new shop.
@@ -223,20 +268,25 @@ Run this only after readiness and dry-run webhook simulation pass.
 Expected result: menu and product-code flows pass on the test Page with no
 Messenger send errors.
 
-## 12. Go/no-go before live
+## 12. Go-live condition for shop #2
 
-Go-live is blocked unless all of these are true:
+Go-live for shop #2 is blocked unless all of these are true:
 
+- Pre-flight isolation check passed:
+  `tests/multi-shop-isolation.test.js` passed and `npm test` passed.
 - Staging readiness passed.
 - Dry-run webhook simulation passed.
-- Real Messenger test passed on a test Page.
+- Manual real Messenger test passed on a test Page.
 - Staging was restored to `MESSENGER_DRY_RUN=true`.
 - No Messenger send errors were observed.
 - No wrong-shop routing was observed.
-- Active mapping and active credential counts were exactly `1` for the tested
-  shop.
+- Active mapping count is exactly `1` for the target shop.
+- Active credential count is exactly `1` for the target shop.
 - Product and image assets matched the shop inputs.
 - The production Page, credential, and go-live window are explicitly approved.
+- Target shop `dry_run=false` only for the controlled live test or live
+  switch.
+- All other shops remain `dry_run=true`.
 - A rollback owner and rollback steps are named before the live switch.
 
 No-go if any of these are true:
@@ -252,6 +302,16 @@ No-go if any of these are true:
 - Any `adult-shop` config/data/assets were touched.
 
 ## 13. Rollback plan
+
+For shop #2:
+
+- Set the target shop back to `dry_run=true`.
+- Optionally archive the target Page mapping through the approved admin path if
+  traffic must stop routing to the shop.
+- Keep global `MESSENGER_DRY_RUN=true` if an emergency kill switch is needed
+  and that flag is allowed in the target environment.
+- Leave other shops in their prior safe state; do not change another shop's
+  mapping, credential, config, products, or assets as part of this rollback.
 
 For staging:
 
@@ -280,7 +340,23 @@ Do not delete production data or manually edit database rows as an emergency
 shortcut unless a separate production data-write approval explicitly names that
 operation.
 
-## 14. Common failure cases
+## 14. Post-launch monitoring
+
+Monitor with safe counts and outcome summaries only. Do not print raw tokens,
+raw Page IDs, customer identifiers, message bodies, database URLs, or raw audit
+rows.
+
+- First 1 hour: watch for Messenger send errors, credential errors,
+  `page_not_found`, DB config fail-closed spikes, wrong-shop routing, unmapped
+  Page warnings, unexpected real sends, and handoff failures.
+- At 24 hours: review shop-scoped traffic counts, send/error counts, active
+  mapping count, active credential count, product-code success, image sends,
+  and whether other shops remained dry-run safe.
+- At 48 hours: confirm no cross-shop storage side effects, no repeated
+  fail-closed noise, no credential drift, and no rollback condition remains
+  open.
+
+## 15. Common failure cases
 
 ### Missing demo/shop config
 
@@ -405,7 +481,7 @@ Action:
 - Retry only after readiness is still passing and the Page owner confirms the
   permission issue is resolved.
 
-## 15. What not to do
+## 16. What not to do
 
 - Do not test production first.
 - Do not reuse an `adult-shop` Page mapping or Page token.
@@ -420,3 +496,14 @@ Action:
   explicitly says to deploy.
 - Do not print raw Page IDs, tokens, customer identifiers, message bodies, or
   database URLs.
+
+### What not to build yet
+
+Do not expand shop #2 onboarding scope to include:
+
+- Quick buttons.
+- Telegram.
+- Sheets.
+- AI.
+- Billing.
+- Self-serve onboarding.
