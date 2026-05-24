@@ -102,7 +102,7 @@ function createState() {
   };
 }
 
-function createUploader({ destroyFails = false } = {}) {
+function createUploader({ destroyFails = false, uploadError = null, uploadResult = null } = {}) {
   const uploadCalls = [];
   const destroyCalls = [];
   return {
@@ -110,6 +110,9 @@ function createUploader({ destroyFails = false } = {}) {
     destroyCalls,
     async uploadBuffer(buffer, options = {}) {
       uploadCalls.push({ size: buffer.length, options });
+      if (uploadError) throw uploadError;
+      if (typeof uploadResult === 'function') return uploadResult({ buffer, options });
+      if (uploadResult) return uploadResult;
       return {
         public_id: `${options.folder}/${options.public_id}`,
         secure_url: `https://res.cloudinary.com/example/image/upload/v1/${options.folder}/${options.public_id}.jpg`
@@ -125,7 +128,7 @@ function createUploader({ destroyFails = false } = {}) {
   };
 }
 
-function makeClientClass({ state, queries, failAudit = false, commitCommand = 'COMMIT' } = {}) {
+function makeClientClass({ state, queries, failAudit = false, failAssetPersist = false, commitCommand = 'COMMIT' } = {}) {
   return class FakeClient {
     constructor() {
       this.inTransaction = false;
@@ -178,6 +181,9 @@ function makeClientClass({ state, queries, failAudit = false, commitCommand = 'C
         };
       }
       if (/^INSERT INTO shop_assets/i.test(normalized)) {
+        if (failAssetPersist) {
+          return { rows: [] };
+        }
         const row = {
           id: params[0],
           shop_id: params[1],
@@ -385,6 +391,157 @@ describe('admin image upload service', () => {
     expect(result.asset.asset_type).toBe('menu_image');
     expect(state.assets[0].product_id).toBe(null);
     expect(queries.some(item => item.sql.includes('FROM shop_products'))).toBeFalse();
+  });
+
+  it('preserves product_not_found before upload and does not attempt cleanup without a public id', async () => {
+    const state = createState();
+    const queries = [];
+    const uploader = createUploader();
+    const service = createPostgresAssetUploadService({
+      enabled: true,
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries }),
+      cloudinaryUploader: uploader,
+      env: validEnv
+    });
+
+    const err = await captureError(() => service.createUploadedAsset({
+      principal,
+      shopId: 'basic-shop',
+      body: { asset_type: 'product_image', product_id: 'prod-other' },
+      file: imageFile()
+    }));
+
+    expect(err && err.code).toBe('product_not_found');
+    expect(uploader.uploadCalls.length).toBe(0);
+    expect(uploader.destroyCalls.length).toBe(0);
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
+  it('preserves Cloudinary provider failures and does not cleanup a null upload', async () => {
+    const state = createState();
+    const queries = [];
+    const uploadError = new Error('provider upload failed');
+    uploadError.code = 'cloudinary_upload_failed';
+    const uploader = createUploader({ uploadError });
+    const service = createPostgresAssetUploadService({
+      enabled: true,
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries }),
+      cloudinaryUploader: uploader,
+      env: validEnv
+    });
+
+    const err = await captureError(() => service.createUploadedAsset({
+      principal,
+      shopId: 'basic-shop',
+      body: { asset_type: 'menu_image' },
+      file: imageFile()
+    }));
+
+    expect(err && err.code).toBe('cloudinary_upload_failed');
+    expect(uploader.uploadCalls.length).toBe(1);
+    expect(uploader.destroyCalls.length).toBe(0);
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+    expect(state.assets.length).toBe(0);
+  });
+
+  it('destroys the returned Cloudinary public id when secure_url is not https', async () => {
+    const state = createState();
+    const queries = [];
+    const uploader = createUploader({
+      uploadResult: ({ options }) => ({
+        public_id: `${options.folder}/${options.public_id}`,
+        secure_url: 'http://res.cloudinary.com/example/image/upload/v1/not-https.jpg'
+      })
+    });
+    const service = createPostgresAssetUploadService({
+      enabled: true,
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries }),
+      cloudinaryUploader: uploader,
+      env: validEnv
+    });
+
+    const err = await captureError(() => service.createUploadedAsset({
+      principal,
+      shopId: 'basic-shop',
+      body: { asset_type: 'menu_image' },
+      file: imageFile()
+    }));
+
+    expect(err && err.code).toBe('insecure_upload_url');
+    expect(uploader.uploadCalls.length).toBe(1);
+    expect(uploader.destroyCalls.length).toBe(1);
+    expect(uploader.destroyCalls[0].publicId).toBe(`${uploader.uploadCalls[0].options.folder}/${uploader.uploadCalls[0].options.public_id}`);
+    expect(uploader.destroyCalls[0].options.resource_type).toBe('image');
+    expect(uploader.destroyCalls[0].options.invalidate).toBeTrue();
+    expect(queries.some(item => /^INSERT INTO shop_assets/i.test(item.sql))).toBeFalse();
+    expect(state.assets.length).toBe(0);
+  });
+
+  it('does not mask invalid secure_url when cleanup fails', async () => {
+    const state = createState();
+    const queries = [];
+    const logs = [];
+    const uploader = createUploader({
+      destroyFails: true,
+      uploadResult: ({ options }) => ({
+        public_id: `${options.folder}/${options.public_id}`,
+        secure_url: 'not-a-valid-url'
+      })
+    });
+    const service = createPostgresAssetUploadService({
+      enabled: true,
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries }),
+      cloudinaryUploader: uploader,
+      env: validEnv,
+      logger: { warn: message => logs.push(message) }
+    });
+
+    const err = await captureError(() => service.createUploadedAsset({
+      principal,
+      shopId: 'basic-shop',
+      body: { asset_type: 'menu_image' },
+      file: imageFile()
+    }));
+    const logText = logs.join('\n');
+
+    expect(err && err.code).toBe('insecure_upload_url');
+    expect(uploader.destroyCalls.length).toBe(1);
+    expect(logText.includes('cleanup_failed')).toBeTrue();
+    expect(logText.includes('shop_ref=s:')).toBeTrue();
+    expect(logText.includes('asset_ref=a:')).toBeTrue();
+    expect(logText.includes('cloudinary://')).toBeFalse();
+    expect(logText.includes('secret')).toBeFalse();
+    expect(logText.includes(uploader.destroyCalls[0].publicId)).toBeFalse();
+  });
+
+  it('destroys Cloudinary upload when asset persistence fails after upload', async () => {
+    const state = createState();
+    const queries = [];
+    const uploader = createUploader();
+    const service = createPostgresAssetUploadService({
+      enabled: true,
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries, failAssetPersist: true }),
+      cloudinaryUploader: uploader,
+      env: validEnv
+    });
+
+    const err = await captureError(() => service.createUploadedAsset({
+      principal,
+      shopId: 'basic-shop',
+      body: { asset_type: 'menu_image' },
+      file: imageFile()
+    }));
+
+    expect(err && err.code).toBe('asset_persist_failed');
+    expect(uploader.uploadCalls.length).toBe(1);
+    expect(uploader.destroyCalls.length).toBe(1);
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+    expect(state.assets.length).toBe(0);
   });
 
   it('uploads through Cloudinary and inserts an object_storage shop_assets row with safe audit metadata', async () => {

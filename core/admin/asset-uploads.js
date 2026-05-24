@@ -519,9 +519,10 @@ function createPostgresAssetUploadService({
   }
 
   async function cleanupCloudinaryUpload(uploaded = {}, refs = {}) {
-    if (!uploaded.publicId) return;
+    const publicId = normalizeText(uploaded?.publicId || uploaded?.public_id || '', 500);
+    if (!publicId) return;
     try {
-      await uploader.destroy(uploaded.publicId, {
+      await uploader.destroy(publicId, {
         resource_type: 'image',
         invalidate: true
       });
@@ -530,7 +531,7 @@ function createPostgresAssetUploadService({
     }
   }
 
-  async function uploadToCloudinary({ file, input, config, shopId, publicId } = {}) {
+  async function uploadToCloudinary({ file, input, config, shopId, publicId, onUploadedPublicId } = {}) {
     let result;
     try {
       result = await uploader.uploadBuffer(file.buffer, {
@@ -547,8 +548,9 @@ function createPostgresAssetUploadService({
       throw createAssetUploadError('cloudinary_upload_failed', 'Image upload could not be completed.', 502);
     }
 
-    const secureUrl = normalizeSecureUrl(result?.secure_url || '');
     const storageKey = normalizeText(result?.public_id || '', 500);
+    if (storageKey && typeof onUploadedPublicId === 'function') onUploadedPublicId(storageKey);
+    const secureUrl = normalizeSecureUrl(result?.secure_url || '');
     if (!storageKey) {
       throw createAssetUploadError('cloudinary_upload_failed', 'Image upload could not be completed.', 502);
     }
@@ -594,7 +596,10 @@ function createPostgresAssetUploadService({
           input,
           config,
           shopId: shop.id,
-          publicId
+          publicId,
+          onUploadedPublicId(storageKey) {
+            uploaded = { publicId: storageKey };
+          }
         });
         const row = await repository.insertUploadedAsset(client, {
           shopId: shop.id,
