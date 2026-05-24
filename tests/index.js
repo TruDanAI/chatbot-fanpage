@@ -8,6 +8,7 @@ require('./messenger-client.test');
 require('./messenger-send-errors.test');
 require('./image-service.test');
 require('./rules.test');
+require('./multi-shop-isolation.test');
 require('./webhook.test');
 require('./webhook-queue.test');
 require('./reminder-service.test');
