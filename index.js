@@ -931,6 +931,7 @@ const webhook = createWebhook({
   maybeResetTimedOutSession,
   redactSensitiveText,
   resolveRuntimeForPage: MULTI_SHOP_DB_CONFIG_ENABLED ? resolveDbShopRuntimeForPage : undefined,
+  fileConfigPageIds: FILE_CONFIG_PAGE_IDS,
   webhookQueue: webhookQueueRepository,
   webhookQueueEnabled: WEBHOOK_QUEUE_ENABLED
 });

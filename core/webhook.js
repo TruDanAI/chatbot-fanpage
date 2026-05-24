@@ -74,11 +74,17 @@ function createWebhook({
   maybeResetTimedOutSession,
   redactSensitiveText,
   resolveRuntimeForPage,
+  fileConfigPageIds = [],
   webhookQueue,
   webhookQueueEnabled = false
 }) {
   const recentMessageTextKeys = new Map();
   const recentMenuSendKeys = new Map();
+  const fileConfigPageIdSet = new Set(
+    (Array.isArray(fileConfigPageIds) ? fileConfigPageIds : [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  );
   const queueEnabled = Boolean(webhookQueueEnabled);
 
   if (queueEnabled && (!webhookQueue || typeof webhookQueue.enqueueEvent !== 'function')) {
@@ -400,7 +406,13 @@ function createWebhook({
 
   async function resolveEventRuntime(event, options = {}) {
     const pageId = getEventPageId(event, options);
-    if (typeof resolveRuntimeForPage !== 'function') return staticRuntime;
+    if (typeof resolveRuntimeForPage !== 'function') {
+      if (fileConfigPageIdSet.size && !fileConfigPageIdSet.has(pageId)) {
+        console.warn(`[webhook] file config fail-closed reason=page_not_configured page_ref=${pageRef(pageId)}`);
+        return { failClosed: true };
+      }
+      return staticRuntime;
+    }
 
     try {
       const resolved = await resolveRuntimeForPage({
@@ -561,15 +573,20 @@ function createWebhook({
     const senderId = event.sender?.id;
     if (!senderId) return;
 
-    // Dedup theo message id (Meta có thể retry)
     const mid = event.message?.mid;
     const pageId = getEventPageId(event, options);
+
+    const runtime = await resolveEventRuntime(event, options);
+    if (runtime.failClosed) return;
+    const runtimeStorage = runtime.storage || storage;
+
+    // Dedup theo message id (Meta có thể retry)
     if (mid) {
       try {
-        if (typeof storage.tryMarkMid !== 'function') {
+        if (typeof runtimeStorage.tryMarkMid !== 'function') {
           throw new Error('storage_tryMarkMid_unavailable');
         }
-        const marked = await storage.tryMarkMid(mid, { senderId, pageId });
+        const marked = await runtimeStorage.tryMarkMid(mid, { senderId, pageId });
         if (!marked) return;
       } catch (err) {
         console.error(
@@ -584,10 +601,6 @@ function createWebhook({
       logStaleWebhookEvent({ pageId, senderId, ageMs: staleAgeMs });
       return;
     }
-
-    const runtime = await resolveEventRuntime(event, options);
-    if (runtime.failClosed) return;
-    const runtimeStorage = runtime.storage || storage;
 
     // Echo: tin bot tự gửi thì bỏ qua; tin page/người trực gửi tay thì tạm dừng đúng khách.
     if (event.message?.is_echo) {

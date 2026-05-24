@@ -191,6 +191,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   let fallbackAttentionCalls = 0;
   let conversationTurnCalls = 0;
   let eventCalls = 0;
+  let showTypingCalls = 0;
 
   const webhook = createWebhook({
     storage,
@@ -250,7 +251,9 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
       if (options.sendImageError) throw options.sendImageError;
       sent.push({ type: 'image', senderId, url });
     },
-    showTyping: () => {},
+    showTyping: () => {
+      showTypingCalls += 1;
+    },
     sendHotCarousel: async () => false,
     isGreetingText: text => /^(?:chào|chao|hi|hello|alo|shop)/i.test(String(text || '').trim()),
     isHotProductsText: () => false,
@@ -284,6 +287,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     maybeResetTimedOutSession: () => {},
     redactSensitiveText: text => text,
     resolveRuntimeForPage: options.resolveRuntimeForPage,
+    fileConfigPageIds: options.fileConfigPageIds,
     webhookQueue: options.webhookQueue,
     webhookQueueEnabled: options.webhookQueueEnabled
   });
@@ -307,7 +311,8 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     getTelegramOperationalAlertCalls: () => telegramOperationalAlertCalls,
     getFallbackAttentionCalls: () => fallbackAttentionCalls,
     getConversationTurnCalls: () => conversationTurnCalls,
-    getEventCalls: () => eventCalls
+    getEventCalls: () => eventCalls,
+    getShowTypingCalls: () => showTypingCalls
   };
 }
 
@@ -368,6 +373,7 @@ function expectNoRuntimeFallback(h, senderId) {
   expect(h.sent.length).toBe(0);
   expect(h.storage.inHandoff(senderId)).toBeFalse();
   expect(h.storage._handoff.size).toBe(0);
+  expect(h.storage._midMarks.length).toBe(0);
   expect(h.storage._customers.length).toBe(0);
   expect(h.storage._events.length).toBe(0);
   expect(h.getGeminiCalls()).toBe(0);
@@ -380,6 +386,7 @@ function expectNoRuntimeFallback(h, senderId) {
   expect(h.getFallbackAttentionCalls()).toBe(0);
   expect(h.getConversationTurnCalls()).toBe(0);
   expect(h.getEventCalls()).toBe(0);
+  expect(h.getShowTypingCalls()).toBe(0);
 }
 
 describe('webhook: menu_code_handoff mode', () => {
@@ -716,6 +723,93 @@ describe('webhook: menu_code_handoff mode', () => {
     await h.handleText('cho xem MÃ8', senderId, 'm_db_unknown', 'unknown_page');
 
     expectNoRuntimeFallback(h, senderId);
+  });
+
+  it('registered webhook route returns 200 for unmapped DB pages without processing', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const senderId = 'route_unmapped_db_page';
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'page_not_found' })
+      });
+
+      let postHandler = null;
+      const app = {
+        get() {},
+        post(_path, limiter, handler) {
+          postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+        }
+      };
+      h.registerWebhookRoutes(app);
+
+      let responseStatus = 0;
+      await postHandler({
+        body: {
+          object: 'page',
+          entry: [{
+            id: 'page-secret-raw',
+            messaging: [makeEvent('chào shop', senderId, 'm_route_unmapped_db')]
+          }]
+        },
+        protocol: 'https',
+        get(name) {
+          const headers = { host: 'example.test' };
+          return headers[String(name || '').toLowerCase()] || '';
+        }
+      }, {
+        sendStatus(code) {
+          responseStatus = code;
+        }
+      });
+
+      expect(responseStatus).toBe(200);
+      await waitFor(() => warnings.length > 0, 'unmapped page warning was not logged');
+      expectNoRuntimeFallback(h, senderId);
+      expect(warnings.join('\n')).toContain('page_ref=p:');
+      expect(warnings.join('\n').includes('page-secret-raw')).toBeFalse();
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it('file-config runtime accepts an intentionally configured page id', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      fileConfigPageIds: ['page_file_config']
+    });
+
+    await h.handleText('chào shop', 'file_config_mapped', 'm_file_config_mapped', 'page_file_config');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].pageId).toBe('page_file_config');
+  });
+
+  it('file-config runtime fails closed for unconfigured pages without PAGE_ID fallback', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const senderId = 'file_config_unmapped';
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        fileConfigPageIds: ['page_file_config']
+      });
+
+      await h.handleText('chào shop', senderId, 'm_file_config_unmapped', 'page-secret-raw');
+
+      expectNoRuntimeFallback(h, senderId);
+      const joined = warnings.join('\n');
+      expect(joined).toContain('page_not_configured');
+      expect(joined).toContain('page_ref=p:');
+      expect(joined.includes('page-secret-raw')).toBeFalse();
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it('fail-closed runtime logs use page_ref instead of raw page_id', async () => {
