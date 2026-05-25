@@ -253,6 +253,42 @@ Staging-only checkpoint recorded after the completed Basic E2E test:
 - Staging was restored to `MESSENGER_DRY_RUN=true`.
 - Production and `adult-shop` were untouched.
 
+## nem-bui-xa Basic Staging Ready Checkpoint - 2026-05-25
+
+This checkpoint records the completed Basic staging dry-run E2E pass for
+`nem-bui-xa`. It is documentation-only and is not approval to deploy, change
+environment variables, write a database, touch `/data`, call Meta Graph API,
+run token health checks, send Messenger messages, or enable live traffic.
+
+Staging shop readiness:
+
+- `nem-bui-xa` shop shell created.
+- Products imported: `5`.
+- Imported product codes: `1`, `2`, `3`, `4`, `5`.
+- Menu image uploaded.
+- Product image for code `1` uploaded.
+- Page mapping created.
+- Credential created.
+- `handoff` active.
+- `manual_test_status=passed`.
+- `readiness_status=passed`.
+- `dry_run=true`.
+- `live_enabled=false`.
+
+Dry-run webhook E2E checks:
+
+- Dry-run webhook menu passed.
+- Dry-run webhook code `1` passed.
+- Product image marker passed.
+- No real Messenger sends were performed.
+
+Routing and isolation:
+
+- No wrong-shop routing was observed.
+- No `adult-shop` or `demo-shop` config, data, or asset side effects were
+  introduced.
+- `adult-shop` and `demo-shop` remain out of scope for this checkpoint.
+
 ## Closed Pre-Shop-2 Isolation Gates - 2026-05-24
 
 The three pre-shop-2 isolation blockers are implemented and covered by local
