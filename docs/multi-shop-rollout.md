@@ -289,6 +289,33 @@ Routing and isolation:
   introduced.
 - `adult-shop` and `demo-shop` remain out of scope for this checkpoint.
 
+## nem-bui-xa Real Messenger Staging Test Checkpoint - 2026-05-25
+
+This checkpoint records the completed `nem-bui-xa` real Messenger staging test
+and rollback to safe dry-run mode. It is documentation-only and is not approval
+to deploy, change environment variables, write a database, touch `/data`, call
+Meta Graph API, run token health checks, send Messenger messages, enable
+`live_enabled`, or modify `adult-shop` or `demo-shop` config, data, or assets.
+
+Real Messenger staging test results:
+
+- `nem-bui-xa` real Messenger menu test passed.
+- Real Messenger code `1` test passed.
+- Menu image was sent.
+- Product image and product info were sent.
+- Handoff was active.
+- No Messenger send errors were observed.
+- No wrong-shop routing was observed.
+- No `adult-shop` or `demo-shop` side effects were observed.
+
+Rollback and final safe state:
+
+- Rollback completed after the real Messenger test.
+- Final staging `MESSENGER_DRY_RUN=true`.
+- Final `nem-bui-xa` `dry_run=true`.
+- Final `nem-bui-xa` `live_enabled=false`.
+- `nem-bui-xa` readiness remained `passed`.
+
 ## Closed Pre-Shop-2 Isolation Gates - 2026-05-24
 
 The three pre-shop-2 isolation blockers are implemented and covered by local
