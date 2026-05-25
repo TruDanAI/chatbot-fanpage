@@ -175,9 +175,13 @@ describe('shop control writes', () => {
     expect(result.shop.package).toBe('sales_flow');
     expect(result.shop.lifecycle).toBe('live');
     expect(result.shop.live_enabled).toBeTrue();
-    expect(result.shop.last_readiness_status).toBe('warnings');
+    expect(result.shop.last_readiness_status).toBe('passed');
+    expect(result.shop.last_ready_by).toBe('admin-1');
+    expect(result.readiness.warnings.map(item => item.key)).toContain('product_assets_ready');
     expect(auditEntries.length).toBe(1);
     expect(auditEntries[0].changedFields).toEqual(['package', 'lifecycle', 'live_enabled', 'last_manual_test_status']);
+    expect(auditEntries[0].readinessStatus).toBe('passed');
+    expect(auditEntries[0].warnings).toContain('product_assets_ready');
     expect(auditEntries[0].gateEnabled).toBeTrue();
     expect(auditEntries[0].liveImpact).toBeTrue();
     expect(auditEntries[0].shop).toBe(undefined);

@@ -932,7 +932,7 @@ function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } 
           package: String(body.package || 'basic').trim(),
           lifecycle: String(body.lifecycle || 'configuring').trim(),
           live_enabled: /^(1|true|yes|on|enabled|active)$/i.test(String(body.live_enabled || '').trim()),
-          last_readiness_status: 'warnings',
+          last_readiness_status: 'passed',
           last_readiness_checked_at: '2026-05-17T00:00:00.000Z',
           last_manual_test_status: String(body.manual_test_status || 'unknown').trim(),
           last_manual_test_at: '2026-05-17T00:00:00.000Z',
@@ -940,7 +940,7 @@ function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } 
           updated_at: '2026-05-17T00:00:00.000Z'
         },
         readiness: readiness || {
-          status: 'warnings',
+          status: 'passed',
           hardBlockers: [],
           warnings: [{ key: 'product_assets_ready', label: 'No active product images' }]
         }
@@ -3447,6 +3447,56 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
   });
 
+  it('shop detail HTML renders passed readiness with visible warning list', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed'
+        },
+        settings: { bot_mode: 'menu_code_handoff' },
+        pages: [{ id: 'page-map-1', status: 'active' }],
+        products: [
+          { id: 'prod-1', status: 'active' },
+          { id: 'prod-2', status: 'active' },
+          { id: 'prod-3', status: 'active' },
+          { id: 'prod-4', status: 'active' },
+          { id: 'prod-5', status: 'active' }
+        ],
+        credentials: { active_fb_page_token_count: 1 },
+        assets: {
+          summary: {
+            total: 2,
+            active: 2,
+            menu_image: 1,
+            menu_image_active: 1,
+            product_image: 1,
+            product_image_active: 1
+          }
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<tr><th>Readiness</th><td><span class="status status-success">passed</span></td></tr>');
+    expect(res.body).toContain('Status <span class="status status-success">ready</span>');
+    expect(res.body).toContain('Readiness warnings');
+    expect(res.body).toContain('Product image coverage');
+    expect(res.body).toContain('Active product images (1) are fewer than active products (5).');
+    expect(res.body).toContain('No current readiness blockers.');
+  });
+
   it('shop detail HTML switches demo-shop configuring/non-live page setup to preview-only controls', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -5401,7 +5451,8 @@ describe('admin dashboard routes', () => {
     expect(body.shop.lifecycle).toBe('live');
     expect(body.shop.live_enabled).toBeTrue();
     expect(body.shop.last_manual_test_status).toBe('passed');
-    expect(body.readiness.status).toBe('warnings');
+    expect(body.readiness.status).toBe('passed');
+    expect(body.readiness.warnings[0].key).toBe('product_assets_ready');
     expect(bodyText.includes('do-not-return')).toBeFalse();
     expect(controlWrites.calls[0].method).toBe('updateControlPlane');
     expect(controlWrites.calls[0].input.shopId).toBe('new-shop');
@@ -5497,6 +5548,62 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('do-not-return')).toBeFalse();
     expect(readinessChecks.calls[0].method).toBe('checkReadiness');
     expect(readinessChecks.calls[0].input.shopId).toBe('new-shop');
+  });
+
+  it('shop readiness check API returns passed status with visible warnings', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub({
+      readiness: {
+        shop_id: 'new-shop',
+        readiness_status: 'passed',
+        hard_blockers: [],
+        warnings: [{
+          key: 'product_assets_ready',
+          label: 'Product image coverage',
+          detail: 'Active product images (1) are fewer than active products (5).',
+          next_action: 'Add active product images for products that need visual confirmation.'
+        }],
+        checks: [{
+          key: 'product_assets_ready',
+          label: 'Product image coverage',
+          status: 'warning',
+          count: 1,
+          detail: 'Active product images (1) are fewer than active products (5).',
+          next_action: 'Add active product images for products that need visual confirmation.'
+        }],
+        safe_counts: {
+          products: 5,
+          menu_images: 1,
+          product_images: 1,
+          active_page_mappings: 1,
+          active_credentials: 1
+        }
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: {}
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.readiness_status).toBe('passed');
+    expect(body.hard_blockers).toEqual([]);
+    expect(body.warnings[0].key).toBe('product_assets_ready');
+    expect(body.checks[0].status).toBe('warning');
+    expect(body.safe_counts.products).toBe(5);
+    expect(body.safe_counts.product_images).toBe(1);
   });
 
   it('shop readiness check API requires write-capable admin auth before service call', async () => {

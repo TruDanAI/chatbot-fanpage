@@ -181,17 +181,25 @@ describe('shop readiness check service', () => {
     }
   });
 
-  it('keeps product image gaps as warnings only when a menu image exists', async () => {
+  it('passes Basic shops with product image gaps while keeping the warning visible', async () => {
+    const queries = [];
+    const auditEntries = [];
     const warningResult = await runReadiness({
+      queries,
+      auditEntries,
       counts: {
         active_product_count: 2,
         active_menu_image_count: 1,
         active_product_image_count: 1
       }
     });
-    expect(warningResult.readiness.readiness_status).toBe('warnings');
+    expect(warningResult.readiness.readiness_status).toBe('passed');
     expect(warningResult.readiness.hard_blockers).toEqual([]);
     expect(warningResult.readiness.warnings.map(row => row.key)).toContain('product_assets_ready');
+    expect(warningResult.readiness.checks.find(row => row.key === 'product_assets_ready').status).toBe('warning');
+    expect(queries.find(item => /^UPDATE shops/i.test(item.sql)).params).toEqual(['ready-shop', 'passed']);
+    expect(auditEntries[0].readiness_status).toBe('passed');
+    expect(auditEntries[0].warning_keys).toContain('product_assets_ready');
 
     const missingMenuResult = await runReadiness({
       counts: {
@@ -249,7 +257,7 @@ describe('shop readiness check service', () => {
       shop: { dry_run: false }
     });
 
-    expect(result.readiness.readiness_status).toBe('warnings');
+    expect(result.readiness.readiness_status).toBe('passed');
     expect(result.readiness.warnings.map(row => row.key)).toContain('dry_run_global_unknown');
   });
 });

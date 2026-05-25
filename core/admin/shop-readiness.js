@@ -210,9 +210,7 @@ function buildShopReadiness({
   }
 
   const warnings = warningChecks.map(issueFromCheck);
-  const readinessStatus = hardBlockers.length
-    ? 'failed'
-    : (warnings.length ? 'warnings' : 'passed');
+  const readinessStatus = hardBlockers.length ? 'failed' : 'passed';
 
   return {
     shop_id: shopId,
