@@ -217,6 +217,7 @@ function createDashboardRepository({
         WHERE shop_id = $1
         ORDER BY status ASC, updated_at DESC, id ASC
       `, params);
+      let pages = pagesResult.rows;
       const settingsResult = await client.query(`
         SELECT bot_mode, handoff_enabled, handoff_message, menu_intro_text,
                fallback_text, settings_json, updated_at
@@ -274,18 +275,39 @@ function createDashboardRepository({
       try {
         const credentialResult = await client.query(`
           SELECT
-            COUNT(*) FILTER (
-              WHERE c.status = 'active'
-                AND c.credential_type = 'fb_page_token'
-                AND sp.status = 'active'
-            )::int AS active_fb_page_token_count
+            c.page_mapping_id,
+            c.status,
+            c.credential_type,
+            sp.status AS page_status,
+            COUNT(*)::int AS total
           FROM shop_page_credentials c
           JOIN shop_pages sp ON sp.id = c.page_mapping_id AND sp.shop_id = c.shop_id
           WHERE c.shop_id = $1
+          GROUP BY c.page_mapping_id, c.status, c.credential_type, sp.status
+          ORDER BY c.page_mapping_id ASC, c.status ASC, c.credential_type ASC
         `, params);
+        const activeCredentialsByPage = new Map();
+        let activeFbPageTokenCount = 0;
+        for (const row of credentialResult.rows || []) {
+          const total = Number(row.total || 0);
+          const status = String(row.status || '').toLowerCase();
+          const credentialType = String(row.credential_type || '').toLowerCase();
+          if (status !== 'active' || credentialType !== 'fb_page_token') continue;
+          if (String(row.page_status || '').toLowerCase() === 'active') {
+            activeFbPageTokenCount += total;
+          }
+          const pageMappingId = String(row.page_mapping_id || '');
+          if (pageMappingId) {
+            activeCredentialsByPage.set(pageMappingId, (activeCredentialsByPage.get(pageMappingId) || 0) + total);
+          }
+        }
+        pages = pages.map(page => ({
+          ...page,
+          active_credential_count: activeCredentialsByPage.get(String(page.id || '')) || 0
+        }));
         credentials = {
           available: true,
-          active_fb_page_token_count: Number(credentialResult.rows[0]?.active_fb_page_token_count || 0)
+          active_fb_page_token_count: activeFbPageTokenCount
         };
       } catch (err) {
         if (!isMissingMultiShopSchemaError(err)) throw err;
@@ -294,7 +316,7 @@ function createDashboardRepository({
       return {
         schemaReady: true,
         shop,
-        pages: pagesResult.rows,
+        pages,
         settings: settingsResult.rows[0] || null,
         products: productsResult.rows,
         assets: {

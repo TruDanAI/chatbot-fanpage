@@ -8,6 +8,7 @@ const {
   presentAssetWriteApi,
   presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageMappingArchiveApi,
   presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
@@ -46,6 +47,7 @@ const {
 } = require('./admin/page-credential-writes');
 const {
   createPostgresPageMappingWriteService,
+  isStagingRuntime,
   isMissingPageMappingWriteSchemaError
 } = require('./admin/page-mapping-writes');
 const {
@@ -671,13 +673,20 @@ function presentPageMappingWriteError(err) {
   const safe = {
     invalid_page_id: ['invalid_page_id', 'Page id is invalid.', 400],
     invalid_page_mapping_status: ['invalid_page_mapping_status', 'Page mapping status is invalid.', 400],
+    page_id_not_accepted: ['page_id_not_accepted', 'Page id is not accepted for this action.', 400],
+    archive_confirmation_required: ['archive_confirmation_required', 'Archive confirmation is required.', 400],
     duplicate_active_page_id: ['duplicate_active_page_id', 'Page id already has an active mapping.', 409],
     page_setup_preview_only: ['page_setup_preview_only', 'Demo-shop page setup is preview-only while configuring/non-live.', 409],
+    staging_only: ['staging_only', 'Page mapping archive is available only in staging.', 403],
+    adult_shop_protected: ['adult_shop_protected', 'This shop is protected from page mapping archive.', 403],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    page_mapping_not_found: ['page_mapping_not_found', 'Page mapping was not found for this shop.', 404],
+    page_mapping_not_active: ['page_mapping_not_active', 'Page mapping is not active.', 409],
     permission_denied: ['permission_denied', 'Page mapping write permission is required.', 403],
     database_url_required: ['page_mapping_write_unavailable', 'Page mapping writes are unavailable.', 503],
     page_mapping_commit_failed: ['page_mapping_commit_failed', 'Page mapping write could not be committed.', 500],
-    page_mapping_persist_failed: ['page_mapping_create_failed', 'Page mapping could not be created.', 500]
+    page_mapping_persist_failed: ['page_mapping_create_failed', 'Page mapping could not be created.', 500],
+    page_mapping_archive_failed: ['page_mapping_archive_failed', 'Page mapping could not be archived.', 500]
   }[code];
   if (safe) {
     return {
@@ -1009,7 +1018,8 @@ function registerAdminRoutes(app, {
   auditLogger,
   adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
   adminAuditFailClosed = false,
-  adminImageUploadEnabled = isAdminImageUploadEnabled(process.env.ADMIN_IMAGE_UPLOAD_ENABLED)
+  adminImageUploadEnabled = isAdminImageUploadEnabled(process.env.ADMIN_IMAGE_UPLOAD_ENABLED),
+  adminPageArchiveEnabled = isStagingRuntime(process.env)
 }) {
   const imageUploadEnabled = isAdminImageUploadEnabled(adminImageUploadEnabled);
   const reader = dashboardReader || createPostgresDashboardReader({
@@ -1124,6 +1134,7 @@ function registerAdminRoutes(app, {
     tenantId,
     pageId,
     adminImageUploadEnabled: imageUploadEnabled,
+    adminPageArchiveEnabled,
     authorizeAdminRequest,
     recordAdminAudit
   });
@@ -1518,6 +1529,58 @@ function registerAdminRoutes(app, {
         requestContext: buildProductWriteRequestContext(req)
       });
       return res.redirect(303, shopPageMappingRedirect(shopId, 'created'));
+    } catch (err) {
+      const response = presentPageMappingWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function archivePageMappingApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_page.archive',
+      resourceType: 'shop_page',
+      resourceId: pageMappingId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageMappingWrites.archivePageMapping({
+        principal,
+        shopId,
+        pageMappingId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentPageMappingArchiveApi(result));
+    } catch (err) {
+      const response = presentPageMappingWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function archivePageMappingHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_page.archive',
+      resourceType: 'shop_page',
+      resourceId: pageMappingId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageMappingWrites.archivePageMapping({
+        principal,
+        shopId,
+        pageMappingId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopPageMappingRedirect(shopId, result.already_archived ? 'already-archived' : 'archived'));
     } catch (err) {
       const response = presentPageMappingWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
@@ -2252,6 +2315,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
   app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
   app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
+  app.post('/admin/api/shops/:shopId/pages/:pageMappingId/archive', archivePageMappingApi);
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/products/import', importProductsApi);
@@ -2287,6 +2351,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
   app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);
   app.post('/admin/shops/:shopId/pages', createPageMappingHtml);
+  app.post('/admin/shops/:shopId/pages/:pageMappingId/archive', archivePageMappingHtml);
   app.post('/admin/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialHtml);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
   app.post('/admin/shops/:shopId/products', createProductHtml);

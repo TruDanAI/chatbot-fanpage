@@ -1024,6 +1024,30 @@ function createPageMappingWriteServiceStub({ failWith, createdPage } = {}) {
           page_access_token: 'do-not-return'
         }
       };
+    },
+    async archivePageMapping(input = {}) {
+      calls.push({ method: 'archivePageMapping', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId || 'adult-shop',
+        pageMappingId: input.pageMappingId || 'page-map-1',
+        page_ref: 'p:safe-page',
+        page: {
+          id: input.pageMappingId || 'page-map-1',
+          shop_id: input.shopId || 'adult-shop',
+          page_id: 'raw-page-id',
+          page_ref: 'p:safe-page',
+          page_name: 'Archived Page',
+          status: 'archived',
+          created_at: '2026-05-16T00:00:00.000Z',
+          updated_at: '2026-05-16T00:01:00.000Z',
+          page_access_token: 'do-not-return',
+          encrypted_value: 'do-not-return'
+        },
+        archivedCredentialCount: 1,
+        activeCredentialCountAfter: 0,
+        already_archived: false
+      };
     }
   };
 }
@@ -3165,6 +3189,78 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('shop_image')).toBeFalse();
   });
 
+  it('shop detail HTML shows page mapping archive controls in staging only', async () => {
+    const model = createOnboardingShopDetailModel({
+      pages: [{
+        id: 'page-active',
+        page_id: 'raw-active-page-id',
+        page_name: 'Active Page',
+        status: 'active',
+        active_credential_count: 2,
+        created_at: '2026-05-12T00:00:00.000Z',
+        updated_at: '2026-05-12T00:10:00.000Z'
+      }, {
+        id: 'page-archived',
+        page_id: 'raw-archived-page-id',
+        page_name: 'Archived Page',
+        status: 'archived',
+        active_credential_count: 0,
+        created_at: '2026-05-12T00:00:00.000Z',
+        updated_at: '2026-05-12T00:20:00.000Z'
+      }]
+    });
+
+    const stagingApp = createApp();
+    registerAdminRoutes(stagingApp, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(model),
+      adminPrincipalRoles: ['maintainer'],
+      adminPageArchiveEnabled: true
+    });
+    const stagingRes = createRes();
+    await stagingApp.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), stagingRes);
+
+    expect(stagingRes.statusCode).toBe(200);
+    expect(stagingRes.body).toContain('Active Mappings');
+    expect(stagingRes.body).toContain('Archived Mappings (1)');
+    expect(stagingRes.body).toContain('action="/admin/shops/new-shop/pages/page-active/archive"');
+    expect(stagingRes.body).toContain('data-confirm="Archive mapping"');
+    expect(stagingRes.body).toContain('name="confirmation_text"');
+    expect(stagingRes.body).toContain('placeholder="ARCHIVE MAPPING"');
+    expect(stagingRes.body).toContain('>2</td>');
+    expect(stagingRes.body.includes('raw-active-page-id')).toBeFalse();
+    expect(stagingRes.body.includes('raw-archived-page-id')).toBeFalse();
+
+    const productionApp = createApp();
+    registerAdminRoutes(productionApp, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(model),
+      adminPrincipalRoles: ['maintainer'],
+      adminPageArchiveEnabled: false
+    });
+    const productionRes = createRes();
+    await productionApp.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), productionRes);
+
+    expect(productionRes.statusCode).toBe(200);
+    expect(productionRes.body).toContain('Active Mappings');
+    expect(productionRes.body).toContain('Archived Mappings (1)');
+    expect(productionRes.body.includes('/pages/page-active/archive')).toBeFalse();
+    expect(productionRes.body.includes('Archive mapping')).toBeFalse();
+    expect(productionRes.body.includes('name="confirmation_text"')).toBeFalse();
+    expect(productionRes.body.includes('raw-active-page-id')).toBeFalse();
+    expect(productionRes.body.includes('raw-archived-page-id')).toBeFalse();
+  });
+
   it('shop detail HTML renders image manager groups, large lazy thumbnails, badges, and replace URL forms', async () => {
     const app = createApp();
     const reader = createShopDetailReader(createOnboardingShopDetailModel({
@@ -3686,6 +3782,153 @@ describe('admin dashboard routes', () => {
         headers: { authorization: 'Bearer secret' },
         params: { shopId: 'adult-shop' },
         body: { page_id: 'page_new', page_name: 'New Page' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('page mapping archive API returns sanitized result and does not accept page_id body scope', async () => {
+    const app = createApp();
+    const pageMappingWrites = createPageMappingWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageMappingWriteService: pageMappingWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+      body: { confirmation_text: 'ARCHIVE MAPPING' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.shop_id).toBe('new-shop');
+    expect(body.page.id).toBe('page-map-1');
+    expect(body.page.status).toBe('archived');
+    expect(body.page.page_ref).toBe('p:safe-page');
+    expect(body.archived_credential_count).toBe(1);
+    expect(body.active_credential_count_after).toBe(0);
+    expect(pageMappingWrites.calls[0].method).toBe('archivePageMapping');
+    expect(pageMappingWrites.calls[0].input.shopId).toBe('new-shop');
+    expect(pageMappingWrites.calls[0].input.pageMappingId).toBe('page-map-1');
+    expect(pageMappingWrites.calls[0].input.body.confirmation_text).toBe('ARCHIVE MAPPING');
+    expect(pageMappingWrites.calls[0].input.body.page_id).toBe(undefined);
+    expect(body.page.page_id).toBe(undefined);
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('page_access_token')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page mapping archive HTML redirects without exposing raw Page or credential values', async () => {
+    const app = createApp();
+    const pageMappingWrites = createPageMappingWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageMappingWriteService: pageMappingWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+      body: { confirmation_text: 'ARCHIVE MAPPING' }
+    }), res);
+    const responseText = `${res.body}\n${res.headers.location || ''}`;
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/new-shop?pageMessage=archived');
+    expect(pageMappingWrites.calls[0].method).toBe('archivePageMapping');
+    expect(responseText.includes('raw-page-id')).toBeFalse();
+    expect(responseText.includes('do-not-return')).toBeFalse();
+    expect(responseText.includes('encrypted_value')).toBeFalse();
+    expect(responseText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page mapping archive API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const pageMappingWrites = createPageMappingWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageMappingWriteService: pageMappingWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+        params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+        body: { confirmation_text: 'ARCHIVE MAPPING' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+        body: { confirmation_text: 'ARCHIVE MAPPING' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageMappingWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_page.archive');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('page mapping archive API maps staging and protection errors safely', async () => {
+    for (const item of [
+      { code: 'archive_confirmation_required', status: 400, error: 'archive_confirmation_required' },
+      { code: 'page_id_not_accepted', status: 400, error: 'page_id_not_accepted' },
+      { code: 'staging_only', status: 403, error: 'staging_only' },
+      { code: 'adult_shop_protected', status: 403, error: 'adult_shop_protected' },
+      { code: 'page_mapping_not_found', status: 404, error: 'page_mapping_not_found' },
+      { code: 'page_mapping_not_active', status: 409, error: 'page_mapping_not_active' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shop_pages" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageMappingWriteService: createPageMappingWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+        body: { confirmation_text: 'ARCHIVE MAPPING' }
       }), res);
       const body = JSON.parse(res.body);
       const bodyText = JSON.stringify(body);

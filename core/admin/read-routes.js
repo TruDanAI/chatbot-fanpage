@@ -46,7 +46,9 @@ const ASSET_FLASH_MESSAGES = {
   'menu-imported': { type: 'success', text: 'Menu image URLs imported.' }
 };
 const PAGE_FLASH_MESSAGES = {
-  created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' }
+  created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' },
+  archived: { type: 'success', text: 'Page mapping archived. Active credentials for that mapping were archived.' },
+  'already-archived': { type: 'success', text: 'Page mapping was already archived.' }
 };
 const CREDENTIAL_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Page credential saved.' },
@@ -62,6 +64,7 @@ function createAdminReadHandlers({
   tenantId = 'default',
   pageId = '',
   adminImageUploadEnabled = false,
+  adminPageArchiveEnabled = false,
   authorizeAdminRequest,
   recordAdminAudit
 } = {}) {
@@ -473,6 +476,7 @@ function createAdminReadHandlers({
       const presented = presentShopDetailApi(model);
       presented.assets = presentShopAssetsForHtml(model.assets || {});
       presented.adminImageUploadEnabled = Boolean(adminImageUploadEnabled && hasPermission(principal, PERMISSIONS.PRODUCT_WRITE));
+      presented.pageArchiveEnabled = Boolean(adminPageArchiveEnabled && hasPermission(principal, PERMISSIONS.PRODUCT_WRITE));
       if (model.schemaReady !== false && model.shop) {
         try {
           presented.health = presentShopHealthApi(await reader.getShopHealth(shopId));

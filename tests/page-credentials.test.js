@@ -83,4 +83,39 @@ describe('page credential encryption service', () => {
 
     expect(result).toEqual({ found: false, reason: 'credential_decrypt_failed' });
   });
+
+  it('does not resolve archived page credentials', async () => {
+    const masterKey = 'local-test-master-key-32-plus-characters';
+    const encrypted = encryptCredential('EAAB-db-page-token', masterKey);
+    const rows = [{
+      id: 'cred-archived',
+      shop_id: 'adult-shop',
+      page_mapping_id: 'page-map-1',
+      credential_type: 'fb_page_token',
+      encrypted_value: encrypted,
+      encryption_key_id: 'default',
+      status: 'archived'
+    }];
+    const result = await resolvePageCredential({
+      db: {
+        query: async (sql, values) => {
+          const normalized = String(sql || '').replace(/\s+/g, ' ').trim();
+          return {
+            rows: rows.filter(row => (
+              row.shop_id === values[0]
+              && row.page_mapping_id === values[1]
+              && row.credential_type === values[2]
+              && row.status === 'active'
+              && normalized.includes("status = 'active'")
+            ))
+          };
+        }
+      },
+      shopId: 'adult-shop',
+      pageMappingId: 'page-map-1',
+      masterKey
+    });
+
+    expect(result).toEqual({ found: false, reason: 'credential_not_found' });
+  });
 });

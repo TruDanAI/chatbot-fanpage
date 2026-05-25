@@ -332,7 +332,7 @@ function presentShopListItem(shop = {}) {
 
 function presentShopPage(page = {}) {
   const rawPageId = page.page_id || '';
-  return {
+  const result = {
     id: page.id || '',
     shop_id: page.shop_id || '',
     page_ref: page.page_ref || (rawPageId ? pageRef(rawPageId) : ''),
@@ -341,6 +341,10 @@ function presentShopPage(page = {}) {
     created_at: page.created_at || '',
     updated_at: page.updated_at || ''
   };
+  if (page.active_credential_count != null) {
+    result.active_credential_count = Number(page.active_credential_count || 0);
+  }
+  return result;
 }
 
 function presentShopSettings(settings = {}) {
@@ -618,6 +622,18 @@ function presentPageMappingWriteApi(model = {}) {
   };
 }
 
+function presentPageMappingArchiveApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    page: presentShopPage(model.page || {}),
+    already_archived: Boolean(model.already_archived),
+    archived_credential_count: Number(model.archivedCredentialCount || 0),
+    active_credential_count_after: Number(model.activeCredentialCountAfter || 0)
+  };
+}
+
 function presentPageCredentialWriteApi(model = {}) {
   const credential = model.credential || {};
   return {
@@ -736,6 +752,7 @@ module.exports = {
   presentOperations,
   presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageMappingArchiveApi,
   presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,

@@ -887,6 +887,96 @@ function renderPageCredentialPreviewDisabled() {
   return '<span class="meta">Credential writes are disabled in preview mode.</span>';
 }
 
+function isAdultShopView(shop = {}) {
+  return [shop.id, shop.slug]
+    .map(value => String(value || '').trim().toLowerCase())
+    .includes('adult-shop');
+}
+
+function pageStatus(page = {}) {
+  return String(page.status || '').trim().toLowerCase();
+}
+
+function renderPageCredentialCount(page = {}) {
+  if (page.active_credential_count == null) return '<span class="meta">unknown</span>';
+  return escapeHtml(Number(page.active_credential_count || 0));
+}
+
+function renderPageArchiveForm(shopId = '', page = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/archive`;
+  return `<form class="product-form compact inline-action danger" method="post" action="${escapeHtml(action)}" data-confirm="Archive mapping">
+    <input type="hidden" name="source" value="admin_ui">
+    <label>Confirm<input name="confirmation_text" maxlength="80" required aria-required="true" autocomplete="off" placeholder="ARCHIVE MAPPING"></label>
+    <div class="form-actions"><button type="submit" onclick="return confirm('Archive this mapping? It will archive active credentials for this mapping, not delete anything.');">Archive mapping</button></div>
+  </form>`;
+}
+
+function renderActivePageMappingsTable({
+  shopId = '',
+  pages = [],
+  pageSetupPreviewMode = false,
+  archiveEnabled = false
+} = {}) {
+  const headers = ['page ref', 'name', 'status', 'active credentials', 'updated', 'credential action'];
+  if (archiveEnabled) headers.push('archive');
+  return renderTable(headers, pages, page => `
+    <tr>
+      <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
+      <td>${escapeHtml(page.page_name)}</td>
+      <td>${renderStatus(page.status)}</td>
+      <td>${renderPageCredentialCount(page)}</td>
+      <td>${escapeHtml(formatDate(page.updated_at))}</td>
+      <td>${pageSetupPreviewMode ? renderPageCredentialPreviewDisabled() : renderPageCredentialForm(shopId, page)}</td>
+      ${archiveEnabled ? `<td>${renderPageArchiveForm(shopId, page)}</td>` : ''}
+    </tr>
+  `);
+}
+
+function renderReadOnlyPageMappingsTable(pages = []) {
+  return renderTable(['page ref', 'name', 'status', 'active credentials', 'updated'], pages, page => `
+    <tr>
+      <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
+      <td>${escapeHtml(page.page_name)}</td>
+      <td>${renderStatus(page.status)}</td>
+      <td>${renderPageCredentialCount(page)}</td>
+      <td>${escapeHtml(formatDate(page.updated_at))}</td>
+    </tr>
+  `);
+}
+
+function renderPageMappingsSection({
+  shop = {},
+  pages = [],
+  pageSetupPreviewMode = false,
+  archiveEnabled = false
+} = {}) {
+  const activeMappings = (pages || []).filter(page => pageStatus(page) === 'active');
+  const archivedMappings = (pages || []).filter(page => pageStatus(page) === 'archived');
+  const otherMappings = (pages || []).filter(page => !['active', 'archived'].includes(pageStatus(page)));
+  const canArchive = Boolean(archiveEnabled) && !isAdultShopView(shop);
+  return `
+    <section class="asset-group">
+      <h3>Active Mappings</h3>
+      ${renderActivePageMappingsTable({
+        shopId: shop.id,
+        pages: activeMappings,
+        pageSetupPreviewMode,
+        archiveEnabled: canArchive
+      })}
+    </section>
+    ${otherMappings.length ? `
+      <section class="asset-group">
+        <h3>Other Mappings</h3>
+        ${renderReadOnlyPageMappingsTable(otherMappings)}
+      </section>
+    ` : ''}
+    <details class="collapsible-section">
+      <summary>Archived Mappings (${escapeHtml(archivedMappings.length)})</summary>
+      ${renderReadOnlyPageMappingsTable(archivedMappings)}
+    </details>
+  `;
+}
+
 function renderPageSetupPreviewResultHtml({ shopId = '', title = 'Page Setup Preview', result = null, error = null } = {}) {
   const backHref = `/admin/shops/${encodeRoutePart(shopId)}#page-setup-preview`;
   const body = `
@@ -1379,15 +1469,12 @@ function renderShopDetailHtml(model = {}) {
         ${renderProductFlash(model.pageFlash || {})}
         ${renderProductFlash(model.credentialFlash || {})}
         ${pageSetupPreviewMode ? renderPageSetupPreviewSection(shop.id) : renderPageMappingAddForm(shop.id)}
-        ${renderTable(['page ref', 'name', 'status', 'updated', 'credential action'], model.pages || [], page => `
-          <tr>
-            <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
-            <td>${escapeHtml(page.page_name)}</td>
-            <td>${renderStatus(page.status)}</td>
-            <td>${escapeHtml(formatDate(page.updated_at))}</td>
-            <td>${pageSetupPreviewMode ? renderPageCredentialPreviewDisabled() : renderPageCredentialForm(shop.id, page)}</td>
-          </tr>
-        `)}
+        ${renderPageMappingsSection({
+          shop,
+          pages: model.pages || [],
+          pageSetupPreviewMode,
+          archiveEnabled: Boolean(model.pageArchiveEnabled)
+        })}
       </div>
 
       <div id="settings" class="tab-section">

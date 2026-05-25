@@ -30,7 +30,9 @@ class FakeShopConfigClient {
         throw err;
       }
       const pageId = values[0];
-      const rows = this.seed.mappings.filter(row => row.page_id === pageId);
+      const rows = this.seed.mappings
+        .filter(row => row.page_id === pageId)
+        .filter(row => !normalized.includes("sp.status = 'active'") || String(row.status || 'active') === 'active');
       return { rows };
     }
     if (normalized.includes('FROM shop_products')) {
@@ -261,6 +263,25 @@ describe('db shop config resolver', () => {
 
     expect(result.found).toBeFalse();
     expect(result.reason).toBe('page_not_found');
+  });
+
+  it('does not route archived page mappings', async () => {
+    const seed = makeSeed();
+    seed.mappings[0] = {
+      ...seed.mappings[0],
+      status: 'archived'
+    };
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeFalse();
+    expect(result.reason).toBe('page_not_found');
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_products'))).toBeFalse();
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_assets'))).toBeFalse();
   });
 
   it('normalizes missing or invalid chat behavior settings to safe fallbacks', async () => {
