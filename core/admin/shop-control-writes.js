@@ -5,6 +5,10 @@ const {
 } = require('../admin-auth');
 const { insertAuditLogEntry } = require('./audit');
 const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
+const {
+  buildShopReadiness,
+  toLegacyReadinessSummary
+} = require('./shop-readiness');
 
 const SHOP_CONTROL_ACTION = 'shop.control_plane.updated';
 const SHOP_PACKAGES = Object.freeze(new Set(['basic', 'sales_flow', 'self_closing_addons']));
@@ -97,26 +101,13 @@ function summarizeReadiness({
   counts = {},
   manualTestStatus = 'unknown'
 } = {}) {
-  const hardBlockers = [];
-  const warnings = [];
-  const addBlocker = (key, label) => hardBlockers.push({ key, label });
-  const addWarning = (key, label) => warnings.push({ key, label });
-
-  if (String(shop.status || '').toLowerCase() !== 'active') addBlocker('shop_active', 'Shop status is not active');
-  if (!settings || !String(settings.bot_mode || '').trim() || String(settings.bot_mode || '').trim() === 'disabled') {
-    addBlocker('bot_mode_ready', 'Bot mode is not ready');
-  }
-  if (Number(counts.active_page_mapping_count || 0) <= 0) addBlocker('page_mapping_ready', 'No active page mapping');
-  if (Number(counts.active_credential_count || 0) <= 0) addBlocker('credential_ready', 'No active page credential');
-  if (Number(counts.active_product_count || 0) <= 0) addBlocker('product_ready', 'No active products');
-  if (Number(counts.active_menu_image_count || 0) <= 0) addBlocker('menu_assets_ready', 'No active menu images');
-  if (manualTestStatus !== 'passed') addBlocker('manual_test_ready', 'Manual test is not passed');
-  if (Number(counts.active_product_image_count || 0) <= 0) addWarning('product_assets_ready', 'No active product images');
-
-  const status = hardBlockers.length
-    ? 'failed'
-    : (warnings.length ? 'warnings' : 'passed');
-  return { status, hardBlockers, warnings };
+  return toLegacyReadinessSummary(buildShopReadiness({
+    shop,
+    settings,
+    counts,
+    manualTestStatus,
+    globalDryRunState: { available: true, dry_run: true }
+  }));
 }
 
 function presentShopControl(row = {}) {

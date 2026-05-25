@@ -3,6 +3,7 @@ const {
   maskPhone
 } = require('./views');
 const { pageRef } = require('../utils/log-refs');
+const { buildShopReadiness } = require('./shop-readiness');
 
 function limitText(value = '', max = 240) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -451,12 +452,69 @@ function presentShopOnboarding(model = {}, shop = null) {
     item('manual_test_ready', 'Manual test passed', manualTestPassed, 'run manual test and mark passed', `${shopHref}#control-plane`),
     item('health_ready', 'Health ready', Boolean(shop.id), 'view health', `/admin/api/shops/${encodeURIComponent(shopId)}/health`)
   ];
+  const readiness = presentReadinessResult(buildShopReadiness({
+    shop,
+    settings,
+    counts,
+    manualTestStatus: shop.last_manual_test_status,
+    globalDryRunState: { available: true, dry_run: true }
+  }));
 
   return {
     ready: checklist.every(entry => entry.passed),
     counts,
     checklist,
+    readiness_status: readiness.readiness_status,
+    hard_blockers: readiness.hard_blockers,
+    warnings: readiness.warnings,
+    checks: readiness.checks,
+    safe_counts: readiness.safe_counts,
     ...(credentials.available === false ? { credential_status: 'unavailable' } : {})
+  };
+}
+
+function presentReadinessIssue(item = {}) {
+  return {
+    key: limitText(item.key || '', 80),
+    label: limitText(item.label || '', 120),
+    detail: limitText(item.detail || '', 240),
+    next_action: limitText(item.next_action || '', 240)
+  };
+}
+
+function presentReadinessCheck(check = {}) {
+  const status = ['pass', 'fail', 'warning'].includes(String(check.status || ''))
+    ? String(check.status || '')
+    : 'fail';
+  const result = {
+    key: limitText(check.key || '', 80),
+    label: limitText(check.label || '', 120),
+    status,
+    next_action: limitText(check.next_action || '', 240)
+  };
+  if (check.count != null) result.count = Number(check.count || 0);
+  if (check.detail) result.detail = limitText(check.detail || '', 240);
+  return result;
+}
+
+function presentReadinessResult(readiness = {}) {
+  const status = ['passed', 'failed', 'warnings'].includes(String(readiness.readiness_status || ''))
+    ? String(readiness.readiness_status || '')
+    : 'failed';
+  const counts = readiness.safe_counts || {};
+  return {
+    shop_id: limitText(readiness.shop_id || '', 160),
+    readiness_status: status,
+    hard_blockers: (readiness.hard_blockers || []).map(presentReadinessIssue),
+    warnings: (readiness.warnings || []).map(presentReadinessIssue),
+    checks: (readiness.checks || []).map(presentReadinessCheck),
+    safe_counts: {
+      products: Number(counts.products || 0),
+      menu_images: Number(counts.menu_images || 0),
+      product_images: Number(counts.product_images || 0),
+      active_page_mappings: Number(counts.active_page_mappings || 0),
+      active_credentials: Number(counts.active_credentials || 0)
+    }
   };
 }
 
@@ -613,6 +671,10 @@ function presentShopControlWriteApi(model = {}) {
   };
 }
 
+function presentShopReadinessCheckApi(model = {}) {
+  return presentReadinessResult(model.readiness || {});
+}
+
 function presentPageMappingWriteApi(model = {}) {
   return {
     ok: true,
@@ -759,6 +821,7 @@ module.exports = {
   presentShopSettingsReadApi,
   presentShopSettingsWriteApi,
   presentShopControlWriteApi,
+  presentShopReadinessCheckApi,
   presentShopWriteApi,
   presentShopDetailApi,
   presentShopHealthApi,

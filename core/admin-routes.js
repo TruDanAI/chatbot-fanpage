@@ -13,6 +13,7 @@ const {
   presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopControlWriteApi,
+  presentShopReadinessCheckApi,
   presentShopSettingsWriteApi,
   presentShopWriteApi
 } = require('./admin/api-presenter');
@@ -59,6 +60,10 @@ const {
   createPostgresShopControlWriteService,
   isMissingShopControlWriteSchemaError
 } = require('./admin/shop-control-writes');
+const {
+  createPostgresShopReadinessCheckService,
+  isMissingShopReadinessCheckSchemaError
+} = require('./admin/shop-readiness-check');
 const {
   createPostgresShopSettingsWriteService,
   isMissingShopSettingsWriteSchemaError
@@ -656,6 +661,61 @@ function presentShopControlWriteTextError(err) {
   };
 }
 
+function presentShopReadinessCheckError(err) {
+  if (isMissingShopReadinessCheckSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    shop_archived: ['shop_archived', 'Archived shops cannot be readiness checked.', 409],
+    permission_denied: ['permission_denied', 'Shop readiness check permission is required.', 403],
+    database_url_required: ['shop_readiness_check_unavailable', 'Shop readiness checks are unavailable.', 503],
+    invalid_readiness_status: ['invalid_readiness_status', 'Readiness status is invalid.', 500],
+    readiness_check_commit_failed: ['readiness_check_commit_failed', 'Readiness check could not be committed.', 500],
+    readiness_check_persist_failed: ['readiness_check_failed', 'Readiness check could not be saved.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'shop_readiness_check_failed',
+      message: 'Shop readiness check could not be completed.'
+    }
+  };
+}
+
+function presentShopReadinessCheckTextError(err) {
+  const response = presentShopReadinessCheckError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Shop readiness check could not be completed.'
+  };
+}
+
 function presentPageMappingWriteError(err) {
   if (isMissingPageMappingWriteSchemaError(err)) {
     return {
@@ -998,6 +1058,7 @@ function registerAdminRoutes(app, {
   productImportService,
   productWriteService,
   shopControlWriteService,
+  shopReadinessCheckService,
   shopSettingsWriteService,
   shopWriteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
@@ -1059,6 +1120,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl
   });
   const shopControlWrites = shopControlWriteService || createPostgresShopControlWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const shopReadinessChecks = shopReadinessCheckService || createPostgresShopReadinessCheckService({
     databaseUrl: dashboardDatabaseUrl
   });
   const shopSettingsWrites = shopSettingsWriteService || createPostgresShopSettingsWriteService({
@@ -1265,6 +1329,52 @@ function registerAdminRoutes(app, {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
     return safeMessage ? `${base}?controlMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  async function checkShopReadinessApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'shop.readiness.checked',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopReadinessChecks.checkReadiness({
+        principal,
+        shopId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopReadinessCheckApi(result));
+    } catch (err) {
+      const response = presentShopReadinessCheckError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function checkShopReadinessHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'shop.readiness.checked',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopReadinessChecks.checkReadiness({
+        principal,
+        shopId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'readiness-checked'));
+    } catch (err) {
+      const response = presentShopReadinessCheckTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
   }
 
   async function updateShopControlApi(req, res) {
@@ -2311,6 +2421,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
+  app.post('/admin/api/shops/:shopId/readiness-check', checkShopReadinessApi);
   app.post('/admin/api/shops/:shopId/control-plane', updateShopControlApi);
   app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
   app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
@@ -2347,6 +2458,7 @@ function registerAdminRoutes(app, {
   app.get('/admin/shops/new', sendNewShopForm);
   app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
+  app.post('/admin/shops/:shopId/readiness-check', checkShopReadinessHtml);
   app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
   app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
   app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);
@@ -2395,6 +2507,7 @@ module.exports = {
   createPostgresProductImportService,
   createPostgresProductWriteService,
   createPostgresShopControlWriteService,
+  createPostgresShopReadinessCheckService,
   createPostgresShopSettingsWriteService,
   createPostgresShopWriteService,
   createAdminRouteAuthorizer,

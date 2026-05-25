@@ -36,6 +36,7 @@ require('./product-import-writes.test');
 require('./asset-writes.test');
 require('./asset-uploads.test');
 require('./shop-control-writes.test');
+require('./shop-readiness-check.test');
 require('./admin-routes.test');
 require('./index.test');
 

@@ -163,6 +163,7 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; padding: 9px 10px; font-size: 14px; }
     .banner { border-radius: 6px; padding: 9px 10px; font-size: 14px; margin: 10px 0 14px; }
     .banner-success { color: var(--success); background: #dcfce7; border: 1px solid #bbf7d0; }
+    .banner-warning { color: #854d0e; background: #fef3c7; border: 1px solid #fde68a; }
     .banner-error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; }
     .note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
     .note-form { display: grid; gap: 10px; margin: 12px 0 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
@@ -1020,10 +1021,24 @@ function renderControlPlaneOptions(values = [], selected = '') {
     .join('');
 }
 
+function renderReadinessIssues(title = '', rows = [], className = 'banner-error') {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return '';
+  return `<div class="banner ${escapeHtml(className)}" role="status">
+    <strong>${escapeHtml(title)}</strong>
+    <ul>
+      ${list.map(row => `<li><strong>${escapeHtml(row.label || row.key || '')}</strong>${row.detail ? ` - ${escapeHtml(row.detail)}` : ''}${row.next_action ? ` Next: ${escapeHtml(row.next_action)}` : ''}</li>`).join('')}
+    </ul>
+  </div>`;
+}
+
 function renderControlPlaneForm(shop = {}, onboarding = {}) {
   const action = `/admin/shops/${encodeRoutePart(shop.id)}/control-plane`;
+  const readinessAction = `/admin/shops/${encodeRoutePart(shop.id)}/readiness-check`;
   const liveChecked = shop.live_enabled ? ' checked' : '';
   const blockers = (onboarding.checklist || []).filter(row => !row.passed);
+  const hardBlockers = Array.isArray(onboarding.hard_blockers) ? onboarding.hard_blockers : [];
+  const warnings = Array.isArray(onboarding.warnings) ? onboarding.warnings : [];
   return `<section class="checklist-card" id="control-plane" aria-label="Shop control plane">
     <h2>Control Plane</h2>
     <p class="meta">Internal operator controls. Runtime lifecycle/live gate remains disabled unless <code>SHOP_LIVE_GATE_ENABLED</code> is explicitly enabled.</p>
@@ -1038,7 +1053,16 @@ function renderControlPlaneForm(shop = {}, onboarding = {}) {
       <tr><th>Manual test at</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
       <tr><th>Last ready by</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
     </tbody></table>
-    ${blockers.length ? `<div class="banner banner-error" role="status">Readiness blockers: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">No current readiness blockers.</div>'}
+    ${hardBlockers.length
+      ? renderReadinessIssues('Readiness hard blockers', hardBlockers, 'banner-error')
+      : (blockers.length ? `<div class="banner banner-error" role="status">Readiness blockers: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">No current readiness blockers.</div>')}
+    ${warnings.length ? renderReadinessIssues('Readiness warnings', warnings, 'banner-warning') : ''}
+    <form class="settings-form compact" method="post" action="${escapeHtml(readinessAction)}">
+      <div class="form-actions">
+        <button type="submit">Recheck readiness</button>
+        <span class="meta">Updates readiness status and checked time only.</span>
+      </div>
+    </form>
     <form class="settings-form" method="post" action="${escapeHtml(action)}">
       <label>Package
         <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>

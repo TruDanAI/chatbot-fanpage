@@ -949,6 +949,55 @@ function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } 
   };
 }
 
+function createShopReadinessCheckServiceStub({ failWith, readiness } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async checkReadiness(input = {}) {
+      calls.push({ method: 'checkReadiness', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        checkedAt: '2026-05-17T00:02:00.000Z',
+        readiness: readiness || {
+          shop_id: input.shopId,
+          readiness_status: 'failed',
+          hard_blockers: [{
+            key: 'product_ready',
+            label: 'Active products',
+            detail: 'No active products found.',
+            next_action: 'Add or activate at least one product.'
+          }],
+          warnings: [{
+            key: 'live_enabled_failed_readiness',
+            label: 'Live flag enabled while readiness failed',
+            detail: 'live_enabled is true while hard readiness blockers are present.',
+            next_action: 'Disable live_enabled or clear blockers before pilot.'
+          }],
+          checks: [{
+            key: 'product_ready',
+            label: 'Active products',
+            status: 'fail',
+            count: 0,
+            detail: 'No active products found.',
+            next_action: 'Add or activate at least one product.'
+          }],
+          safe_counts: {
+            products: 0,
+            menu_images: 1,
+            product_images: 0,
+            active_page_mappings: 1,
+            active_credentials: 1
+          },
+          page_id: 'raw-page-id',
+          access_token: 'do-not-return',
+          encrypted_value: 'do-not-return'
+        }
+      };
+    }
+  };
+}
+
 function createShopWriteServiceStub({ failWith, createdShop } = {}) {
   const calls = [];
   return {
@@ -3382,6 +3431,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Menu assets ready');
     expect(res.body).toContain('Product assets ready');
     expect(res.body).toContain('Health ready');
+    expect(res.body).toContain('Recheck readiness');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/readiness-check"');
+    expect(res.body).toContain('Updates readiness status and checked time only.');
     expect(res.body).toContain('edit settings');
     expect(res.body).toContain('add page mapping');
     expect(res.body).toContain('add credential');
@@ -5391,6 +5443,145 @@ describe('admin dashboard routes', () => {
       expect(bodyText.includes('relation')).toBeFalse();
       expect(bodyText.includes('postgres://secret')).toBeFalse();
     }
+  });
+
+  it('shop readiness check API returns safe checklist details', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: {
+        page_id: 'raw-page-id',
+        access_token: 'do-not-return'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.shop_id).toBe('new-shop');
+    expect(body.readiness_status).toBe('failed');
+    expect(body.hard_blockers[0].key).toBe('product_ready');
+    expect(body.warnings[0].key).toBe('live_enabled_failed_readiness');
+    expect(body.checks[0]).toEqual({
+      key: 'product_ready',
+      label: 'Active products',
+      status: 'fail',
+      next_action: 'Add or activate at least one product.',
+      count: 0,
+      detail: 'No active products found.'
+    });
+    expect(body.safe_counts).toEqual({
+      products: 0,
+      menu_images: 1,
+      product_images: 0,
+      active_page_mappings: 1,
+      active_credentials: 1
+    });
+    expect(body.ok).toBe(undefined);
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('access_token')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(readinessChecks.calls[0].method).toBe('checkReadiness');
+    expect(readinessChecks.calls[0].input.shopId).toBe('new-shop');
+  });
+
+  it('shop readiness check API requires write-capable admin auth before service call', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const unauthenticated = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      params: { shopId: 'new-shop' }
+    }), unauthenticated);
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(readinessChecks.calls.length).toBe(0);
+
+    const forbidden = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), forbidden);
+    expect(forbidden.statusCode).toBe(403);
+    expect(readinessChecks.calls.length).toBe(0);
+  });
+
+  it('shop readiness check API maps errors safely', async () => {
+    for (const item of [
+      { code: 'shop_not_found', status: 404, error: 'shop_not_found' },
+      { code: 'shop_archived', status: 409, error: 'shop_archived' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'readiness_check_commit_failed', status: 500, error: 'readiness_check_commit_failed' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shops" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopReadinessCheckService: createShopReadinessCheckServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('shop readiness check HTML route redirects after recheck', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/new-shop?controlMessage=readiness-checked');
+    expect(readinessChecks.calls[0].input.shopId).toBe('new-shop');
   });
 
   it('shop settings HTML update redirects with success banner key', async () => {
