@@ -725,6 +725,18 @@ describe('webhook: menu_code_handoff mode', () => {
     expectNoRuntimeFallback(h, senderId);
   });
 
+  it('DB multi-shop mode fails closed for paused shops before webhook side effects', async () => {
+    const senderId = 'db_paused_shop';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'shop_status_not_active' })
+    });
+
+    await h.handleText('chào shop', senderId, 'm_db_paused', 'page_db_paused');
+
+    expectNoRuntimeFallback(h, senderId);
+  });
+
   it('registered webhook route returns 200 for unmapped DB pages without processing', async () => {
     const warnings = [];
     const originalWarn = console.warn;

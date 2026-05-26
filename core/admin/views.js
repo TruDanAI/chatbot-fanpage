@@ -54,9 +54,9 @@ function formatLabel(value = '') {
 
 function statusClass(value = '') {
   const status = String(value || '').toLowerCase();
-  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'enabled' || status === 'pass' || status === 'passed' || status === 'ready') return 'status status-success';
+  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'enabled' || status === 'pass' || status === 'passed' || status === 'ready' || status === 'true') return 'status status-success';
   if (status === 'cancelled' || status === 'denied' || status === 'fail' || status === 'incomplete' || status.includes('failed') || status.includes('error')) return 'status status-danger';
-  if (status === 'abandoned' || status === 'hidden' || status === 'disabled') return 'status status-warning';
+  if (status === 'abandoned' || status === 'hidden' || status === 'disabled' || status === 'false' || status === 'paused') return 'status status-warning';
   if (status === 'archived') return 'status status-danger';
   return 'status status-neutral';
 }
@@ -199,7 +199,7 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .secondary-button { border-color: var(--border) !important; background: #ffffff !important; color: #334155 !important; }
     .settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 14px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .settings-form label { display: grid; gap: 5px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
-    .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
+    .settings-form input, .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
     .settings-form textarea { min-height: 82px; resize: vertical; }
     .settings-form .wide { grid-column: 1 / -1; }
     .settings-form fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 0; }
@@ -1032,6 +1032,41 @@ function renderReadinessIssues(title = '', rows = [], className = 'banner-error'
   </div>`;
 }
 
+function renderDryRunStatus(value) {
+  if (value === true) return renderStatus('true');
+  if (value === false) return renderStatus('false');
+  return renderStatus('unknown');
+}
+
+function renderShopEmergencyControls(shop = {}) {
+  const status = String(shop.status || '').trim().toLowerCase();
+  const pauseAction = `/admin/shops/${encodeRoutePart(shop.id)}/pause`;
+  const resumeAction = `/admin/shops/${encodeRoutePart(shop.id)}/resume`;
+  const pauseForm = `
+    <form class="settings-form compact" method="post" action="${escapeHtml(pauseAction)}">
+      <label>Confirmation
+        <input name="confirmation_text" placeholder="PAUSE SHOP" maxlength="40" required aria-required="true">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Pause shop</button>
+        <span class="meta">Pause stops bot responses, forces dry_run, disables live, and preserves data.</span>
+      </div>
+    </form>`;
+  const resumeForm = `
+    <form class="settings-form compact" method="post" action="${escapeHtml(resumeAction)}">
+      <label>Confirmation
+        <input name="confirmation_text" placeholder="RESUME SHOP" maxlength="40" required aria-required="true">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Resume shop</button>
+        <span class="meta">Resume reactivates the shop in dry-run with live disabled.</span>
+      </div>
+    </form>`;
+  if (status === 'active') return pauseForm;
+  if (status === 'paused') return resumeForm;
+  return '<p class="meta">Emergency pause/resume is available for active or paused shops only.</p>';
+}
+
 function renderControlPlaneForm(shop = {}, onboarding = {}) {
   const action = `/admin/shops/${encodeRoutePart(shop.id)}/control-plane`;
   const readinessAction = `/admin/shops/${encodeRoutePart(shop.id)}/readiness-check`;
@@ -1046,6 +1081,7 @@ function renderControlPlaneForm(shop = {}, onboarding = {}) {
       <tr><th>Existing status</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
       <tr><th>Package</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
       <tr><th>Lifecycle</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
+      <tr><th>dry_run</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
       <tr><th>Live enabled</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
       <tr><th>Readiness</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}</td></tr>
       <tr><th>Readiness checked</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
@@ -1063,6 +1099,8 @@ function renderControlPlaneForm(shop = {}, onboarding = {}) {
         <span class="meta">Updates readiness status and checked time only.</span>
       </div>
     </form>
+    <h3>Emergency Brake</h3>
+    ${renderShopEmergencyControls(shop)}
     <form class="settings-form" method="post" action="${escapeHtml(action)}">
       <label>Package
         <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>

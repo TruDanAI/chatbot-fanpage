@@ -364,6 +364,7 @@ function createDashboardReaderStub() {
           status: 'active',
           package: 'basic',
           lifecycle: 'live',
+          dry_run: false,
           live_enabled: true,
           last_readiness_status: 'passed',
           last_manual_test_status: 'passed',
@@ -388,6 +389,7 @@ function createDashboardReaderStub() {
           status: 'active',
           package: 'basic',
           lifecycle: 'live',
+          dry_run: false,
           live_enabled: true,
           last_readiness_status: 'passed',
           last_readiness_checked_at: '2026-05-12T00:30:00.000Z',
@@ -510,6 +512,7 @@ function createDashboardReaderStub() {
           status: 'active',
           package: 'basic',
           lifecycle: 'live',
+          dry_run: false,
           live_enabled: true,
           last_readiness_status: 'passed',
           last_manual_test_status: 'passed',
@@ -574,6 +577,7 @@ function createOnboardingShopDetailModel(overrides = {}) {
       status: 'active',
       package: 'basic',
       lifecycle: 'configuring',
+      dry_run: true,
       live_enabled: false,
       last_readiness_status: 'unknown',
       last_readiness_checked_at: '',
@@ -916,6 +920,27 @@ function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) 
 
 function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } = {}) {
   const calls = [];
+  function buildEmergencyResult(input = {}, overrides = {}) {
+    return {
+      shopId: input.shopId,
+      shop: {
+        id: input.shopId,
+        slug: input.shopId,
+        name: 'Control Shop',
+        status: overrides.status || 'paused',
+        package: 'basic',
+        lifecycle: overrides.lifecycle || 'paused',
+        dry_run: true,
+        live_enabled: false,
+        last_readiness_status: overrides.last_readiness_status || 'unknown',
+        last_readiness_checked_at: overrides.last_readiness_checked_at || '',
+        last_manual_test_status: 'passed',
+        last_manual_test_at: '2026-05-17T00:00:00.000Z',
+        last_ready_by: 'admin-1',
+        updated_at: '2026-05-17T00:00:00.000Z'
+      }
+    };
+  }
   return {
     calls,
     async updateControlPlane(input = {}) {
@@ -931,6 +956,7 @@ function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } 
           status: 'active',
           package: String(body.package || 'basic').trim(),
           lifecycle: String(body.lifecycle || 'configuring').trim(),
+          dry_run: true,
           live_enabled: /^(1|true|yes|on|enabled|active)$/i.test(String(body.live_enabled || '').trim()),
           last_readiness_status: 'passed',
           last_readiness_checked_at: '2026-05-17T00:00:00.000Z',
@@ -945,6 +971,20 @@ function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } 
           warnings: [{ key: 'product_assets_ready', label: 'No active product images' }]
         }
       };
+    },
+    async pauseShop(input = {}) {
+      calls.push({ method: 'pauseShop', input });
+      if (failWith) throw failWith;
+      return updatedShop
+        ? { shopId: input.shopId, shop: updatedShop }
+        : buildEmergencyResult(input, { status: 'paused', lifecycle: 'paused' });
+    },
+    async resumeShop(input = {}) {
+      calls.push({ method: 'resumeShop', input });
+      if (failWith) throw failWith;
+      return updatedShop
+        ? { shopId: input.shopId, shop: updatedShop }
+        : buildEmergencyResult(input, { status: 'active', lifecycle: 'configuring', last_readiness_status: 'unknown' });
     }
   };
 }
@@ -2790,6 +2830,7 @@ describe('admin dashboard routes', () => {
       status: 'active',
       package: 'basic',
       lifecycle: 'live',
+      dry_run: false,
       live_enabled: true,
       last_readiness_status: 'passed',
       last_manual_test_status: 'passed',
@@ -3101,6 +3142,7 @@ describe('admin dashboard routes', () => {
       status: 'active',
       package: 'basic',
       lifecycle: 'live',
+      dry_run: false,
       live_enabled: true,
       last_readiness_status: 'passed',
       last_manual_test_status: 'passed',
@@ -3305,7 +3347,7 @@ describe('admin dashboard routes', () => {
     expect(productionRes.body).toContain('Archived Mappings (1)');
     expect(productionRes.body.includes('/pages/page-active/archive')).toBeFalse();
     expect(productionRes.body.includes('Archive mapping')).toBeFalse();
-    expect(productionRes.body.includes('name="confirmation_text"')).toBeFalse();
+    expect(productionRes.body.includes('placeholder="ARCHIVE MAPPING"')).toBeFalse();
     expect(productionRes.body.includes('raw-active-page-id')).toBeFalse();
     expect(productionRes.body.includes('raw-archived-page-id')).toBeFalse();
   });
@@ -3445,6 +3487,52 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain("target.closest('.tab-section')");
     expect(res.body).toContain("const activeHash = activeSection ? '#' + activeSection.id : '#overview';");
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
+  });
+
+  it('shop detail HTML shows current dry-run state and the matching emergency control', async () => {
+    for (const item of [
+      {
+        shop: { status: 'active', lifecycle: 'configuring', dry_run: true, live_enabled: false },
+        shown: 'action="/admin/shops/new-shop/pause"',
+        hidden: 'action="/admin/shops/new-shop/resume"',
+        label: 'Pause shop',
+        placeholder: 'placeholder="PAUSE SHOP"',
+        explanation: 'Pause stops bot responses'
+      },
+      {
+        shop: { status: 'paused', lifecycle: 'paused', dry_run: true, live_enabled: false },
+        shown: 'action="/admin/shops/new-shop/resume"',
+        hidden: 'action="/admin/shops/new-shop/pause"',
+        label: 'Resume shop',
+        placeholder: 'placeholder="RESUME SHOP"',
+        explanation: 'Resume reactivates the shop'
+      }
+    ]) {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({ shop: item.shop })),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<tr><th>dry_run</th><td><span class="status status-success">true</span></td></tr>');
+      expect(res.body).toContain('<tr><th>Live enabled</th><td><span class="status status-warning">disabled</span></td></tr>');
+      expect(res.body).toContain('Emergency Brake');
+      expect(res.body).toContain(item.explanation);
+      expect(res.body).toContain(item.shown);
+      expect(res.body).toContain(item.label);
+      expect(res.body).toContain(item.placeholder);
+      expect(res.body.includes(item.hidden)).toBeFalse();
+    }
   });
 
   it('shop detail HTML renders passed readiness with visible warning list', async () => {
@@ -5459,11 +5547,59 @@ describe('admin dashboard routes', () => {
     expect(controlWrites.calls[0].input.body.confirm_live).toBe('true');
   });
 
+  it('shop pause and resume routes call emergency controls and return safe state', async () => {
+    const app = createApp();
+    const controlWrites = createShopControlWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopControlWriteService: controlWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const pauseRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pause'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: { confirmation_text: 'PAUSE SHOP', access_token: 'do-not-return' }
+    }), pauseRes);
+    const pauseBody = JSON.parse(pauseRes.body);
+
+    expect(pauseRes.statusCode).toBe(200);
+    expect(pauseBody.ok).toBeTrue();
+    expect(pauseBody.shop.status).toBe('paused');
+    expect(pauseBody.shop.lifecycle).toBe('paused');
+    expect(pauseBody.shop.dry_run).toBeTrue();
+    expect(pauseBody.shop.live_enabled).toBeFalse();
+    expect(JSON.stringify(pauseBody).includes('do-not-return')).toBeFalse();
+    expect(controlWrites.calls[0].method).toBe('pauseShop');
+    expect(controlWrites.calls[0].input.shopId).toBe('new-shop');
+
+    const resumeRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/resume'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: { confirmation_text: 'RESUME SHOP' }
+    }), resumeRes);
+
+    expect(resumeRes.statusCode).toBe(303);
+    expect(resumeRes.headers.location).toBe('/admin/shops/new-shop?controlMessage=resumed');
+    expect(controlWrites.calls[1].method).toBe('resumeShop');
+    expect(controlWrites.calls[1].input.shopId).toBe('new-shop');
+  });
+
   it('shop control API maps validation and schema errors safely', async () => {
     for (const item of [
       { code: 'invalid_shop_package', status: 400, error: 'invalid_shop_package' },
       { code: 'live_confirmation_required', status: 400, error: 'live_confirmation_required' },
+      { code: 'pause_confirmation_required', status: 400, error: 'pause_confirmation_required' },
+      { code: 'resume_confirmation_required', status: 400, error: 'resume_confirmation_required' },
       { code: 'readiness_blockers_present', status: 400, error: 'readiness_blockers_present' },
+      { code: 'adult_shop_protected', status: 403, error: 'adult_shop_protected' },
+      { code: 'staging_only', status: 403, error: 'staging_only' },
+      { code: 'shop_not_paused', status: 409, error: 'shop_not_paused' },
       { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
       { code: 'shop_control_commit_failed', status: 500, error: 'shop_control_commit_failed' }
     ]) {

@@ -132,6 +132,7 @@ function createDashboardRepository({
           s.status,
           s.package,
           s.lifecycle,
+          s.dry_run,
           s.live_enabled,
           s.last_readiness_status,
           s.last_manual_test_status,
@@ -188,7 +189,7 @@ function createDashboardRepository({
 
     try {
       const shopResult = await client.query(`
-        SELECT id, slug, name, status, package, lifecycle, live_enabled,
+        SELECT id, slug, name, status, package, lifecycle, dry_run, live_enabled,
                last_readiness_status, last_readiness_checked_at,
                last_manual_test_status, last_manual_test_at, last_ready_by,
                default_locale, timezone, created_at, updated_at
@@ -350,7 +351,7 @@ function createDashboardRepository({
 
     try {
       const shopResult = await client.query(`
-        SELECT id, slug, name, status, package, lifecycle, live_enabled,
+        SELECT id, slug, name, status, package, lifecycle, dry_run, live_enabled,
                last_readiness_status, last_manual_test_status, updated_at
         FROM shops
         WHERE id = $1 OR slug = $1

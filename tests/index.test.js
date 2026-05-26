@@ -340,6 +340,19 @@ describe('index: security hardening helpers', () => {
     expect(admission).toEqual({ failClosed: true, reason: 'shop_not_allowed' });
   });
 
+  it('runtime admission fails closed for paused shops even when live gate is disabled', () => {
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'paused-shop', status: 'paused' },
+        page: { page_id: 'page-paused' }
+      },
+      allowlist: createRuntimeAllowlist({})
+    });
+
+    expect(admission).toEqual({ failClosed: true, reason: 'shop_status_not_active' });
+  });
+
   it('runtime live gate is a no-op when disabled', () => {
     const gate = evaluateDbShopRuntimeLiveGate({
       enabled: false,

@@ -32,7 +32,8 @@ class FakeShopConfigClient {
       const pageId = values[0];
       const rows = this.seed.mappings
         .filter(row => row.page_id === pageId)
-        .filter(row => !normalized.includes("sp.status = 'active'") || String(row.status || 'active') === 'active');
+        .filter(row => !normalized.includes("sp.status = 'active'") || String(row.status || 'active') === 'active')
+        .filter(row => !normalized.includes("s.status = 'active'") || String(row.shop_status || 'active') === 'active');
       return { rows };
     }
     if (normalized.includes('FROM shop_products')) {
@@ -270,6 +271,28 @@ describe('db shop config resolver', () => {
     seed.mappings[0] = {
       ...seed.mappings[0],
       status: 'archived'
+    };
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeFalse();
+    expect(result.reason).toBe('page_not_found');
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_products'))).toBeFalse();
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_assets'))).toBeFalse();
+  });
+
+  it('fails closed for paused shops before loading runtime products or assets', async () => {
+    const seed = makeSeed();
+    seed.mappings[0] = {
+      ...seed.mappings[0],
+      shop_status: 'paused',
+      shop_lifecycle: 'paused',
+      live_enabled: false,
+      shop_dry_run: true
     };
     const client = new FakeShopConfigClient(seed);
     const result = await resolveShopConfigForPage({

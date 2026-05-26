@@ -342,6 +342,10 @@ function evaluateDbShopRuntimeAdmission({
 
   const shopId = String(result.shop?.id || '').trim();
   const resolvedPageId = String(result.page?.page_id || normalizedPageId || '').trim();
+  const shopStatus = String(result.shop?.status || '').trim().toLowerCase();
+  if (shopStatus && shopStatus !== 'active') {
+    return { failClosed: true, reason: 'shop_status_not_active' };
+  }
   if (!isAllowedResolvedRuntime({ shopId, pageId: resolvedPageId }, allowlist)) {
     logger.warn?.(
       `[multi-shop] runtime admission: resolved shop not in allowlist, fail-closed reason=shop_not_allowed shop_id=${safeLogValue(shopId)} page_ref=${pageRef(resolvedPageId)}`

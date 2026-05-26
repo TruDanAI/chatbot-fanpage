@@ -621,7 +621,13 @@ function presentShopControlWriteError(err) {
     invalid_manual_test_status: ['invalid_manual_test_status', 'Manual test status is invalid.', 400],
     live_confirmation_required: ['live_confirmation_required', 'Live enable requires explicit confirmation.', 400],
     pause_archive_confirmation_required: ['pause_archive_confirmation_required', 'Pause/archive requires explicit confirmation.', 400],
+    pause_confirmation_required: ['pause_confirmation_required', 'Pause confirmation is required.', 400],
+    resume_confirmation_required: ['resume_confirmation_required', 'Resume confirmation is required.', 400],
     readiness_blockers_present: ['readiness_blockers_present', 'Readiness hard blockers must pass before live enable.', 400],
+    adult_shop_protected: ['adult_shop_protected', 'This shop is protected from emergency pause/resume.', 403],
+    staging_only: ['staging_only', 'Shop emergency controls are available only in staging.', 403],
+    shop_archived: ['shop_archived', 'Archived shops cannot be paused or resumed.', 409],
+    shop_not_paused: ['shop_not_paused', 'Only paused shops can be resumed.', 409],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     permission_denied: ['permission_denied', 'Shop control write permission is required.', 403],
     database_url_required: ['shop_control_unavailable', 'Shop control writes are unavailable.', 503],
@@ -1419,6 +1425,102 @@ function registerAdminRoutes(app, {
         requestContext: buildProductWriteRequestContext(req)
       });
       return res.redirect(303, shopControlRedirect(shopId, 'updated'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function pauseShopApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.pause',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.pauseShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function resumeShopApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.resume',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.resumeShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function pauseShopHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.pause',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.pauseShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'paused'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function resumeShopHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.resume',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.resumeShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'resumed'));
     } catch (err) {
       const response = presentShopControlWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
@@ -2422,6 +2524,8 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
   app.post('/admin/api/shops/:shopId/readiness-check', checkShopReadinessApi);
+  app.post('/admin/api/shops/:shopId/pause', pauseShopApi);
+  app.post('/admin/api/shops/:shopId/resume', resumeShopApi);
   app.post('/admin/api/shops/:shopId/control-plane', updateShopControlApi);
   app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
   app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
@@ -2459,6 +2563,8 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
   app.post('/admin/shops/:shopId/readiness-check', checkShopReadinessHtml);
+  app.post('/admin/shops/:shopId/pause', pauseShopHtml);
+  app.post('/admin/shops/:shopId/resume', resumeShopHtml);
   app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
   app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
   app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);

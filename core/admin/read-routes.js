@@ -55,7 +55,10 @@ const CREDENTIAL_FLASH_MESSAGES = {
   rotated: { type: 'success', text: 'Page credential rotated.' }
 };
 const CONTROL_FLASH_MESSAGES = {
-  updated: { type: 'success', text: 'Shop control plane updated.' }
+  updated: { type: 'success', text: 'Shop control plane updated.' },
+  'readiness-checked': { type: 'success', text: 'Readiness checked.' },
+  paused: { type: 'success', text: 'Shop paused. Runtime routing is stopped and dry-run remains on.' },
+  resumed: { type: 'success', text: 'Shop resumed in dry-run with live disabled.' }
 };
 
 function createAdminReadHandlers({
