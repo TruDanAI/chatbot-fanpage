@@ -9,32 +9,47 @@ config, data, or assets.
 
 ## Current Checkpoint
 
-- [ ] `nem-bui-xa` real Messenger staging test passed.
-- [ ] Rollback completed after the staging test.
-- [ ] `nem-bui-xa` is back to `dry_run=true`.
-- [ ] Global `MESSENGER_DRY_RUN=true`.
-- [ ] `live_enabled=false`.
-- [ ] No Messenger send errors were observed during the staging test.
-- [ ] No wrong-shop routing was observed during the staging test.
-- [ ] No `adult-shop` or `demo-shop` side effects were observed.
+- [x] `nem-bui-xa` real Messenger staging test passed.
+- [x] Rollback completed after the staging test.
+- [x] `nem-bui-xa` is back to `dry_run=true`.
+- [x] Global `MESSENGER_DRY_RUN=true`.
+- [x] `live_enabled=false`.
+- [x] No Messenger send errors were observed during the staging test.
+- [x] No wrong-shop routing was observed during the staging test.
+- [x] No `adult-shop` or `demo-shop` side effects were observed.
 
 ## P0.2 Emergency Control Checkpoint
 
-- [ ] Commit `2ea325b Add shop pause and resume controls` was deployed to
+- [x] Commit `2ea325b Add shop pause and resume controls` was deployed to
       staging.
-- [ ] Staging deployment `b7818f64-6358-4057-a04f-8bdb7c58f922` finished
+- [x] Staging deployment `b7818f64-6358-4057-a04f-8bdb7c58f922` finished
       `SUCCESS`.
-- [ ] Pause/resume was tested on `nem-bui-xa`.
-- [ ] Pause sets `status=paused`, `lifecycle=paused`, `dry_run=true`, and
+- [x] Pause/resume was tested on `nem-bui-xa`.
+- [x] Pause sets `status=paused`, `lifecycle=paused`, `dry_run=true`, and
       `live_enabled=false`.
-- [ ] Runtime fails closed while the shop is paused.
-- [ ] Resume returns `status=active`, `lifecycle=configuring`,
+- [x] Runtime fails closed while the shop is paused.
+- [x] Resume returns `status=active`, `lifecycle=configuring`,
       `dry_run=true`, and `live_enabled=false`.
-- [ ] Readiness check after resume passed with a `product_assets_ready`
+- [x] Readiness check after resume passed with a `product_assets_ready`
       warning only.
-- [ ] `adult-shop` and `demo-shop` config, data, and assets were unchanged.
-- [ ] No Messenger sends were performed.
-- [ ] No production action was taken.
+- [x] `adult-shop` and `demo-shop` config, data, and assets were unchanged.
+- [x] No Messenger sends were performed.
+- [x] No production action was taken.
+
+## P0.3 Dry-Run Controls Checkpoint
+
+- [x] Commit `980928c Add safe shop dry-run controls` was deployed to staging.
+- [x] Staging deployment `74465cb2-4854-4ffb-ba9a-59f76f896994` finished `SUCCESS`.
+- [x] Dry-run disable/enable was tested on `nem-bui-xa`.
+- [x] Disabling dry-run set `nem-bui-xa` `dry_run=false` only.
+- [x] Enabling dry-run restored `nem-bui-xa` `dry_run=true`.
+- [x] `live_enabled` stayed `false` throughout the sequence.
+- [x] `lifecycle` stayed `configuring` throughout the sequence.
+- [x] Global `MESSENGER_DRY_RUN` stayed `true` (no actual sends).
+- [x] `adult-shop` and `demo-shop` config, data, and assets were unchanged.
+- [x] No Messenger sends were performed.
+- [x] No production action was taken.
+- [x] P0.1 (readiness check), P0.2 (emergency brake), and P0.3 (safe dry-run controls) are completely implemented and verified.
 
 ## Preconditions Before Touching The Real Page
 

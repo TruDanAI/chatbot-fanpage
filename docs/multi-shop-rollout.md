@@ -347,6 +347,35 @@ Isolation and safety boundary:
 - No Messenger sends were performed.
 - No production action was taken.
 
+## P0.3 Shop Dry-Run Controls Checkpoint - 2026-05-26
+
+This checkpoint records the staging deployment and verification of the per-shop dry-run operator controls. It is documentation-only and is not approval to deploy, change environment variables, write a database, touch `/data`, call Meta Graph API, run token health checks, send Messenger messages, or modify `adult-shop` or `demo-shop` config, data, or assets.
+
+Staging deployment:
+
+- Commit `980928c Add safe shop dry-run controls`.
+- Railway staging deployment `74465cb2-4854-4ffb-ba9a-59f76f896994`: `SUCCESS`.
+- Full tests: `786 passed` (`npm test`).
+- Focused tests: `174 passed` (`shop-control-writes` and `admin-routes`).
+- Staging health check `/healthz`: HTTP 200, `messenger.dryRun=true`, `storage.ready=true`.
+- Staging admin UI `/admin/login`: HTTP 200.
+
+`nem-bui-xa` dry-run control verification:
+
+- Precheck: `status=active`, `lifecycle=configuring`, `last_readiness_status=passed`, `dry_run=true`, `live_enabled=false`.
+- Disable dry-run: `POST /admin/api/shops/nem-bui-xa/dry-run/disable` with strict confirmation successfully disabled dry-run (`dry_run=false` persisted in DB).
+- Re-enable dry-run: `POST /admin/api/shops/nem-bui-xa/dry-run/enable` with confirmation successfully re-enabled dry-run (`dry_run=true` persisted in DB).
+- live_enabled stayed `false` throughout the sequence.
+- lifecycle stayed `configuring` (non-live) throughout the sequence.
+- Global `MESSENGER_DRY_RUN` stayed `true` (no actual sends).
+
+Isolation and safety boundary:
+
+- `adult-shop` and `demo-shop` config, data, and assets were completely unchanged.
+- No Messenger sends were performed.
+- No production action was taken.
+- P0.1 (readiness checks), P0.2 (emergency brake), and P0.3 (safe dry-run controls) are completely implemented and verified.
+
 ## Closed Pre-Shop-2 Isolation Gates - 2026-05-24
 
 The three pre-shop-2 isolation blockers are implemented and covered by local
