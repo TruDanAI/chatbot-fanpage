@@ -316,6 +316,37 @@ Rollback and final safe state:
 - Final `nem-bui-xa` `live_enabled=false`.
 - `nem-bui-xa` readiness remained `passed`.
 
+## P0.2 Shop Pause/Resume Emergency Control Checkpoint - 2026-05-26
+
+This checkpoint records the staging deployment and verification of the
+shop-level pause/resume emergency control. It is documentation-only and is not
+approval to deploy, change environment variables, write a database, touch
+`/data`, call Meta Graph API, run token health checks, send Messenger messages,
+or modify `adult-shop` or `demo-shop` config, data, or assets.
+
+Staging deployment:
+
+- Commit `2ea325b Add shop pause and resume controls`.
+- Railway staging deployment `b7818f64-6358-4057-a04f-8bdb7c58f922`:
+  `SUCCESS`.
+
+`nem-bui-xa` pause/resume verification:
+
+- Pause/resume was tested on `nem-bui-xa`.
+- Pause sets `status=paused` and `lifecycle=paused`.
+- Pause keeps `dry_run=true` and `live_enabled=false`.
+- Runtime fails closed for the paused shop.
+- Resume returns `status=active` and `lifecycle=configuring`.
+- Resume keeps `dry_run=true` and `live_enabled=false`.
+- Readiness check after resume passed with a `product_assets_ready` warning
+  only.
+
+Isolation and safety boundary:
+
+- `adult-shop` and `demo-shop` config, data, and assets were unchanged.
+- No Messenger sends were performed.
+- No production action was taken.
+
 ## Closed Pre-Shop-2 Isolation Gates - 2026-05-24
 
 The three pre-shop-2 isolation blockers are implemented and covered by local

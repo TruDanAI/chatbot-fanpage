@@ -18,6 +18,24 @@ config, data, or assets.
 - [ ] No wrong-shop routing was observed during the staging test.
 - [ ] No `adult-shop` or `demo-shop` side effects were observed.
 
+## P0.2 Emergency Control Checkpoint
+
+- [ ] Commit `2ea325b Add shop pause and resume controls` was deployed to
+      staging.
+- [ ] Staging deployment `b7818f64-6358-4057-a04f-8bdb7c58f922` finished
+      `SUCCESS`.
+- [ ] Pause/resume was tested on `nem-bui-xa`.
+- [ ] Pause sets `status=paused`, `lifecycle=paused`, `dry_run=true`, and
+      `live_enabled=false`.
+- [ ] Runtime fails closed while the shop is paused.
+- [ ] Resume returns `status=active`, `lifecycle=configuring`,
+      `dry_run=true`, and `live_enabled=false`.
+- [ ] Readiness check after resume passed with a `product_assets_ready`
+      warning only.
+- [ ] `adult-shop` and `demo-shop` config, data, and assets were unchanged.
+- [ ] No Messenger sends were performed.
+- [ ] No production action was taken.
+
 ## Preconditions Before Touching The Real Page
 
 - [ ] Shop owner has explicitly approved using the real Page.
