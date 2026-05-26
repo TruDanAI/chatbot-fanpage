@@ -1,7 +1,11 @@
 const { describe, it, expect } = require('./harness');
 const {
+  DISABLE_DRY_RUN_CONFIRMATION,
+  ENABLE_DRY_RUN_CONFIRMATION,
   PAUSE_CONFIRMATION,
   RESUME_CONFIRMATION,
+  SHOP_DRY_RUN_DISABLE_ACTION,
+  SHOP_DRY_RUN_ENABLE_ACTION,
   SHOP_PAUSE_ACTION,
   SHOP_RESUME_ACTION,
   createPostgresShopControlWriteService,
@@ -542,5 +546,357 @@ describe('shop control writes', () => {
     expect(queries.some(query => /^INSERT INTO admin_audit_log/i.test(query.sql))).toBeTrue();
     expect(queries.some(query => query.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(query => query.sql === 'COMMIT')).toBeFalse();
+  });
+
+  // ─── P0.3 dry-run controls ────────────────────────────────────────────────
+
+  function createDryRunClientClass({ state, queries = [], failAudit = false } = {}) {
+    return class FakeClient {
+      async connect() { queries.push({ sql: 'CONNECT', params: [] }); }
+      async end() { queries.push({ sql: 'END', params: [] }); }
+
+      async query(sql, params = []) {
+        const normalized = String(sql || '').replace(/\s+/g, ' ').trim();
+        queries.push({ sql: normalized, params });
+
+        if (normalized === 'BEGIN') {
+          this.txShop = { ...state.shop };
+          this.txAudits = state.audits.map(a => ({ ...a }));
+          return { rows: [] };
+        }
+        if (normalized === 'COMMIT') {
+          state.shop = { ...this.txShop };
+          state.audits = this.txAudits.map(a => ({ ...a }));
+          this.txShop = null; this.txAudits = null;
+          return { rows: [], command: 'COMMIT' };
+        }
+        if (normalized === 'ROLLBACK') {
+          this.txShop = null; this.txAudits = null;
+          return { rows: [] };
+        }
+
+        const shop = this.txShop || state.shop;
+        const audits = this.txAudits || state.audits;
+
+        if (normalized.includes('FROM shops') && normalized.includes('WHERE id = $1 OR slug = $1')) {
+          return { rows: shop.id === params[0] || shop.slug === params[0] ? [{ ...shop }] : [] };
+        }
+        // dry-run targeted UPDATE (only sets dry_run + updated_at)
+        if (/^UPDATE shops/i.test(normalized) && normalized.includes('SET dry_run = $2')) {
+          if (shop.id !== params[0]) return { rows: [] };
+          shop.dry_run = params[1];
+          shop.updated_at = '2026-05-26T00:01:00.000Z';
+          return { rows: [{ ...shop }] };
+        }
+        if (/^INSERT INTO admin_audit_log/i.test(normalized)) {
+          if (failAudit) {
+            const err = new Error('audit insert failed at postgres://secret');
+            err.code = 'audit_failed';
+            throw err;
+          }
+          audits.push({
+            action: params[5],
+            resourceType: params[6],
+            resourceId: params[7],
+            metadata: JSON.parse(params[12])
+          });
+          return { rows: [] };
+        }
+        throw new Error(`unexpected dry-run query: ${normalized}`);
+      }
+    };
+  }
+
+  function createDryRunState(overrides = {}) {
+    return {
+      shop: {
+        id: 'pilot-shop',
+        slug: 'pilot-shop',
+        name: 'Pilot Shop',
+        status: 'active',
+        package: 'basic',
+        lifecycle: 'configuring',
+        dry_run: true,
+        live_enabled: false,
+        last_readiness_status: 'passed',
+        last_readiness_checked_at: '2026-05-26T00:00:00.000Z',
+        last_manual_test_status: 'passed',
+        last_manual_test_at: '2026-05-26T00:00:00.000Z',
+        last_ready_by: 'admin-1',
+        updated_at: '2026-05-26T00:00:00.000Z',
+        page_id: 'raw-page-id',
+        page_access_token: 'raw-token',
+        encrypted_value: 'encrypted-secret',
+        ...overrides
+      },
+      audits: []
+    };
+  }
+
+  function createDryRunService({ state, queries = [], failAudit = false, env = { NODE_ENV: 'staging' } } = {}) {
+    return createPostgresShopControlWriteService({
+      databaseUrl: 'postgres://test-url',
+      Client: createDryRunClientClass({ state, queries, failAudit }),
+      env
+    });
+  }
+
+  it('enableDryRun sets dry_run=true and writes a safe audit event', async () => {
+    const state = createDryRunState({ dry_run: false });
+    const queries = [];
+    const service = createDryRunService({ state, queries });
+
+    const result = await service.enableDryRun({
+      principal: createPrincipal(),
+      shopId: 'pilot-shop',
+      body: { confirmation_text: ENABLE_DRY_RUN_CONFIRMATION },
+      requestContext: { requestId: 'req-dr-1', ip: '127.0.0.1', userAgent: 'test-agent' }
+    });
+
+    expect(result.shop.dry_run).toBeTrue();
+    expect(state.shop.dry_run).toBeTrue();
+    expect(state.audits.length).toBe(1);
+    expect(state.audits[0].action).toBe(SHOP_DRY_RUN_ENABLE_ACTION);
+    expect(state.audits[0].metadata.newDryRun).toBeTrue();
+    expect(state.audits[0].metadata.oldDryRun).toBeFalse();
+    expect(state.audits[0].metadata.changedFields).toEqual(['dry_run']);
+    expect(state.audits[0].metadata.source).toBe('admin_ui');
+    expect(state.audits[0].metadata.liveEnabled).toBeFalse();
+    // live_enabled must NOT change
+    expect(state.shop.live_enabled).toBeFalse();
+    // lifecycle must NOT change
+    expect(state.shop.lifecycle).toBe('configuring');
+    expect(queries.some(q => q.sql === 'COMMIT')).toBeTrue();
+    expect(queries.some(q => q.sql === 'ROLLBACK')).toBeFalse();
+  });
+
+  it('disableDryRun sets dry_run=false when readiness passed and shop active', async () => {
+    const state = createDryRunState({ dry_run: true });
+    const queries = [];
+    const service = createDryRunService({ state, queries });
+
+    const result = await service.disableDryRun({
+      principal: createPrincipal(),
+      shopId: 'pilot-shop',
+      body: { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION },
+      requestContext: { requestId: 'req-dr-2', ip: '127.0.0.1', userAgent: 'test-agent' }
+    });
+
+    expect(result.shop.dry_run).toBeFalse();
+    expect(state.shop.dry_run).toBeFalse();
+    expect(state.audits.length).toBe(1);
+    expect(state.audits[0].action).toBe(SHOP_DRY_RUN_DISABLE_ACTION);
+    expect(state.audits[0].metadata.newDryRun).toBeFalse();
+    expect(state.audits[0].metadata.oldDryRun).toBeTrue();
+    expect(state.audits[0].metadata.changedFields).toEqual(['dry_run']);
+    expect(state.audits[0].metadata.readinessStatus).toBe('passed');
+    expect(state.audits[0].metadata.liveEnabled).toBeFalse();
+    // live_enabled and lifecycle must NOT change
+    expect(state.shop.live_enabled).toBeFalse();
+    expect(state.shop.lifecycle).toBe('configuring');
+  });
+
+  it('disableDryRun rejected when readiness is not passed', async () => {
+    for (const readiness of ['unknown', 'failed', 'warnings']) {
+      const state = createDryRunState({ last_readiness_status: readiness });
+      const service = createDryRunService({ state });
+      let error;
+      try {
+        await service.disableDryRun({
+          principal: createPrincipal(),
+          shopId: 'pilot-shop',
+          body: { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION }
+        });
+      } catch (err) { error = err; }
+      expect(error.code).toBe('dry_run_disable_readiness_required');
+      expect(state.shop.dry_run).toBeTrue();
+      expect(state.audits.length).toBe(0);
+    }
+  });
+
+  it('disableDryRun rejected when shop is paused or archived', async () => {
+    for (const status of ['paused', 'archived']) {
+      const state = createDryRunState({ status });
+      const service = createDryRunService({ state });
+      let error;
+      try {
+        await service.disableDryRun({
+          principal: createPrincipal(),
+          shopId: 'pilot-shop',
+          body: { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION }
+        });
+      } catch (err) { error = err; }
+      expect(error.code).toBe('dry_run_disable_shop_not_active');
+      expect(state.shop.dry_run).toBeTrue();
+      expect(state.audits.length).toBe(0);
+    }
+  });
+
+  it('disableDryRun rejected when live_enabled=true', async () => {
+    const state = createDryRunState({ live_enabled: true });
+    const service = createDryRunService({ state });
+    let error;
+    try {
+      await service.disableDryRun({
+        principal: createPrincipal(),
+        shopId: 'pilot-shop',
+        body: { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION }
+      });
+    } catch (err) { error = err; }
+    expect(error.code).toBe('dry_run_disable_live_enabled');
+    expect(state.shop.dry_run).toBeTrue();
+    expect(state.audits.length).toBe(0);
+  });
+
+  it('enableDryRun rejected for adult-shop', async () => {
+    const state = createDryRunState({ id: 'adult-shop', slug: 'adult-shop', dry_run: false });
+    const service = createDryRunService({ state });
+    let error;
+    try {
+      await service.enableDryRun({
+        principal: createPrincipal(),
+        shopId: 'adult-shop',
+        body: { confirmation_text: ENABLE_DRY_RUN_CONFIRMATION }
+      });
+    } catch (err) { error = err; }
+    expect(error.code).toBe('adult_shop_protected');
+    expect(state.audits.length).toBe(0);
+  });
+
+  it('disableDryRun rejected for adult-shop', async () => {
+    const state = createDryRunState({ id: 'adult-shop', slug: 'adult-shop' });
+    const service = createDryRunService({ state });
+    let error;
+    try {
+      await service.disableDryRun({
+        principal: createPrincipal(),
+        shopId: 'adult-shop',
+        body: { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION }
+      });
+    } catch (err) { error = err; }
+    expect(error.code).toBe('adult_shop_protected');
+    expect(state.audits.length).toBe(0);
+  });
+
+  it('enableDryRun requires confirmation text', async () => {
+    for (const body of [{}, { confirmation_text: '' }, { confirmation_text: 'WRONG' }]) {
+      const state = createDryRunState({ dry_run: false });
+      const service = createDryRunService({ state });
+      let error;
+      try {
+        await service.enableDryRun({
+          principal: createPrincipal(),
+          shopId: 'pilot-shop',
+          body
+        });
+      } catch (err) { error = err; }
+      expect(error.code).toBe('dry_run_enable_confirmation_required');
+      expect(state.shop.dry_run).toBeFalse();
+      expect(state.audits.length).toBe(0);
+    }
+  });
+
+  it('disableDryRun requires exact strict confirmation text and rejects shortcuts', async () => {
+    for (const body of [
+      {},
+      { confirmation_text: '' },
+      { confirmation_text: 'WRONG' },
+      { confirm: true }                       // no checkbox shortcut for disable
+    ]) {
+      const state = createDryRunState({ dry_run: true });
+      const service = createDryRunService({ state });
+      let error;
+      try {
+        await service.disableDryRun({
+          principal: createPrincipal(),
+          shopId: 'pilot-shop',
+          body
+        });
+      } catch (err) { error = err; }
+      expect(error.code).toBe('dry_run_disable_confirmation_required');
+      expect(state.shop.dry_run).toBeTrue();
+      expect(state.audits.length).toBe(0);
+    }
+  });
+
+  it('dry-run audit metadata is safe — no raw IDs, tokens, DB URLs, or customer data', async () => {
+    const state = createDryRunState({ dry_run: false });
+    const service = createDryRunService({ state });
+    await service.enableDryRun({
+      principal: createPrincipal(),
+      shopId: 'pilot-shop',
+      body: { confirmation_text: ENABLE_DRY_RUN_CONFIRMATION }
+    });
+
+    expect(state.audits.length).toBe(1);
+    const metadataText = JSON.stringify(state.audits[0].metadata);
+    // Must not contain raw IDs or sensitive values
+    expect(metadataText.includes('pilot-shop')).toBeFalse();
+    expect(metadataText.includes('raw-page-id')).toBeFalse();
+    expect(metadataText.includes('raw-token')).toBeFalse();
+    expect(metadataText.includes('encrypted-secret')).toBeFalse();
+    expect(metadataText.includes('postgres://')).toBeFalse();
+    // Must contain safe fields
+    expect(state.audits[0].metadata.shop_ref).toBeTruthy();
+    expect(state.audits[0].metadata.shop_ref.startsWith('s:')).toBeTrue();
+    expect(state.audits[0].metadata.source).toBe('admin_ui');
+    // Must never set live_enabled or lifecycle
+    expect(state.audits[0].metadata.liveEnabled).toBeFalse();
+    expect(typeof state.audits[0].metadata.lifecycle).toBe('string');
+    // live_enabled and lifecycle unchanged on shop row
+    expect(state.shop.live_enabled).toBeFalse();
+    expect(state.shop.lifecycle).toBe('configuring');
+  });
+
+  it('dry-run audit failure rolls back shop update', async () => {
+    const state = createDryRunState({ dry_run: true });
+    const queries = [];
+    const service = createDryRunService({ state, queries, failAudit: true });
+    let error;
+    try {
+      await service.disableDryRun({
+        principal: createPrincipal(),
+        shopId: 'pilot-shop',
+        body: { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION }
+      });
+    } catch (err) { error = err; }
+
+    expect(error.code).toBe('audit_failed');
+    // shop row must be rolled back — dry_run remains true
+    expect(state.shop.dry_run).toBeTrue();
+    expect(state.audits.length).toBe(0);
+    expect(queries.some(q => /^UPDATE shops/i.test(q.sql))).toBeTrue();
+    expect(queries.some(q => /^INSERT INTO admin_audit_log/i.test(q.sql))).toBeTrue();
+    expect(queries.some(q => q.sql === 'ROLLBACK')).toBeTrue();
+    expect(queries.some(q => q.sql === 'COMMIT')).toBeFalse();
+  });
+
+  it('dry-run controls are staging-only before any DB update or audit', async () => {
+    const state = createDryRunState();
+    const queries = [];
+    const service = createDryRunService({
+      state,
+      queries,
+      env: { NODE_ENV: 'production', RAILWAY_ENVIRONMENT_NAME: 'production' }
+    });
+
+    for (const method of ['enableDryRun', 'disableDryRun']) {
+      const body = method === 'enableDryRun'
+        ? { confirmation_text: ENABLE_DRY_RUN_CONFIRMATION }
+        : { confirmation_text: DISABLE_DRY_RUN_CONFIRMATION };
+      let error;
+      try {
+        await service[method]({
+          principal: createPrincipal(),
+          shopId: 'pilot-shop',
+          body
+        });
+      } catch (err) { error = err; }
+      expect(error.code).toBe('staging_only');
+    }
+    expect(state.shop.dry_run).toBeTrue();
+    expect(state.audits.length).toBe(0);
+    expect(queries.some(q => /^UPDATE shops/i.test(q.sql))).toBeFalse();
+    expect(queries.some(q => /^INSERT INTO admin_audit_log/i.test(q.sql))).toBeFalse();
   });
 });

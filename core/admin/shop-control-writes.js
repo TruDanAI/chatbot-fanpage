@@ -15,6 +15,8 @@ const { shopRef } = require('../utils/log-refs');
 const SHOP_CONTROL_ACTION = 'shop.control_plane.updated';
 const SHOP_PAUSE_ACTION = 'admin.shop.pause';
 const SHOP_RESUME_ACTION = 'admin.shop.resume';
+const SHOP_DRY_RUN_ENABLE_ACTION = 'admin.shop.dry_run.enable';
+const SHOP_DRY_RUN_DISABLE_ACTION = 'admin.shop.dry_run.disable';
 const SHOP_PACKAGES = Object.freeze(new Set(['basic', 'sales_flow', 'self_closing_addons']));
 const SHOP_LIFECYCLES = Object.freeze(new Set(['draft', 'configuring', 'ready', 'live', 'paused', 'archived']));
 const READINESS_STATUSES = Object.freeze(new Set(['unknown', 'passed', 'failed', 'warnings']));
@@ -22,6 +24,8 @@ const MANUAL_TEST_STATUSES = Object.freeze(new Set(['unknown', 'passed', 'failed
 const ADULT_SHOP_ID = 'adult-shop';
 const PAUSE_CONFIRMATION = 'PAUSE SHOP';
 const RESUME_CONFIRMATION = 'RESUME SHOP';
+const ENABLE_DRY_RUN_CONFIRMATION = 'ENABLE DRY RUN';
+const DISABLE_DRY_RUN_CONFIRMATION = 'DISABLE DRY RUN';
 
 function loadPgClient() {
   try {
@@ -106,6 +110,22 @@ function validatePauseConfirmation(body = {}) {
 function validateResumeConfirmation(body = {}) {
   if (!hasEmergencyConfirmation(body, RESUME_CONFIRMATION, ['confirm', 'confirm_resume', 'confirmResume'])) {
     throw createShopControlWriteError('resume_confirmation_required', 'Resume confirmation is required.', 400);
+  }
+}
+
+function validateEnableDryRunConfirmation(body = {}) {
+  if (!hasEmergencyConfirmation(body, ENABLE_DRY_RUN_CONFIRMATION, ['confirm', 'confirm_enable_dry_run', 'confirmEnableDryRun'])) {
+    throw createShopControlWriteError('dry_run_enable_confirmation_required', 'Enable dry-run confirmation is required.', 400);
+  }
+}
+
+function validateDisableDryRunConfirmation(body = {}) {
+  // Extra-strict: only the exact typed text is accepted, no checkbox shortcuts.
+  const confirmationText = normalizeConfirmationText(
+    body.confirmation_text ?? body.confirmationText ?? body.confirmation ?? ''
+  );
+  if (confirmationText !== DISABLE_DRY_RUN_CONFIRMATION) {
+    throw createShopControlWriteError('dry_run_disable_confirmation_required', 'Disable dry-run requires typing the exact confirmation text.', 400);
   }
 }
 
@@ -223,6 +243,10 @@ function changedFieldsForEmergency(existing = {}, target = {}) {
   if (target.readinessStale && normalizeStatus(existing.last_readiness_status) !== 'unknown') fields.push('last_readiness_status');
   if (target.readinessStale && existing.last_readiness_checked_at) fields.push('last_readiness_checked_at');
   return fields;
+}
+
+function changedFieldsForDryRun(existing = {}, newDryRun = true) {
+  return normalizeBoolean(existing.dry_run, true) !== newDryRun ? ['dry_run'] : [];
 }
 
 function createShopControlWriteRepository() {
@@ -371,12 +395,30 @@ function createShopControlWriteRepository() {
     return entry;
   }
 
+  async function updateShopDryRun(client, { shopId, dryRun = true } = {}) {
+    const result = await client.query(`
+      UPDATE shops
+      SET dry_run = $2,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING id, slug, name, status, package, lifecycle, dry_run, live_enabled,
+                last_readiness_status, last_readiness_checked_at,
+                last_manual_test_status, last_manual_test_at, last_ready_by,
+                updated_at
+    `, [
+      shopId,
+      dryRun
+    ]);
+    return result.rows[0] || null;
+  }
+
   return {
     getReadinessCounts,
     getSettings,
     insertAudit,
     resolveShop,
     updateShopControl,
+    updateShopDryRun,
     updateShopEmergencyControl
   };
 }
@@ -624,7 +666,121 @@ function createPostgresShopControlWriteService({
     });
   }
 
+  async function enableDryRun({ principal, shopId, body = {}, requestContext = {} } = {}) {
+    assertWritePermission(principal);
+    return withTransaction(async client => {
+      const existing = await repository.resolveShop(client, shopId);
+      assertEmergencyControlRuntime(env);
+      validateEnableDryRunConfirmation(body);
+      assertAdultShopEmergencyAllowed(existing);
+
+      const oldDryRun = normalizeBoolean(existing.dry_run, true);
+      const updated = await repository.updateShopDryRun(client, {
+        shopId: existing.id,
+        dryRun: true
+      });
+      if (!updated?.id) {
+        throw createShopControlWriteError('shop_control_persist_failed', 'Shop control changes could not be persisted.', 500);
+      }
+
+      const changedFields = changedFieldsForDryRun(existing, true);
+      await repository.insertAudit(client, {
+        principal,
+        action: SHOP_DRY_RUN_ENABLE_ACTION,
+        resourceId: existing.id,
+        metadata: {
+          shop_ref: shopRef(existing.id),
+          changedFields,
+          oldDryRun,
+          newDryRun: true,
+          readinessStatus: normalizeStatus(existing.last_readiness_status),
+          liveEnabled: normalizeBoolean(existing.live_enabled, false),
+          lifecycle: normalizeLifecycle(existing.lifecycle, defaultLifecycleForStatus(existing.status)),
+          source: 'admin_ui'
+        },
+        requestContext,
+        includeAuthMethod: false
+      });
+
+      return {
+        shopId: existing.id,
+        shop: presentShopControl(updated)
+      };
+    });
+  }
+
+  async function disableDryRun({ principal, shopId, body = {}, requestContext = {} } = {}) {
+    assertWritePermission(principal);
+    return withTransaction(async client => {
+      const existing = await repository.resolveShop(client, shopId);
+      assertEmergencyControlRuntime(env);
+      validateDisableDryRunConfirmation(body);
+      assertAdultShopEmergencyAllowed(existing);
+
+      const shopStatus = normalizeStatus(existing.status);
+      if (shopStatus !== 'active') {
+        throw createShopControlWriteError(
+          'dry_run_disable_shop_not_active',
+          'Only active shops can disable dry-run mode.',
+          409
+        );
+      }
+
+      if (normalizeBoolean(existing.live_enabled, false) === true) {
+        throw createShopControlWriteError(
+          'dry_run_disable_live_enabled',
+          'Dry-run cannot be disabled while live_enabled is true.',
+          409
+        );
+      }
+
+      const readinessStatus = normalizeStatus(existing.last_readiness_status);
+      if (readinessStatus !== 'passed') {
+        throw createShopControlWriteError(
+          'dry_run_disable_readiness_required',
+          'Readiness check must be passed before disabling dry-run.',
+          409
+        );
+      }
+
+      const oldDryRun = normalizeBoolean(existing.dry_run, true);
+      const updated = await repository.updateShopDryRun(client, {
+        shopId: existing.id,
+        dryRun: false
+      });
+      if (!updated?.id) {
+        throw createShopControlWriteError('shop_control_persist_failed', 'Shop control changes could not be persisted.', 500);
+      }
+
+      const changedFields = changedFieldsForDryRun(existing, false);
+      await repository.insertAudit(client, {
+        principal,
+        action: SHOP_DRY_RUN_DISABLE_ACTION,
+        resourceId: existing.id,
+        metadata: {
+          shop_ref: shopRef(existing.id),
+          changedFields,
+          oldDryRun,
+          newDryRun: false,
+          readinessStatus,
+          liveEnabled: normalizeBoolean(existing.live_enabled, false),
+          lifecycle: normalizeLifecycle(existing.lifecycle, defaultLifecycleForStatus(existing.status)),
+          source: 'admin_ui'
+        },
+        requestContext,
+        includeAuthMethod: false
+      });
+
+      return {
+        shopId: existing.id,
+        shop: presentShopControl(updated)
+      };
+    });
+  }
+
   return {
+    disableDryRun,
+    enableDryRun,
     pauseShop,
     resumeShop,
     updateControlPlane
@@ -632,11 +788,15 @@ function createPostgresShopControlWriteService({
 }
 
 module.exports = {
-  PAUSE_CONFIRMATION,
+  DISABLE_DRY_RUN_CONFIRMATION,
+  ENABLE_DRY_RUN_CONFIRMATION,
   MANUAL_TEST_STATUSES,
+  PAUSE_CONFIRMATION,
   READINESS_STATUSES,
   RESUME_CONFIRMATION,
   SHOP_CONTROL_ACTION,
+  SHOP_DRY_RUN_DISABLE_ACTION,
+  SHOP_DRY_RUN_ENABLE_ACTION,
   SHOP_LIFECYCLES,
   SHOP_PAUSE_ACTION,
   SHOP_PACKAGES,

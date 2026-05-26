@@ -58,7 +58,9 @@ const {
 } = require('./admin/page-setup-preview');
 const {
   createPostgresShopControlWriteService,
-  isMissingShopControlWriteSchemaError
+  isMissingShopControlWriteSchemaError,
+  SHOP_DRY_RUN_DISABLE_ACTION,
+  SHOP_DRY_RUN_ENABLE_ACTION
 } = require('./admin/shop-control-writes');
 const {
   createPostgresShopReadinessCheckService,
@@ -623,6 +625,11 @@ function presentShopControlWriteError(err) {
     pause_archive_confirmation_required: ['pause_archive_confirmation_required', 'Pause/archive requires explicit confirmation.', 400],
     pause_confirmation_required: ['pause_confirmation_required', 'Pause confirmation is required.', 400],
     resume_confirmation_required: ['resume_confirmation_required', 'Resume confirmation is required.', 400],
+    dry_run_enable_confirmation_required: ['dry_run_enable_confirmation_required', 'Enable dry-run confirmation is required.', 400],
+    dry_run_disable_confirmation_required: ['dry_run_disable_confirmation_required', 'Disable dry-run requires typing the exact confirmation text.', 400],
+    dry_run_disable_readiness_required: ['dry_run_disable_readiness_required', 'Readiness check must be passed before disabling dry-run.', 409],
+    dry_run_disable_shop_not_active: ['dry_run_disable_shop_not_active', 'Only active shops can disable dry-run mode.', 409],
+    dry_run_disable_live_enabled: ['dry_run_disable_live_enabled', 'Dry-run cannot be disabled while live_enabled is true.', 409],
     readiness_blockers_present: ['readiness_blockers_present', 'Readiness hard blockers must pass before live enable.', 400],
     adult_shop_protected: ['adult_shop_protected', 'This shop is protected from emergency pause/resume.', 403],
     staging_only: ['staging_only', 'Shop emergency controls are available only in staging.', 403],
@@ -1521,6 +1528,102 @@ function registerAdminRoutes(app, {
         requestContext: buildProductWriteRequestContext(req)
       });
       return res.redirect(303, shopControlRedirect(shopId, 'resumed'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function enableShopDryRunApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_ENABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.enableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function disableShopDryRunApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_DISABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.disableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function enableShopDryRunHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_ENABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.enableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'dry-run-enabled'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function disableShopDryRunHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_DISABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.disableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'dry-run-disabled'));
     } catch (err) {
       const response = presentShopControlWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
@@ -2526,6 +2629,8 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/readiness-check', checkShopReadinessApi);
   app.post('/admin/api/shops/:shopId/pause', pauseShopApi);
   app.post('/admin/api/shops/:shopId/resume', resumeShopApi);
+  app.post('/admin/api/shops/:shopId/dry-run/enable', enableShopDryRunApi);
+  app.post('/admin/api/shops/:shopId/dry-run/disable', disableShopDryRunApi);
   app.post('/admin/api/shops/:shopId/control-plane', updateShopControlApi);
   app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
   app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
@@ -2565,6 +2670,8 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/readiness-check', checkShopReadinessHtml);
   app.post('/admin/shops/:shopId/pause', pauseShopHtml);
   app.post('/admin/shops/:shopId/resume', resumeShopHtml);
+  app.post('/admin/shops/:shopId/dry-run/enable', enableShopDryRunHtml);
+  app.post('/admin/shops/:shopId/dry-run/disable', disableShopDryRunHtml);
   app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
   app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
   app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);

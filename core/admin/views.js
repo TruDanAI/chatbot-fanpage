@@ -1038,6 +1038,56 @@ function renderDryRunStatus(value) {
   return renderStatus('unknown');
 }
 
+function renderDryRunControls(shop = {}) {
+  const shopId = String(shop.id || '');
+  const dryRun = shop.dry_run;
+  const readinessStatus = String(shop.last_readiness_status || '').toLowerCase();
+  const enableAction = `/admin/shops/${encodeRoutePart(shopId)}/dry-run/enable`;
+  const disableAction = `/admin/shops/${encodeRoutePart(shopId)}/dry-run/disable`;
+
+  const globalNote = '<p class="meta"><strong>Note:</strong> Global <code>MESSENGER_DRY_RUN=true</code> still blocks all real sends, regardless of this setting.</p>';
+
+  // dry_run=false → show warning and re-enable form
+  if (dryRun === false) {
+    return `
+      <div class="banner banner-warning" role="alert" id="dry-run-warning">
+        <strong>&#9888; Real-send mode active for this shop.</strong>
+        Dry-run is currently <strong>disabled</strong>. Messages may be sent to real users if the global kill switch is also off.
+        Use the form below to return this shop to dry-run mode.
+      </div>
+      ${globalNote}
+      <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run">
+        <label>Confirmation
+          <input name="confirmation_text" placeholder="ENABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off">
+        </label>
+        <div class="form-actions">
+          <button type="submit">Return this shop to dry-run</button>
+          <span class="meta">Type <code>ENABLE DRY RUN</code> to confirm. Resets shop to safe dry-run mode.</span>
+        </div>
+      </form>`;
+  }
+
+  // dry_run=true, readiness passed → show allow-real-send form
+  if (dryRun === true && readinessStatus === 'passed') {
+    return `
+      ${globalNote}
+      <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run">
+        <label>Confirmation <span class="required">required</span>
+          <input name="confirmation_text" placeholder="DISABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off">
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="inline-action warning" onclick="return confirm('This allows real Messenger sends for this shop if the global kill switch is also off. Type DISABLE DRY RUN to confirm.');">Allow real-send test for this shop</button>
+          <span class="meta">Type <code>DISABLE DRY RUN</code> exactly. Readiness must be passed. Does not enable live_enabled or set lifecycle=live.</span>
+        </div>
+      </form>`;
+  }
+
+  // dry_run=true, readiness not passed → informational only
+  return `
+    ${globalNote}
+    <p class="meta" id="dry-run-gate-note">Disabling dry-run requires readiness status <code>passed</code>. Current: <strong>${escapeHtml(readinessStatus || 'unknown')}</strong>. Run readiness check first.</p>`;
+}
+
 function renderShopEmergencyControls(shop = {}) {
   const status = String(shop.status || '').trim().toLowerCase();
   const pauseAction = `/admin/shops/${encodeRoutePart(shop.id)}/pause`;
@@ -1099,6 +1149,8 @@ function renderControlPlaneForm(shop = {}, onboarding = {}) {
         <span class="meta">Updates readiness status and checked time only.</span>
       </div>
     </form>
+    <h3>Dry-Run Controls</h3>
+    ${renderDryRunControls(shop)}
     <h3>Emergency Brake</h3>
     ${renderShopEmergencyControls(shop)}
     <form class="settings-form" method="post" action="${escapeHtml(action)}">
