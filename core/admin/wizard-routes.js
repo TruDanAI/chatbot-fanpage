@@ -6,6 +6,8 @@ const { createAdminSessionManager } = require('./session');
 const { createPostgresAuditLogger } = require('./audit');
 const { renderWizardLayout, escapeHtml } = require('./wizard-ui');
 const { isProductionRuntime } = require('../storage-config');
+const { createPostgresShopWriteService } = require('./shop-writes');
+const { createPostgresShopSettingsWriteService } = require('./shop-settings-writes');
 
 // Load pg Client safely
 function loadPgClient() {
@@ -82,6 +84,25 @@ function registerWizardRoutes(app, {
   Client = loadPgClient() // Allow injecting mock Client for tests
 } = {}) {
   
+  const shopWrites = createPostgresShopWriteService({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
+  const shopSettingsWrites = createPostgresShopSettingsWriteService({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
+  function buildRequestContext(req) {
+    const ip = typeof getClientIp === 'function' ? String(getClientIp(req) || '').slice(0, 80) : '';
+    return {
+      requestId: '',
+      ip,
+      userAgent: String(req?.headers?.['user-agent'] || '').slice(0, 240)
+    };
+  }
+
   const sessionManager = adminSessionManager || createAdminSessionManager({
     sessionSecret: adminSessionSecret,
     cookieName: adminSessionCookieName,
@@ -374,6 +395,86 @@ function registerWizardRoutes(app, {
     res.redirect(303, '/admin/wizard/new-shop-shell');
   }
 
+  function renderNewShopFormHtml(res, { values = {}, error = '' } = {}) {
+    const menuIntroDefault = 'Chào mừng bạn đến với cửa hàng! Vui lòng chọn sản phẩm bên dưới hoặc gửi mã để được tư vấn.';
+    const handoffMessageDefault = 'Nhân viên sẽ hỗ trợ bạn ngay!';
+    const fallbackTextDefault = 'Tôi chưa hiểu câu hỏi của bạn. Bạn muốn chat với nhân viên hỗ trợ không?';
+
+    const body = `
+      <div class="wizard-card">
+        <h1>Bước 1: Tạo Shell Cửa Hàng (Shop Shell)</h1>
+        <p>Khởi tạo bản ghi cửa hàng Basic mới dưới chế độ nháp an toàn. Cửa hàng sẽ tự động cấu hình chạy thử nghiệm (dry-run) và tắt Go-Live.</p>
+
+        <div class="checklist-card" style="margin: 10px 0 20px;">
+          <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">🛡️ Các cấu hình an toàn mặc định</h3>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="badge badge-success">Dry-Run: BẮT BUỘC BẬT (An toàn)</span>
+            <span class="badge badge-warning">Go-Live: TẮT</span>
+            <span class="badge badge-neutral">Page Mapping: CHƯA CÓ</span>
+            <span class="badge badge-neutral">Credentials: CHƯA CÓ</span>
+          </div>
+        </div>
+
+        ${error ? `<div class="banner banner-error">❌ <strong>Lỗi:</strong> ${escapeHtml(error)}</div>` : ''}
+
+        <form action="/admin/wizard/new-shop-shell" method="post" style="margin-top: 14px;">
+          <div class="form-group">
+            <label for="shop_id">Shop Slug (Slug viết liền, không dấu) <span class="required">*</span></label>
+            <input type="text" id="shop_id" name="shop_id" value="${escapeHtml(values.shop_id || '')}" placeholder="vi-du: nem-bui-xa" required pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$">
+            <span class="field-help">Chỉ dùng chữ cái viết thường (a-z), số (0-9) và ký tự gạch nối (-). ví-dụ: <code>shop-cua-toi</code>. Không chấp nhận <code>adult-shop</code>.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="display_name">Tên hiển thị cửa hàng <span class="required">*</span></label>
+            <input type="text" id="display_name" name="display_name" value="${escapeHtml(values.display_name || '')}" placeholder="Ví dụ: Nem Bùi Xá - Chi Nhánh 1" required>
+          </div>
+
+          <div class="form-group row">
+            <div>
+              <label for="locale">Ngôn ngữ mặc định</label>
+              <select id="locale" name="locale">
+                <option value="vi-VN" ${values.locale === 'vi-VN' || !values.locale ? 'selected' : ''}>Tiếng Việt (vi-VN)</option>
+                <option value="en-US" ${values.locale === 'en-US' ? 'selected' : ''}>Tiếng Anh (en-US)</option>
+              </select>
+            </div>
+            <div>
+              <label for="timezone">Múi giờ</label>
+              <select id="timezone" name="timezone">
+                <option value="Asia/Ho_Chi_Minh" ${values.timezone === 'Asia/Ho_Chi_Minh' || !values.timezone ? 'selected' : ''}>Asia/Ho_Chi_Minh (Việt Nam)</option>
+                <option value="Asia/Bangkok" ${values.timezone === 'Asia/Bangkok' ? 'selected' : ''}>Asia/Bangkok</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="menu_intro_text">Tin nhắn chào mừng đầu Menu <span class="required">*</span></label>
+            <textarea id="menu_intro_text" name="menu_intro_text" required style="min-height: 70px;">${escapeHtml(values.menu_intro_text || menuIntroDefault)}</textarea>
+            <span class="field-help">Gửi cho khách hàng khi họ nhắn "menu" hoặc bắt đầu cuộc trò chuyện.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="handoff_message">Tin nhắn bàn giao nhân viên hỗ trợ <span class="required">*</span></label>
+            <textarea id="handoff_message" name="handoff_message" required style="min-height: 70px;">${escapeHtml(values.handoff_message || handoffMessageDefault)}</textarea>
+            <span class="field-help">Tin nhắn gửi tự động trước khi chuyển luồng chat cho nhân viên trực fanpage.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="fallback_text">Tin nhắn mặc định khi bot không hiểu <span class="required">*</span></label>
+            <textarea id="fallback_text" name="fallback_text" required style="min-height: 70px;">${escapeHtml(values.fallback_text || fallbackTextDefault)}</textarea>
+            <span class="field-help">Tin nhắn phản hồi tự động khi câu hỏi không khớp bất kỳ luật hay sản phẩm nào.</span>
+          </div>
+
+          <div class="wizard-actions" style="margin-top: 24px;">
+            <a href="/admin/wizard/new" class="btn btn-secondary">← Quay lại Bước 0</a>
+            <button type="submit" class="btn btn-primary">Khởi tạo và Tiếp tục →</button>
+          </div>
+        </form>
+      </div>
+    `;
+
+    res.send(renderWizardLayout('Tạo Shell Cửa Hàng', body, { currentStep: 1, completedSteps: [0] }));
+  }
+
   // Temporary step rendering to satisfy Task 1 & Task 3 E2E and units
   async function renderNewShopForm(req, res) {
     const principal = await authorizeAdminRequest(req, res, {
@@ -384,55 +485,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    const body = `
-      <div class="wizard-card">
-        <h1>Bước 1: Tạo Shell Cửa Hàng</h1>
-        <p>Nhập Slug định danh duy nhất và tên hiển thị để khởi tạo bản ghi Shop trong hệ thống.</p>
-        
-        <form action="/admin/wizard/new-shop-shell" method="post">
-          <div class="form-group">
-            <label for="shop_id">Shop Slug (Slug viết liền, không dấu) <span class="required">*</span></label>
-            <input type="text" id="shop_id" name="shop_id" placeholder="vi-du: nem-bui-xa" required pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$">
-            <span class="field-help">Chỉ dùng chữ cái viết thường, số và ký tự gạch nối (-). Ví dụ: <code>my-shop-slug</code></span>
-          </div>
-          
-          <div class="form-group">
-            <label for="display_name">Tên hiển thị cửa hàng <span class="required">*</span></label>
-            <input type="text" id="display_name" name="display_name" placeholder="Ví dụ: Nem Bùi Xá - Chi Nhánh 1" required>
-          </div>
-
-          <div class="form-group row">
-            <div>
-              <label for="locale">Ngôn ngữ mặc định</label>
-              <select id="locale" name="locale">
-                <option value="vi">Tiếng Việt (vi)</option>
-                <option value="en">Tiếng Anh (en)</option>
-              </select>
-            </div>
-            <div>
-              <label for="timezone">Múi giờ</label>
-              <select id="timezone" name="timezone">
-                <option value="Asia/Ho_Chi_Minh">Asia/Ho_Chi_Minh</option>
-                <option value="Asia/Bangkok">Asia/Bangkok</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="handoff_message">Tin nhắn bàn giao nhân viên hỗ trợ</label>
-            <textarea id="handoff_message" name="handoff_message">Nhân viên sẽ hỗ trợ bạn ngay!</textarea>
-            <span class="field-help">Tin nhắn gửi tự động cho khách trước khi chuyển luồng cho nhân viên trực fanpage.</span>
-          </div>
-
-          <div class="wizard-actions">
-            <a href="/admin/wizard/new" class="btn btn-secondary">← Quay lại</a>
-            <button type="submit" class="btn btn-primary">Khởi tạo và Tiếp tục →</button>
-          </div>
-        </form>
-      </div>
-    `;
-
-    res.send(renderWizardLayout('Tạo Shell Cửa Hàng', body, { currentStep: 1, completedSteps: [0] }));
+    renderNewShopFormHtml(res);
   }
 
   // Handle Shop creation form submission
@@ -445,21 +498,92 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    const shopId = String(req.body.shop_id || '').trim().toLowerCase();
+    const shopId = String(req.body.shop_id || req.body.shopId || '').trim().toLowerCase();
     const displayName = String(req.body.display_name || '').trim();
+    const locale = String(req.body.locale || 'vi-VN').trim();
+    const timezone = String(req.body.timezone || 'Asia/Ho_Chi_Minh').trim();
+    const menuIntroText = String(req.body.menu_intro_text || '').trim();
+    const handoffMessage = String(req.body.handoff_message || '').trim();
+    const fallbackText = String(req.body.fallback_text || '').trim();
+
+    if (!shopId) {
+      return renderNewShopFormHtml(res, {
+        values: req.body,
+        error: 'Shop Slug không được bỏ trống.'
+      });
+    }
+
+    if (BLOCKLIST.has(shopId)) {
+      return res.status(403).send('Thao tác bị chặn: Cửa hàng này không thể chỉnh sửa hoặc tạo thông qua Setup Wizard.');
+    }
 
     if (!isValidShopSlug(shopId)) {
-      return res.status(400).send('Định dạng Shop Slug không hợp lệ hoặc slug nằm trong danh sách bị chặn bảo vệ.');
+      return renderNewShopFormHtml(res, {
+        values: req.body,
+        error: 'Định dạng Shop Slug không hợp lệ. Chỉ dùng chữ cái viết thường (a-z), số (0-9) và ký tự gạch nối (-). Ví dụ: shop-cua-toi'
+      });
     }
 
     if (!displayName) {
-      return res.status(400).send('Tên hiển thị cửa hàng không được bỏ trống.');
+      return renderNewShopFormHtml(res, {
+        values: req.body,
+        error: 'Tên hiển thị cửa hàng không được bỏ trống.'
+      });
     }
 
-    // Task 1 redirection skeleton.
-    // Real implementation in Task 4 will use shopWrites.createShop().
-    // We redirect to step 2 directly for our skeleton test.
-    res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/2`);
+    if (!menuIntroText || !handoffMessage || !fallbackText) {
+      return renderNewShopFormHtml(res, {
+        values: req.body,
+        error: 'Tất cả tin nhắn mẫu bắt buộc phải được điền đầy đủ.'
+      });
+    }
+
+    try {
+      // 1. Create shop shell (forces dry_run=true, liveEnabled=false, status=active, package=basic, lifecycle=draft)
+      const result = await shopWrites.createShop({
+        principal,
+        body: {
+          shop_id: shopId,
+          display_name: displayName,
+          status: 'active',
+          package: 'basic',
+          lifecycle: 'draft',
+          bot_mode: 'menu_code_handoff',
+          locale,
+          timezone
+        },
+        requestContext: buildRequestContext(req)
+      });
+
+      // 2. Set default Vietnamese templates into settings
+      await shopSettingsWrites.updateSettings({
+        principal,
+        shopId: result.shopId,
+        body: {
+          bot_mode: 'menu_code_handoff',
+          handoff_enabled: true,
+          handoff_message: handoffMessage,
+          menu_intro_text: menuIntroText,
+          fallback_text: fallbackText
+        },
+        requestContext: buildRequestContext(req)
+      });
+
+      // Redirect to Step 2 on success
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(result.shopId)}/step/2`);
+    } catch (err) {
+      console.error('DATABASE ERROR:', err);
+      if (err.code === 'duplicate_shop') {
+        return renderNewShopFormHtml(res, {
+          values: req.body,
+          error: 'Shop Slug này đã tồn tại trong hệ thống. Vui lòng chọn một slug khác.'
+        });
+      }
+      return renderNewShopFormHtml(res, {
+        values: req.body,
+        error: `Lỗi cơ sở dữ liệu: ${err.message}`
+      });
+    }
   }
 
   // General step rendering (Steps 2 to 6)

@@ -9,12 +9,56 @@ class MockPgClient {
   async connect() {
     this.connected = true;
   }
-  async query(sql) {
-    if (sql.includes("slug = 'adult-shop'")) {
+  async query(sql, params) {
+    const cleanSql = String(sql || '').replace(/\s+/g, ' ').trim().toUpperCase();
+    console.log('SQL QUERY RUNNING:', cleanSql, 'PARAMS:', params);
+    if (cleanSql === 'BEGIN' || cleanSql === 'COMMIT' || cleanSql === 'ROLLBACK') {
+      return { command: cleanSql, rows: [] };
+    }
+    if (cleanSql.includes("SLUG = 'ADULT-SHOP'") || (params && params.includes('adult-shop'))) {
       return { rows: [{ id: 'adult-shop', slug: 'adult-shop', name: 'Adult Shop', status: 'active', lifecycle: 'live' }] };
     }
-    if (sql.includes('SELECT count(*) FROM shops')) {
+    if (cleanSql.includes('SELECT COUNT(*) FROM SHOPS')) {
       return { rows: [{ count: '5' }] };
+    }
+    if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1')) {
+      if (cleanSql.includes('ORDER BY')) {
+        return { rows: [{ id: params[0], slug: params[0] }] };
+      }
+      if (params && params[0] === 'duplicate-slug') {
+        return { rows: [{ id: 'duplicate-slug', slug: 'duplicate-slug' }] };
+      }
+      return { rows: [] };
+    }
+    if (cleanSql.includes('INSERT INTO SHOPS')) {
+      return { rows: [{
+        id: params[0],
+        slug: params[1],
+        name: params[2],
+        status: params[3],
+        package: params[4],
+        lifecycle: params[5],
+        live_enabled: params[6],
+        default_locale: params[7],
+        timezone: params[8]
+      }] };
+    }
+    if (cleanSql.includes('INSERT INTO SHOP_SETTINGS') || cleanSql.includes('ON CONFLICT (SHOP_ID)')) {
+      return { rows: [{
+        shop_id: params ? params[0] : 'some-shop',
+        bot_mode: params ? params[1] : 'menu_code_handoff',
+        handoff_enabled: params ? params[2] : true,
+        handoff_message: params ? params[3] : '',
+        menu_intro_text: params ? params[4] : '',
+        fallback_text: params ? params[5] : '',
+        settings_json: {}
+      }] };
+    }
+    if (sql.includes('SELECT id, slug FROM shops WHERE id = $1')) {
+      return { rows: [{ id: params[0], slug: params[0] }] };
+    }
+    if (sql.includes('SELECT shop_id, bot_mode FROM shop_settings WHERE shop_id = $1')) {
+      return { rows: [{ shop_id: params[0], bot_mode: 'menu_code_handoff', handoff_enabled: true }] };
     }
     if (sql.includes('SELECT slug, name, status, lifecycle FROM shops')) {
       return { rows: [
@@ -38,19 +82,29 @@ class MockFailPgClient {
 
 function createApp() {
   const routes = {};
+  function makeChain(handlers) {
+    return async (req, res) => {
+      for (const fn of handlers) {
+        let nextCalled = false;
+        const next = () => { nextCalled = true; };
+        await fn(req, res, next);
+        if (!nextCalled) break;
+      }
+    };
+  }
   return {
     routes,
-    get(path, handler) {
-      routes[path] = handler;
+    get(path, ...handlers) {
+      routes[path] = handlers.length === 1 ? handlers[0] : makeChain(handlers);
     },
-    post(path, handler) {
-      routes[`POST ${path}`] = handler;
+    post(path, ...handlers) {
+      routes[`POST ${path}`] = handlers.length === 1 ? handlers[0] : makeChain(handlers);
     },
-    patch(path, handler) {
-      routes[`PATCH ${path}`] = handler;
+    patch(path, ...handlers) {
+      routes[`PATCH ${path}`] = handlers.length === 1 ? handlers[0] : makeChain(handlers);
     },
-    delete(path, handler) {
-      routes[`DELETE ${path}`] = handler;
+    delete(path, ...handlers) {
+      routes[`DELETE ${path}`] = handlers.length === 1 ? handlers[0] : makeChain(handlers);
     }
   };
 }
@@ -309,5 +363,117 @@ describe('Setup Wizard Step 0 Pre-flight check page logic', () => {
     expect(resInvalid.body.includes('Không đủ điều kiện bắt buộc')).toBeTrue();
 
     process.env = originalEnv;
+  });
+});
+
+describe('Setup Wizard Step 1 Create Shop Shell Form logic', () => {
+  it('GET /admin/wizard/new-shop-shell requires auth and renders safe form defaults', async () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const reqUnauth = createReq({ headers: { authorization: 'Bearer wrong' } });
+    const resUnauth = createRes();
+    await app.routes['/admin/wizard/new-shop-shell'](reqUnauth, resUnauth);
+    expect(resUnauth.statusCode).toBe(401);
+
+    const reqAuth = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const resAuth = createRes();
+    await app.routes['/admin/wizard/new-shop-shell'](reqAuth, resAuth);
+
+    expect(resAuth.statusCode).toBe(200);
+    expect(resAuth.body.includes('Bước 1: Tạo Shell Cửa Hàng')).toBeTrue();
+    expect(resAuth.body.includes('Dry-Run: BẮT BUỘC BẬT')).toBeTrue();
+    expect(resAuth.body.includes('Tin nhắn chào mừng đầu Menu')).toBeTrue();
+    expect(resAuth.body.includes('Tin nhắn bàn giao nhân viên hỗ trợ')).toBeTrue();
+    expect(resAuth.body.includes('Tin nhắn mặc định khi bot không hiểu')).toBeTrue();
+  });
+
+  it('POST /admin/wizard/new-shop-shell creates shop shell with transactional safe defaults and redirects to Step 2', async () => {
+    const app = createApp();
+
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      body: {
+        shop_id: 'my-new-shop',
+        display_name: 'My New Shop Name',
+        locale: 'vi-VN',
+        timezone: 'Asia/Ho_Chi_Minh',
+        menu_intro_text: 'Custom Welcome Intro',
+        handoff_message: 'Custom Handoff message',
+        fallback_text: 'Custom Fallback message'
+      }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/new-shop-shell'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/wizard/my-new-shop/step/2');
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/new-shop-shell rejects adult-shop and reserved slugs', async () => {
+    const app = createApp();
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const reqBlocked = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      body: { shop_id: 'adult-shop', display_name: 'Adult Shop' }
+    });
+    const resBlocked = createRes();
+
+    await app.routes['POST /admin/wizard/new-shop-shell'](reqBlocked, resBlocked);
+    expect(resBlocked.statusCode).toBe(403);
+  });
+
+  it('POST /admin/wizard/new-shop-shell rejects invalid slugs and handles duplicates safely', async () => {
+    const app = createApp();
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    // Invalid slug format
+    const reqInvalid = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      body: { shop_id: 'Invalid_Slug_123', display_name: 'Some shop' }
+    });
+    const resInvalid = createRes();
+    await app.routes['POST /admin/wizard/new-shop-shell'](reqInvalid, resInvalid);
+    expect(resInvalid.statusCode).toBe(200); // Renders form with error
+    expect(resInvalid.body.includes('Định dạng Shop Slug không hợp lệ')).toBeTrue();
+
+    // Duplicate slug
+    const reqDuplicate = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      body: {
+        shop_id: 'duplicate-slug',
+        display_name: 'Duplicate Shop',
+        menu_intro_text: 'Welcome',
+        handoff_message: 'Handoff',
+        fallback_text: 'Fallback'
+      }
+    });
+    const resDuplicate = createRes();
+    await app.routes['POST /admin/wizard/new-shop-shell'](reqDuplicate, resDuplicate);
+    expect(resDuplicate.statusCode).toBe(200); // Renders form with error
+    expect(resDuplicate.body.includes('Shop Slug này đã tồn tại')).toBeTrue();
   });
 });
