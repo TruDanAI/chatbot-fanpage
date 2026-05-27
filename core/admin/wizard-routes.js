@@ -584,13 +584,14 @@ function registerWizardRoutes(app, {
       // Redirect to Step 2 on success
       res.redirect(303, `/admin/wizard/${encodeURIComponent(result.shopId)}/step/2`);
     } catch (err) {
-      console.error('DATABASE ERROR:', err);
       if (err.code === 'duplicate_shop') {
+        console.warn('CREATE SHOP WARNING: Shop slug already exists:', shopId);
         return renderNewShopFormHtml(res, {
           values: req.body,
           error: 'Shop Slug này đã tồn tại trong hệ thống. Vui lòng chọn một slug khác.'
         });
       }
+      console.error('DATABASE ERROR:', err);
       return renderNewShopFormHtml(res, {
         values: req.body,
         error: `Lỗi cơ sở dữ liệu: ${err.message}`
@@ -894,12 +895,14 @@ function registerWizardRoutes(app, {
 
       res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/2?success=product`);
     } catch (err) {
-      console.error('STEP 2 ADD PRODUCT DATABASE ERROR:', err);
-
       const shopDetail = await reader.getShopDetail(shopId);
       let errorMsg = `Lỗi hệ thống: ${err.message}`;
+
       if (err.code === 'duplicate_product_code') {
+        console.warn('STEP 2 ADD PRODUCT WARNING: Product code already exists in this shop:', code);
         errorMsg = 'Mã sản phẩm này đã tồn tại trong cửa hàng này. Vui lòng chọn mã sản phẩm khác.';
+      } else {
+        console.error('STEP 2 ADD PRODUCT DATABASE ERROR:', err);
       }
 
       renderStep2Html(res, {
