@@ -10,6 +10,8 @@ const { createPostgresShopWriteService } = require('./shop-writes');
 const { createPostgresShopSettingsWriteService } = require('./shop-settings-writes');
 const { createPostgresProductWriteService } = require('./product-writes');
 const { createPostgresDashboardReader } = require('./reader');
+const { createPostgresPageMappingWriteService } = require('./page-mapping-writes');
+const { pageRef } = require('../utils/log-refs');
 
 // Load pg Client safely
 function loadPgClient() {
@@ -102,6 +104,11 @@ function registerWizardRoutes(app, {
   });
 
   const reader = createPostgresDashboardReader({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
+  const pageMappingWrites = createPostgresPageMappingWriteService({
     databaseUrl: process.env.DATABASE_URL,
     Client
   });
@@ -1016,7 +1023,442 @@ function registerWizardRoutes(app, {
     }
   }
 
-  // General step rendering (Steps 3 to 6)
+  // ──── Step 3: Facebook Page Mapping ────
+
+  function renderStep3Html(res, { shop, mappings = [], error = '', success = '', previewResult = null, values = {} } = {}) {
+    const activeMappings = mappings.filter(m => m.status === 'active');
+    const archivedMappings = mappings.filter(m => m.status === 'archived');
+    const hasActiveMapping = activeMappings.length > 0;
+    const isStep3Passed = hasActiveMapping;
+
+    const mappingsHtml = activeMappings.length === 0
+      ? '<p class="meta" style="margin: 12px 0;">Cửa hàng chưa có liên kết trang Facebook nào. Vui lòng thêm liên kết trang ở phần bên dưới.</p>'
+      : `
+        <table style="width: 100%; margin-top: 12px; margin-bottom: 18px;">
+          <thead>
+            <tr>
+              <th>Page Ref (Mã tham chiếu)</th>
+              <th>Tên trang</th>
+              <th>Trạng thái</th>
+              <th>Ngày tạo</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${activeMappings.map(m => `
+              <tr>
+                <td><code>${escapeHtml(m.page_ref || 'unknown')}</code></td>
+                <td>${escapeHtml(m.page_name || 'Chưa đặt tên')}</td>
+                <td><span class="badge badge-success">Hoạt động</span></td>
+                <td class="meta">${escapeHtml(String(m.created_at || '').slice(0, 19))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+    const archivedHtml = archivedMappings.length === 0 ? '' : `
+      <details style="margin-top: 12px;">
+        <summary class="meta" style="cursor: pointer;">Xem ${archivedMappings.length} liên kết đã lưu trữ (archived)</summary>
+        <table style="width: 100%; margin-top: 8px;">
+          <thead>
+            <tr>
+              <th>Page Ref</th>
+              <th>Tên trang</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${archivedMappings.map(m => `
+              <tr>
+                <td><code>${escapeHtml(m.page_ref || 'unknown')}</code></td>
+                <td>${escapeHtml(m.page_name || '')}</td>
+                <td><span class="badge badge-neutral">Archived</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </details>
+    `;
+
+    let previewHtml = '';
+    if (previewResult) {
+      const previewOk = previewResult.page_format_valid && !previewResult.conflict;
+      previewHtml = `
+        <div class="checklist-card" style="margin: 18px 0 20px;">
+          <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📋 Kết quả kiểm tra (Preview)</h3>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
+            <span class="badge ${previewResult.page_format_valid ? 'badge-success' : 'badge-danger'}">
+              Định dạng Page ID: ${previewResult.page_format_valid ? 'HỢP LỆ' : 'KHÔNG HỢP LỆ'}
+            </span>
+            <span class="badge ${!previewResult.conflict ? 'badge-success' : 'badge-danger'}">
+              Trùng lặp Mapping: ${!previewResult.conflict ? 'KHÔNG CÓ' : 'ĐÃ TỒN TẠI'}
+            </span>
+          </div>
+          <p style="margin: 10px 0 0; font-size: 13px;">Page Ref (Mã tham chiếu an toàn): <code>${escapeHtml(previewResult.page_ref || '')}</code></p>
+          ${previewOk ? `
+            <div class="banner banner-success" style="margin-top: 12px;">
+              ✅ Page ID đã kiểm tra thành công. Bạn có thể tạo liên kết trang bên dưới.
+            </div>
+            <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/3" method="post" style="margin-top: 10px;">
+              <input type="hidden" name="page_id" value="${escapeHtml(values.page_id || '')}">
+              <input type="hidden" name="page_name" value="${escapeHtml(values.page_name || '')}">
+              <div class="form-group">
+                <label for="confirmation_text">Nhập <strong>CREATE PAGE MAPPING</strong> để xác nhận tạo liên kết <span class="required">*</span></label>
+                <input type="text" id="confirmation_text" name="confirmation_text" placeholder="CREATE PAGE MAPPING" required pattern="CREATE PAGE MAPPING">
+              </div>
+              <button type="submit" class="btn btn-primary" style="margin-top: 8px;">Tạo liên kết trang Facebook</button>
+            </form>
+          ` : `
+            <div class="banner banner-error" style="margin-top: 12px;">
+              ❌ Không thể tạo liên kết: ${previewResult.conflict ? 'Page ID này đã có liên kết hoạt động với một cửa hàng khác.' : 'Định dạng Page ID không hợp lệ.'}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    const body = `
+      <div class="wizard-card">
+        <h1>Bước 3: Liên kết trang Facebook</h1>
+        <p>Kết nối cửa hàng <strong>${escapeHtml(shop.name || shop.slug)}</strong> với một trang Facebook (Page) để nhận tin nhắn webhook.</p>
+
+        <div class="banner banner-warning" style="margin: 14px 0;">
+          ⚠️ <strong>Lưu ý quan trọng:</strong> Bước này chỉ tạo liên kết định danh (Page Mapping) giữa shop và Page ID. Bước này <strong>không</strong> lưu token xác thực và <strong>không</strong> gửi bất kỳ tin nhắn Messenger nào. Token sẽ được thiết lập ở Bước 4.
+        </div>
+
+        <div class="checklist-card" style="margin: 14px 0 20px;">
+          <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 3</h3>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="badge ${hasActiveMapping ? 'badge-success' : 'badge-danger'}">
+              Page Mapping: ${hasActiveMapping ? 'ĐÃ LIÊN KẾT (' + activeMappings.length + ')' : 'CHƯA CÓ'}
+            </span>
+            <span class="badge badge-warning">
+              Credential: CHƯA CÓ (Bước 4)
+            </span>
+          </div>
+        </div>
+
+        ${error ? '<div class="banner banner-error">❌ <strong>Lỗi:</strong> ' + escapeHtml(error) + '</div>' : ''}
+        ${success ? '<div class="banner banner-success">✅ ' + escapeHtml(success) + '</div>' : ''}
+
+        <h2>📄 Liên kết trang hiện có</h2>
+        ${mappingsHtml}
+        ${archivedHtml}
+
+        ${hasActiveMapping ? `
+          <div class="banner banner-success" style="margin: 16px 0;">
+            ✅ Cửa hàng đã có liên kết trang Facebook hoạt động. Nếu đã chọn nhầm trang, bạn có thể lưu trữ (archive) liên kết hiện tại tại <a href="/admin/shops/${encodeURIComponent(shop.id)}" target="_blank">trang quản lý cửa hàng ↗</a> rồi quay lại đây tạo liên kết mới.
+          </div>
+        ` : `
+          <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin: 20px 0;">
+            <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">🔗 Kiểm tra và thêm liên kết trang mới</h3>
+            <p class="meta" style="margin: 6px 0 14px;">Nhập Page ID của trang Facebook. Page ID là chuỗi số dài (ví dụ: 123456789012345) lấy từ Facebook Business Settings.</p>
+            <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/3/preview" method="post">
+              <div class="form-group row">
+                <div>
+                  <label for="page_id">Page ID <span class="required">*</span></label>
+                  <input type="text" id="page_id" name="page_id" value="${escapeHtml(values.page_id || '')}" placeholder="Ví dụ: 123456789012345" required pattern="^[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}$">
+                  <span class="field-help">Chuỗi số Page ID từ Facebook Business Settings. Không nhập token ở đây.</span>
+                </div>
+                <div>
+                  <label for="page_name">Tên trang (Không bắt buộc)</label>
+                  <input type="text" id="page_name" name="page_name" value="${escapeHtml(values.page_name || '')}" placeholder="Ví dụ: Nem Bùi Xá Official">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-secondary" style="margin-top: 10px;">Kiểm tra Page ID (Preview)</button>
+            </form>
+          </div>
+        `}
+
+        ${previewHtml}
+
+        <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/3/continue" method="post" style="margin-top: 28px;">
+          <div class="wizard-actions">
+            <a href="/admin/wizard/${encodeURIComponent(shop.id)}/step/2" class="btn btn-secondary">← Quay lại Bước 2</a>
+            <button type="submit" class="btn btn-primary" ${!isStep3Passed ? 'disabled' : ''}>
+              ${isStep3Passed ? 'Tiếp tục sang Bước 4 →' : 'Cần liên kết Page để Tiếp tục'}
+            </button>
+          </div>
+          ${!isStep3Passed ? '<p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">* Vui lòng tạo ít nhất 1 liên kết trang Facebook hoạt động để có thể mở khóa nút Tiếp tục.</p>' : ''}
+        </form>
+      </div>
+    `;
+
+    res.send(renderWizardLayout('Liên kết trang Facebook', body, {
+      shopId: shop.id,
+      currentStep: 3,
+      completedSteps: [0, 1, 2]
+    }));
+  }
+
+  async function renderStep3(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: 'admin.wizard.step_3.view',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const success = req.query.success === 'mapping'
+        ? 'Liên kết trang Facebook đã được tạo thành công!'
+        : '';
+
+      // Build safe mappings list with page_ref only (no raw page_id)
+      const safeMappings = (shopDetail.pages || []).map(p => ({
+        id: p.id || '',
+        page_ref: p.page_id ? pageRef(p.page_id) : 'unknown',
+        page_name: p.page_name || '',
+        status: p.status || '',
+        created_at: p.created_at || ''
+      }));
+
+      renderStep3Html(res, {
+        shop: shopDetail.shop,
+        mappings: safeMappings,
+        success
+      });
+    } catch (err) {
+      console.error('STEP 3 VIEW ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tải Bước 3 Setup Wizard.');
+    }
+  }
+
+  async function submitStep3Preview(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_3.preview',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    const rawPageId = String(req.body.page_id || '').trim();
+    const pageName = String(req.body.page_name || '').trim();
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      if (!rawPageId) {
+        const safeMappings = (shopDetail.pages || []).map(p => ({
+          id: p.id || '',
+          page_ref: p.page_id ? pageRef(p.page_id) : 'unknown',
+          page_name: p.page_name || '',
+          status: p.status || '',
+          created_at: p.created_at || ''
+        }));
+        return renderStep3Html(res, {
+          shop: shopDetail.shop,
+          mappings: safeMappings,
+          error: 'Page ID không được bỏ trống.',
+          values: req.body
+        });
+      }
+
+      // Check format validity
+      const pageIdFormatValid = /^\d{5,32}$/.test(rawPageId);
+
+      // Check for active mapping conflict globally
+      let conflict = false;
+      if (pageIdFormatValid) {
+        const client = new Client({ connectionString: process.env.DATABASE_URL });
+        try {
+          await client.connect();
+          const conflictRes = await client.query(
+            "SELECT id, shop_id FROM shop_pages WHERE page_id = $1 AND status = 'active' LIMIT 1",
+            [rawPageId]
+          );
+          conflict = conflictRes.rows.length > 0;
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      const safePageRef = pageRef(rawPageId);
+      const previewResult = {
+        page_ref: safePageRef,
+        page_format_valid: pageIdFormatValid,
+        conflict,
+        duplicate_active_mapping: conflict
+      };
+
+      const safeMappings = (shopDetail.pages || []).map(p => ({
+        id: p.id || '',
+        page_ref: p.page_id ? pageRef(p.page_id) : 'unknown',
+        page_name: p.page_name || '',
+        status: p.status || '',
+        created_at: p.created_at || ''
+      }));
+
+      renderStep3Html(res, {
+        shop: shopDetail.shop,
+        mappings: safeMappings,
+        previewResult,
+        values: { page_id: rawPageId, page_name: pageName }
+      });
+    } catch (err) {
+      console.error('STEP 3 PREVIEW ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi kiểm tra Page ID.');
+    }
+  }
+
+  async function submitStep3Create(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_3.create',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    const rawPageId = String(req.body.page_id || '').trim();
+    const pageName = String(req.body.page_name || '').trim();
+    const confirmationText = String(req.body.confirmation_text || '').trim();
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const safeMappings = (shopDetail.pages || []).map(p => ({
+        id: p.id || '',
+        page_ref: p.page_id ? pageRef(p.page_id) : 'unknown',
+        page_name: p.page_name || '',
+        status: p.status || '',
+        created_at: p.created_at || ''
+      }));
+
+      // Check confirmation text
+      if (confirmationText.toUpperCase() !== 'CREATE PAGE MAPPING') {
+        return renderStep3Html(res, {
+          shop: shopDetail.shop,
+          mappings: safeMappings,
+          error: 'Bạn phải nhập đúng "CREATE PAGE MAPPING" để xác nhận tạo liên kết.',
+          values: req.body
+        });
+      }
+
+      // Check if shop already has active mapping
+      const existingActive = (shopDetail.pages || []).filter(p => p.status === 'active');
+      if (existingActive.length > 0) {
+        return renderStep3Html(res, {
+          shop: shopDetail.shop,
+          mappings: safeMappings,
+          error: 'Cửa hàng đã có liên kết trang Facebook hoạt động. Vui lòng lưu trữ liên kết cũ trước khi tạo mới.'
+        });
+      }
+
+      // Use canonical page mapping write service
+      const result = await pageMappingWrites.createPageMapping({
+        principal,
+        shopId: shopDetail.shop.id,
+        body: {
+          page_id: rawPageId,
+          page_name: pageName,
+          status: 'active'
+        },
+        requestContext: buildRequestContext(req)
+      });
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/3?success=mapping`);
+    } catch (err) {
+      if (err.code === 'duplicate_active_page_id') {
+        console.warn('STEP 3 CREATE WARNING: Page ID already has an active mapping.');
+      } else if (err.code === 'invalid_page_id') {
+        console.warn('STEP 3 CREATE WARNING: Invalid page ID format.');
+      } else {
+        console.error('STEP 3 CREATE DATABASE ERROR:', err);
+      }
+
+      const shopDetail = await reader.getShopDetail(shopId);
+      const safeMappings = (shopDetail.pages || []).map(p => ({
+        id: p.id || '',
+        page_ref: p.page_id ? pageRef(p.page_id) : 'unknown',
+        page_name: p.page_name || '',
+        status: p.status || '',
+        created_at: p.created_at || ''
+      }));
+
+      let errorMsg = `Lỗi hệ thống: ${err.message}`;
+      if (err.code === 'duplicate_active_page_id') {
+        errorMsg = 'Page ID này đã có liên kết hoạt động với cửa hàng khác. Vui lòng dùng Page ID khác.';
+      } else if (err.code === 'invalid_page_id') {
+        errorMsg = 'Định dạng Page ID không hợp lệ.';
+      } else if (err.code === 'page_setup_preview_only') {
+        errorMsg = 'Cửa hàng này chỉ cho phép xem trước (preview-only), không thể tạo liên kết trực tiếp.';
+      }
+
+      renderStep3Html(res, {
+        shop: shopDetail.shop,
+        mappings: safeMappings,
+        error: errorMsg,
+        values: req.body
+      });
+    }
+  }
+
+  async function submitStep3Progress(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_3.progress',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const activeMappingCount = (shopDetail.pages || []).filter(p => p.status === 'active').length;
+
+      if (activeMappingCount < 1) {
+        const safeMappings = (shopDetail.pages || []).map(p => ({
+          id: p.id || '',
+          page_ref: p.page_id ? pageRef(p.page_id) : 'unknown',
+          page_name: p.page_name || '',
+          status: p.status || '',
+          created_at: p.created_at || ''
+        }));
+        return renderStep3Html(res, {
+          shop: shopDetail.shop,
+          mappings: safeMappings,
+          error: 'Không đủ điều kiện để tiếp tục: Cần ít nhất 1 liên kết trang Facebook hoạt động.'
+        });
+      }
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/4`);
+    } catch (err) {
+      console.error('STEP 3 PROGRESSION ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tiếp tục sang bước 4.');
+    }
+  }
+
+  // General step rendering (Steps 4 to 6)
   async function renderStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
     const step = parseInt(req.params.step, 10);
@@ -1030,7 +1472,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 3 || step > 6) {
+    if (isNaN(step) || step < 4 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
 
@@ -1072,7 +1514,7 @@ function registerWizardRoutes(app, {
     }));
   }
 
-  // Handle Step submissions (Steps 3 to 6)
+  // Handle Step submissions (Steps 4 to 6)
   async function submitStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
     const step = parseInt(req.params.step, 10);
@@ -1086,7 +1528,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 3 || step > 6) {
+    if (isNaN(step) || step < 4 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
 
@@ -1136,6 +1578,10 @@ function registerWizardRoutes(app, {
   app.post('/admin/wizard/:shopId/step/2', wizardShopGuard, submitStep2Progress);
   app.post('/admin/wizard/:shopId/step/2/products', wizardShopGuard, submitStep2Product);
   app.post('/admin/wizard/:shopId/step/2/settings', wizardShopGuard, submitStep2Settings);
+  app.get('/admin/wizard/:shopId/step/3', wizardShopGuard, renderStep3);
+  app.post('/admin/wizard/:shopId/step/3', wizardShopGuard, submitStep3Create);
+  app.post('/admin/wizard/:shopId/step/3/preview', wizardShopGuard, submitStep3Preview);
+  app.post('/admin/wizard/:shopId/step/3/continue', wizardShopGuard, submitStep3Progress);
   app.get('/admin/wizard/:shopId/step/:step', wizardShopGuard, renderStepPage);
   app.post('/admin/wizard/:shopId/step/:step', wizardShopGuard, submitStepPage);
 }

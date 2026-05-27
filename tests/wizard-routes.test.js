@@ -88,6 +88,37 @@ class MockPgClient {
     if (cleanSql.includes('FROM SHOP_ASSETS A LEFT JOIN SHOP_PRODUCTS P')) {
       return { rows: [] };
     }
+    // Page mapping queries
+    if (cleanSql.includes('FROM SHOP_PAGES WHERE SHOP_ID = $1')) {
+      if (params && params[0] === 'has-page-shop') {
+        return { rows: [
+          { id: 'page_abc123', page_id: '111222333444555', page_name: 'Test Page', status: 'active', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
+        ] };
+      }
+      if (params && params[0] === 'has-archived-page-shop') {
+        return { rows: [
+          { id: 'page_old', page_id: '999888777666', page_name: 'Old Page', status: 'archived', created_at: '2025-12-01T00:00:00Z', updated_at: '2025-12-15T00:00:00Z' }
+        ] };
+      }
+      return { rows: [] };
+    }
+    if (cleanSql.includes('FROM SHOP_PAGES WHERE PAGE_ID = $1') && cleanSql.includes("STATUS = 'ACTIVE'")) {
+      if (params && params[0] === '999999999999999') {
+        return { rows: [{ id: 'page_conflict', shop_id: 'other-shop' }] };
+      }
+      return { rows: [] };
+    }
+    if (cleanSql.includes('INSERT INTO SHOP_PAGES')) {
+      return { rows: [{
+        id: params[0],
+        shop_id: params[1],
+        page_id: params[2],
+        page_name: params[3],
+        status: params[4],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }] };
+    }
     if (cleanSql.includes('INSERT INTO SHOP_PRODUCTS')) {
       return { rows: [{
         id: params[0],
@@ -99,6 +130,14 @@ class MockPgClient {
         sort_order: params[6],
         metadata_json: JSON.parse(params[7])
       }] };
+    }
+    // Audit log inserts
+    if (cleanSql.includes('INSERT INTO AUDIT_LOG') || cleanSql.includes('INSERT INTO ADMIN_AUDIT_LOG')) {
+      return { rows: [{ id: 'audit-1' }] };
+    }
+    // Credential queries for getShopDetail
+    if (cleanSql.includes('FROM SHOP_PAGE_CREDENTIALS') || cleanSql.includes('SHOP_PAGE_CREDENTIALS')) {
+      return { rows: [] };
     }
     if (sql.includes('SELECT slug, name, status, lifecycle FROM shops')) {
       return { rows: [
@@ -693,6 +732,388 @@ describe('Setup Wizard Step 2 Products and Menu configuration logic', () => {
     await app.routes['POST /admin/wizard/:shopId/step/2'](reqFail, resFail);
     expect(resFail.statusCode).toBe(200); // Re-renders the form with warning
     expect(resFail.body.includes('Không đủ điều kiện để tiếp tục')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+});
+
+describe('Setup Wizard Step 3 Page Mapping', () => {
+  it('GET /admin/wizard/:shopId/step/3 renders page mapping form for shop without pages', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      query: {}
+    });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Liên kết trang Facebook')).toBeTrue();
+    expect(res.body.includes('Page ID')).toBeTrue();
+    expect(res.body.includes('Kiểm tra Page ID (Preview)')).toBeTrue();
+    // Must have disabled continue button when no active mapping
+    expect(res.body.includes('disabled')).toBeTrue();
+    expect(res.body.includes('CHƯA CÓ')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('GET /admin/wizard/:shopId/step/3 shows existing active mapping table', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' },
+      query: {}
+    });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Hoạt động')).toBeTrue();
+    expect(res.body.includes('ĐÃ LIÊN KẾT')).toBeTrue();
+    // Must not contain raw page_id in output
+    expect(res.body.includes('111222333444555')).toBeFalse();
+    // Must contain page_ref hash
+    expect(res.body.includes('p:')).toBeTrue();
+    // Continue button should be enabled
+    expect(res.body.includes('Tiếp tục sang Bước 4')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('GET /admin/wizard/:shopId/step/3?success=mapping shows success message', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' },
+      query: { success: 'mapping' }
+    });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Liên kết trang Facebook đã được tạo thành công')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3/preview validates empty page_id', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: { page_id: '', page_name: '' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3/preview'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Page ID không được bỏ trống')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3/preview shows valid result for good page_id', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: { page_id: '123456789012345', page_name: 'Test Page' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3/preview'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('HỢP LỆ')).toBeTrue();
+    expect(res.body.includes('KHÔNG CÓ')).toBeTrue();
+    expect(res.body.includes('CREATE PAGE MAPPING')).toBeTrue();
+    // Must not leak raw page_id in preview output
+    expect(res.body.includes('p:')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3/preview detects invalid format', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: { page_id: 'not-a-number', page_name: '' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3/preview'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('KHÔNG HỢP LỆ')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3/preview detects conflict', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: { page_id: '999999999999999', page_name: '' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3/preview'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('ĐÃ TỒN TẠI')).toBeTrue();
+    expect(res.body.includes('đã có liên kết hoạt động')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3 rejects missing confirmation', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: { page_id: '123456789012345', page_name: 'Test', confirmation_text: 'wrong' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('CREATE PAGE MAPPING')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3 blocks when shop already has active mapping', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' },
+      body: { page_id: '123456789012345', page_name: 'Test', confirmation_text: 'CREATE PAGE MAPPING' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('đã có liên kết trang Facebook hoạt động')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3 creates page mapping with proper confirmation', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: { page_id: '123456789012345', page_name: 'New Page', confirmation_text: 'CREATE PAGE MAPPING' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location.includes('/step/3?success=mapping')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3/continue blocks without active mapping', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3/continue'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Không đủ điều kiện')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/3/continue advances to step 4 with active mapping', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/3/continue'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/wizard/has-page-shop/step/4');
+
+    process.env = originalEnv;
+  });
+
+  it('Step 3 never leaks raw page_id in HTML output', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    // GET view with existing mapping
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' },
+      query: {}
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    // The raw page_id '111222333444555' must never appear in HTML
+    expect(res.body.includes('111222333444555')).toBeFalse();
+    // But page_ref hash should be present
+    expect(res.body.includes('p:')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 3 registers all expected routes', () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      adminIpAllowlist: []
+    });
+
+    expect(app.routes['/admin/wizard/:shopId/step/3'] !== undefined).toBeTrue();
+    expect(app.routes['POST /admin/wizard/:shopId/step/3'] !== undefined).toBeTrue();
+    expect(app.routes['POST /admin/wizard/:shopId/step/3/preview'] !== undefined).toBeTrue();
+    expect(app.routes['POST /admin/wizard/:shopId/step/3/continue'] !== undefined).toBeTrue();
+  });
+
+  it('Generic step handler now rejects step 3 (handled by dedicated routes)', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop', step: '3' }
+    });
+    const res = createRes();
+
+    // The generic handler should reject step 3 since it now only handles 4-6
+    await app.routes['/admin/wizard/:shopId/step/:step'](req, res);
+
+    expect(res.statusCode).toBe(400);
 
     process.env = originalEnv;
   });
