@@ -2,6 +2,40 @@ const { describe, it, expect } = require('./harness');
 const { registerWizardRoutes, isValidShopSlug, BLOCKLIST, wizardShopGuard } = require('../core/admin/wizard-routes');
 const { PERMISSIONS } = require('../core/admin-auth');
 
+class MockPgClient {
+  constructor() {
+    this.connected = false;
+  }
+  async connect() {
+    this.connected = true;
+  }
+  async query(sql) {
+    if (sql.includes("slug = 'adult-shop'")) {
+      return { rows: [{ id: 'adult-shop', slug: 'adult-shop', name: 'Adult Shop', status: 'active', lifecycle: 'live' }] };
+    }
+    if (sql.includes('SELECT count(*) FROM shops')) {
+      return { rows: [{ count: '5' }] };
+    }
+    if (sql.includes('SELECT slug, name, status, lifecycle FROM shops')) {
+      return { rows: [
+        { slug: 'demo-shop', name: 'Demo Shop', status: 'active', lifecycle: 'configuring' },
+        { slug: 'nem-bui-xa', name: 'Nem Bui Xa', status: 'active', lifecycle: 'configuring' }
+      ] };
+    }
+    return { rows: [[1]] };
+  }
+  async end() {
+    this.connected = false;
+  }
+}
+
+class MockFailPgClient {
+  async connect() {
+    throw new Error('Connection timed out');
+  }
+  async end() {}
+}
+
 function createApp() {
   const routes = {};
   return {
@@ -79,13 +113,13 @@ describe('Setup Wizard Slug pattern and blocklist validation', () => {
   it('validates correct and incorrect shop slugs', () => {
     expect(isValidShopSlug('nem-bui-xa')).toBeTrue();
     expect(isValidShopSlug('my-new-shop-123')).toBeTrue();
-    
+
     // Pattern fails
     expect(isValidShopSlug('Nem-Bui-Xa')).toBeFalse(); // capital letters not allowed
     expect(isValidShopSlug('nem_bui_xa')).toBeFalse(); // underscore not allowed
     expect(isValidShopSlug('nem--bui')).toBeFalse(); // consecutive dashes
     expect(isValidShopSlug('-nem-bui')).toBeFalse(); // starts with dash
-    
+
     // Blocklist checks
     expect(isValidShopSlug('adult-shop')).toBeFalse();
     expect(isValidShopSlug('admin')).toBeFalse();
@@ -131,7 +165,7 @@ describe('Setup Wizard Router Skeleton & Guards', () => {
 
     const reqValid = createReq({ params: { shopId: 'nem-bui-xa' } });
     const resValid = createRes();
-    
+
     wizardShopGuard(reqValid, resValid, next);
     expect(nextCalled).toBeTrue();
     expect(resValid.statusCode).toBe(200);
@@ -139,9 +173,141 @@ describe('Setup Wizard Router Skeleton & Guards', () => {
     nextCalled = false;
     const reqBlocked = createReq({ params: { shopId: 'adult-shop' } });
     const resBlocked = createRes();
-    
+
     wizardShopGuard(reqBlocked, resBlocked, next);
     expect(nextCalled).toBeFalse();
     expect(resBlocked.statusCode).toBe(403);
+  });
+});
+
+describe('Setup Wizard Step 0 Pre-flight check page logic', () => {
+  it('GET renders pre-flight check cards when auth passes under safe env', async () => {
+    const app = createApp();
+
+    // Set safe env variables
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'true';
+    process.env.MULTI_SHOP_DB_CONFIG_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      adminIpAllowlist: [],
+      Client: MockPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/new'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    // Check it renders hard check cards
+    expect(res.body.includes('Pre-flight Check')).toBeTrue();
+    expect(res.body.includes('Môi trường không phải Production')).toBeTrue();
+    expect(res.body.includes('Chế độ Global Dry-Run')).toBeTrue();
+    expect(res.body.includes('Cấu hình DB Multi-Shop')).toBeTrue();
+    expect(res.body.includes('Bắt đầu tạo Shop →')).toBeTrue();
+
+    // Verify the button itself is NOT disabled
+    expect(res.body.includes('class="btn btn-primary" >Bắt đầu tạo Shop')).toBeTrue();
+
+    // Restore environment
+    process.env = originalEnv;
+  });
+
+  it('GET disables Start Wizard button and shows failure when MESSENGER_DRY_RUN=false', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'false';
+    process.env.MULTI_SHOP_DB_CONFIG_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/new'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('THẤT BẠI (DRY-RUN OFF)')).toBeTrue();
+
+    // Verify the button has the disabled attribute
+    expect(res.body.includes('class="btn btn-primary" disabled>Bắt đầu tạo Shop')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('GET disables Start Wizard button and shows safe error when DB read fails', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'true';
+    process.env.MULTI_SHOP_DB_CONFIG_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockFailPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/new'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Chi tiết lỗi kết nối DB: <code>Connection timed out</code>')).toBeTrue();
+
+    // Verify the button has the disabled attribute
+    expect(res.body.includes('class="btn btn-primary" disabled>Bắt đầu tạo Shop')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/new redirects only when all hard checks pass', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'true';
+    process.env.MULTI_SHOP_DB_CONFIG_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const reqValid = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      body: { confirm_staging: '1' }
+    });
+    const resValid = createRes();
+
+    await app.routes['POST /admin/wizard/new'](reqValid, resValid);
+
+    expect(resValid.statusCode).toBe(303);
+    expect(resValid.headers.location).toBe('/admin/wizard/new-shop-shell');
+
+    // Simulate dry run off failure
+    process.env.MESSENGER_DRY_RUN = 'false';
+    const reqInvalid = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      body: { confirm_staging: '1' }
+    });
+    const resInvalid = createRes();
+
+    await app.routes['POST /admin/wizard/new'](reqInvalid, resInvalid);
+
+    expect(resInvalid.statusCode).toBe(400);
+    expect(resInvalid.body.includes('Không đủ điều kiện bắt buộc')).toBeTrue();
+
+    process.env = originalEnv;
   });
 });

@@ -5,6 +5,16 @@ const { createAdminRouteAuthorizer } = require('./route-auth');
 const { createAdminSessionManager } = require('./session');
 const { createPostgresAuditLogger } = require('./audit');
 const { renderWizardLayout, escapeHtml } = require('./wizard-ui');
+const { isProductionRuntime } = require('../storage-config');
+
+// Load pg Client safely
+function loadPgClient() {
+  try {
+    return require('pg').Client;
+  } catch {
+    throw new Error('Gói "pg" là bắt buộc khi sử dụng database PostgreSQL.');
+  }
+}
 
 // Forbidden shop ID list / blocklist
 const BLOCKLIST = Object.freeze(new Set([
@@ -68,7 +78,8 @@ function registerWizardRoutes(app, {
   adminSessionTtlMs = parsePositiveInteger(process.env.ADMIN_SESSION_TTL_MS, 8 * 60 * 60 * 1000),
   auditLogger,
   adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
-  adminAuditFailClosed = false
+  adminAuditFailClosed = false,
+  Client = loadPgClient() // Allow injecting mock Client for tests
 } = {}) {
   
   const sessionManager = adminSessionManager || createAdminSessionManager({
@@ -102,6 +113,83 @@ function registerWizardRoutes(app, {
     adminAuditFailClosed
   });
 
+  // Perform Step 0 Pre-flight environment check
+  async function performPreflightCheck() {
+    const checks = {
+      envSafe: !isProductionRuntime(process.env),
+      dryRun: process.env.MESSENGER_DRY_RUN === 'true',
+      dbConfig: process.env.MULTI_SHOP_DB_CONFIG_ENABLED === 'true',
+      dbConnected: false,
+      adultShopProtected: false
+    };
+
+    let activeShopCount = 0;
+    let adultShopStatusText = 'Không tìm thấy';
+    let existingShops = [];
+    let dbErrorMessage = '';
+
+    // Check DB Connection & query basic info
+    if (process.env.DATABASE_URL) {
+      const client = new Client({ connectionString: process.env.DATABASE_URL });
+      try {
+        await client.connect();
+        checks.dbConnected = true;
+
+        // Query active shops count safely (SELECT only)
+        const countRes = await client.query('SELECT count(*) FROM shops WHERE status = \'active\';');
+        activeShopCount = parseInt(countRes.rows[0]?.count || '0', 10);
+
+        // Verify adult-shop exists in DB
+        const adultRes = await client.query('SELECT id, slug, name, status, lifecycle FROM shops WHERE slug = \'adult-shop\';');
+        if (adultRes.rows.length > 0) {
+          const row = adultRes.rows[0];
+          adultShopStatusText = `Tồn tại (${row.status || 'unknown'}, ${row.lifecycle || 'unknown'})`;
+          checks.adultShopProtected = BLOCKLIST.has('adult-shop');
+        } else {
+          // If not in DB, is still protected by hardcoded blocklist
+          adultShopStatusText = 'Chưa khởi tạo (Được bảo vệ bằng danh sách đen)';
+          checks.adultShopProtected = true;
+        }
+
+        // List existing shops slug/name/status (SELECT only, no secrets or Page IDs)
+        const shopsRes = await client.query('SELECT slug, name, status, lifecycle FROM shops ORDER BY created_at DESC LIMIT 5;');
+        existingShops = shopsRes.rows.map(row => ({
+          slug: row.slug || '',
+          name: row.name || '',
+          status: row.status || '',
+          lifecycle: row.lifecycle || ''
+        }));
+
+      } catch (err) {
+        dbErrorMessage = err.message;
+        checks.dbConnected = false;
+        checks.adultShopProtected = false;
+      } finally {
+        try {
+          await client.end();
+        } catch (_) {}
+      }
+    } else {
+      dbErrorMessage = 'DATABASE_URL chưa được cấu hình biến môi trường.';
+    }
+
+    const isAllHardChecksPassed =
+      checks.envSafe &&
+      checks.dryRun &&
+      checks.dbConfig &&
+      checks.dbConnected &&
+      checks.adultShopProtected;
+
+    return {
+      checks,
+      activeShopCount,
+      adultShopStatusText,
+      existingShops,
+      dbErrorMessage,
+      isAllHardChecksPassed
+    };
+  }
+
   // Pre-flight check endpoint (Step 0)
   async function renderStep0(req, res) {
     const principal = await authorizeAdminRequest(req, res, {
@@ -112,65 +200,149 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    // Check DB connectivity
-    let isDbConnected = false;
-    try {
-      if (storage && typeof storage.ready === 'object') {
-        await storage.ready;
-        isDbConnected = true;
-      } else {
-        // Quick query test
-        const pool = app.get('dbPool');
-        if (pool) {
-          const client = await pool.connect();
-          client.release();
-          isDbConnected = true;
-        }
-      }
-    } catch (_) {}
+    const {
+      checks,
+      activeShopCount,
+      adultShopStatusText,
+      existingShops,
+      dbErrorMessage,
+      isAllHardChecksPassed
+    } = await performPreflightCheck();
 
-    const dryRunEnv = process.env.MESSENGER_DRY_RUN === 'true';
+    // Informational checks status
+    const isCloudinaryConfigured = Boolean(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME);
+    const isMasterKeyConfigured = Boolean(process.env.CREDENTIAL_MASTER_KEY);
+    const deployedBranch = process.env.RAILWAY_GIT_BRANCH || 'Chưa rõ';
+
+    let shopsListHtml = '<p class="meta">Chưa có cửa hàng nào được khởi tạo.</p>';
+    if (existingShops.length > 0) {
+      shopsListHtml = `
+        <table style="margin-top: 8px; width: 100%;">
+          <thead>
+            <tr>
+              <th>Slug</th>
+              <th>Tên Shop</th>
+              <th>Status</th>
+              <th>Lifecycle</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${existingShops.map(s => `
+              <tr>
+                <td><code>${escapeHtml(s.slug)}</code></td>
+                <td>${escapeHtml(s.name)}</td>
+                <td><span class="badge ${s.status === 'active' ? 'badge-success' : 'badge-warning'}">${escapeHtml(s.status)}</span></td>
+                <td><span class="badge badge-neutral">${escapeHtml(s.lifecycle)}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
 
     const body = `
       <div class="wizard-card">
         <h1>Bước 0: Pre-flight Check (Kiểm tra môi trường)</h1>
-        <p>Trước khi bắt đầu cài đặt cửa hàng Basic mới, chúng ta cần xác minh tính hợp lệ và an toàn của hệ thống.</p>
+        <p>Hệ thống tự động rà soát môi trường vận hành trước khi cho phép Operator thiết lập một shop Basic mới.</p>
         
-        <div style="margin: 20px 0;">
+        <h2>🛡️ Điều kiện bắt buộc (Hard Checks)</h2>
+        <div style="margin: 14px 0 20px; display: grid; gap: 10px;">
           <div class="checklist-item">
-            <span class="checklist-label">🌐 Global Dry-Run Mode (Bảo vệ tin nhắn thực)</span>
-            <span class="badge ${dryRunEnv ? 'badge-success' : 'badge-danger'}">${dryRunEnv ? 'BẬT (An toàn)' : 'TẮT (Cảnh báo)'}</span>
+            <div class="checklist-label">
+              <strong>1. Môi trường không phải Production:</strong>
+              <span class="meta" style="display: block;">Yêu cầu chạy trên Staging hoặc Local.</span>
+            </div>
+            <span class="badge ${checks.envSafe ? 'badge-success' : 'badge-danger'}">${checks.envSafe ? 'ĐẠT (STAGING/LOCAL)' : 'THẤT BẠI (PRODUCTION)'}</span>
           </div>
+
           <div class="checklist-item">
-            <span class="checklist-label">🗄️ Kết nối cơ sở dữ liệu PostgreSQL</span>
-            <span class="badge ${isDbConnected ? 'badge-success' : 'badge-danger'}">${isDbConnected ? 'KẾT NỐI OK' : 'MẤT KẾT NỐI'}</span>
+            <div class="checklist-label">
+              <strong>2. Chế độ Global Dry-Run:</strong>
+              <span class="meta" style="display: block;">MESSENGER_DRY_RUN=true bắt buộc trên Staging.</span>
+            </div>
+            <span class="badge ${checks.dryRun ? 'badge-success' : 'badge-danger'}">${checks.dryRun ? 'ĐẠT (DRY-RUN ON)' : 'THẤT BẠI (DRY-RUN OFF)'}</span>
           </div>
+
           <div class="checklist-item">
-            <span class="checklist-label">🛡️ Chế độ bảo vệ adult-shop &amp; blocklist</span>
-            <span class="badge badge-success">KÍCH HOẠT (Hoạt động tốt)</span>
+            <div class="checklist-label">
+              <strong>3. Cấu hình DB Multi-Shop:</strong>
+              <span class="meta" style="display: block;">MULTI_SHOP_DB_CONFIG_ENABLED=true để định tuyến động.</span>
+            </div>
+            <span class="badge ${checks.dbConfig ? 'badge-success' : 'badge-danger'}">${checks.dbConfig ? 'ĐẠT (DB-CONFIG ON)' : 'THẤT BẠI (DB-CONFIG OFF)'}</span>
           </div>
+
           <div class="checklist-item">
-            <span class="checklist-label">🔑 Master key giải mã token Facebook</span>
-            <span class="badge ${process.env.CREDENTIAL_MASTER_KEY ? 'badge-success' : 'badge-danger'}">${process.env.CREDENTIAL_MASTER_KEY ? 'ĐÃ CẤU HÌNH' : 'CHƯA CẤU HÌNH'}</span>
+            <div class="checklist-label">
+              <strong>4. Kết nối Cơ sở dữ liệu:</strong>
+              <span class="meta" style="display: block;">Kiểm tra đọc dữ liệu qua SELECT an toàn.</span>
+            </div>
+            <span class="badge ${checks.dbConnected ? 'badge-success' : 'badge-danger'}">${checks.dbConnected ? 'ĐẠT (KẾT NỐI OK)' : 'THẤT BẠI'}</span>
+          </div>
+          ${dbErrorMessage ? `<div class="banner banner-error" style="margin: -6px 0 0;">❌ Chi tiết lỗi kết nối DB: <code>${escapeHtml(dbErrorMessage)}</code></div>` : ''}
+
+          <div class="checklist-item">
+            <div class="checklist-label">
+              <strong>5. Bảo vệ adult-shop (Hạn chế rủi ro):</strong>
+              <span class="meta" style="display: block;">Đảm bảo adult-shop tồn tại an toàn và bị chặn biến đổi.</span>
+            </div>
+            <span class="badge ${checks.adultShopProtected ? 'badge-success' : 'badge-danger'}">${checks.adultShopProtected ? 'ĐẠT (ĐÃ BẢO VỆ)' : 'THẤT BẠI'}</span>
+          </div>
+
+          <div class="checklist-item">
+            <div class="checklist-label">
+              <strong>6. Quyền xác thực Admin:</strong>
+              <span class="meta" style="display: block;">Phiên đăng nhập hợp lệ với quyền ghi cấu hình.</span>
+            </div>
+            <span class="badge badge-success">ĐẠT (HỢP LỆ)</span>
           </div>
         </div>
 
-        ${!dryRunEnv ? `
-          <div class="banner banner-warning">
-            ⚠️ <strong>Cảnh báo:</strong> Môi trường hiện tại không bật chế độ dry-run toàn cục (MESSENGER_DRY_RUN=true). Hãy đảm bảo bạn biết rõ mình đang thao tác trên hệ thống nào.
+        <h2>ℹ️ Thông tin bổ sung (Informational Checks)</h2>
+        <div style="margin: 14px 0 20px; display: grid; gap: 8px;">
+          <div class="checklist-item">
+            <span class="checklist-label">Tổng số shop hoạt động (active):</span>
+            <strong>${activeShopCount}</strong>
+          </div>
+          <div class="checklist-item">
+            <span class="checklist-label">Trạng thái của adult-shop:</span>
+            <span>${escapeHtml(adultShopStatusText)}</span>
+          </div>
+          <div class="checklist-item">
+            <span class="checklist-label">Master key mã hóa token:</span>
+            <span class="badge ${isMasterKeyConfigured ? 'badge-success' : 'badge-warning'}">${isMasterKeyConfigured ? 'ĐÃ CẤU HÌNH' : 'CHƯA CẤU HÌNH'}</span>
+          </div>
+          <div class="checklist-item">
+            <span class="checklist-label">Upload Cloudinary (Ảnh sản phẩm):</span>
+            <span class="badge ${isCloudinaryConfigured ? 'badge-success' : 'badge-warning'}">${isCloudinaryConfigured ? 'SẴN SÀNG' : 'CHƯA CẤU HÌNH'}</span>
+          </div>
+          <div class="checklist-item">
+            <span class="checklist-label">Nhánh Deploy (Railway branch):</span>
+            <code>${escapeHtml(deployedBranch)}</code>
+          </div>
+        </div>
+
+        <h2>🛒 Danh sách Shop hiện có (Top 5 mới nhất)</h2>
+        <div style="margin: 10px 0 24px;">
+          ${shopsListHtml}
+        </div>
+
+        ${!isAllHardChecksPassed ? `
+          <div class="banner banner-error">
+            ❌ <strong>Không đủ điều kiện:</strong> Một hoặc nhiều điều kiện bắt buộc (Hard Checks) chưa đạt. Nút "Bắt đầu tạo Shop" đã bị khóa. Hãy liên hệ kỹ thuật để cấu hình lại các biến môi trường hoặc cơ sở dữ liệu.
           </div>
         ` : ''}
 
         <form action="/admin/wizard/new" method="post" style="margin-top: 20px;">
-          <div class="form-group">
+          <div class="form-group" style="${!isAllHardChecksPassed ? 'display: none;' : ''}">
             <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; text-transform: none;">
               <input type="checkbox" name="confirm_staging" value="1" required style="width: auto; min-height: auto;">
               Tôi xác nhận đây là môi trường staging an toàn và cam kết tuân thủ quy tắc chạy thử nghiệm trước khi go-live.
             </label>
           </div>
+
           <div class="wizard-actions">
             <a href="/admin/dashboard" class="btn btn-secondary">Quay lại Dashboard</a>
-            <button type="submit" class="btn btn-primary" ${!isDbConnected ? 'disabled' : ''}>Bắt đầu tạo Shop →</button>
+            <button type="submit" class="btn btn-primary" ${!isAllHardChecksPassed ? 'disabled' : ''}>Bắt đầu tạo Shop →</button>
           </div>
         </form>
       </div>
@@ -189,12 +361,16 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
+    const { isAllHardChecksPassed } = await performPreflightCheck();
+    if (!isAllHardChecksPassed) {
+      return res.status(400).send('Không đủ điều kiện bắt buộc (Hard Checks) để bắt đầu Wizard.');
+    }
+
     if (req.body.confirm_staging !== '1') {
       return res.status(400).send('Bạn phải xác nhận kiểm tra môi trường để tiếp tục.');
     }
 
     // Step 0 passed, redirect to Step 1 (Create Shop Shell form)
-    // We redirect to a temporary wizard shop creation screen where shopId isn't decided yet
     res.redirect(303, '/admin/wizard/new-shop-shell');
   }
 
