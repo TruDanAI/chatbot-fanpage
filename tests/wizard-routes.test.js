@@ -23,7 +23,7 @@ class MockPgClient {
     }
     if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1')) {
       if (cleanSql.includes('ORDER BY')) {
-        return { rows: [{ id: params[0], slug: params[0] }] };
+        return { rows: [{ id: params[0], slug: params[0], name: 'My Staging Shop', status: 'active', package: 'basic', lifecycle: 'draft' }] };
       }
       if (params && params[0] === 'duplicate-slug') {
         return { rows: [{ id: 'duplicate-slug', slug: 'duplicate-slug' }] };
@@ -57,8 +57,48 @@ class MockPgClient {
     if (sql.includes('SELECT id, slug FROM shops WHERE id = $1')) {
       return { rows: [{ id: params[0], slug: params[0] }] };
     }
-    if (sql.includes('SELECT shop_id, bot_mode FROM shop_settings WHERE shop_id = $1')) {
-      return { rows: [{ shop_id: params[0], bot_mode: 'menu_code_handoff', handoff_enabled: true }] };
+    if (cleanSql.includes('FROM SHOP_SETTINGS WHERE SHOP_ID = $1')) {
+      return { rows: [{
+        shop_id: params[0],
+        bot_mode: 'menu_code_handoff',
+        handoff_enabled: true,
+        handoff_message: 'Handoff text',
+        menu_intro_text: 'Menu intro text',
+        fallback_text: 'Fallback text',
+        settings_json: {}
+      }] };
+    }
+    if (cleanSql.includes('FROM SHOP_PRODUCTS WHERE SHOP_ID = $1')) {
+      if (cleanSql.includes('LOWER(CODE) = LOWER($2)')) {
+        if (params && params[1] === 'duplicate-code') {
+          return { rows: [{ id: 'prod-dup' }] };
+        }
+        return { rows: [] };
+      }
+      if (params && params[0] === 'empty-products-shop') {
+        return { rows: [] };
+      }
+      return { rows: [
+        { id: 'prod-1', code: 'code1', name: 'Product 1', price: null, currency: '', status: 'active', sort_order: 0, metadata_json: { priceText: '10k' } }
+      ] };
+    }
+    if (cleanSql.includes('FROM SHOP_ASSETS WHERE SHOP_ID = $1')) {
+      return { rows: [] };
+    }
+    if (cleanSql.includes('FROM SHOP_ASSETS A LEFT JOIN SHOP_PRODUCTS P')) {
+      return { rows: [] };
+    }
+    if (cleanSql.includes('INSERT INTO SHOP_PRODUCTS')) {
+      return { rows: [{
+        id: params[0],
+        shop_id: params[1],
+        code: params[2],
+        name: params[3],
+        description: params[4],
+        status: params[5],
+        sort_order: params[6],
+        metadata_json: JSON.parse(params[7])
+      }] };
     }
     if (sql.includes('SELECT slug, name, status, lifecycle FROM shops')) {
       return { rows: [
@@ -475,5 +515,185 @@ describe('Setup Wizard Step 1 Create Shop Shell Form logic', () => {
     await app.routes['POST /admin/wizard/new-shop-shell'](reqDuplicate, resDuplicate);
     expect(resDuplicate.statusCode).toBe(200); // Renders form with error
     expect(resDuplicate.body.includes('Shop Slug này đã tồn tại')).toBeTrue();
+  });
+});
+
+describe('Setup Wizard Step 2 Products and Menu configuration logic', () => {
+  it('GET /admin/wizard/:shopId/step/2 requires auth', async () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const reqUnauth = createReq({ params: { shopId: 'my-shop' } });
+    const resUnauth = createRes();
+    await app.routes['/admin/wizard/:shopId/step/2'](reqUnauth, resUnauth);
+    expect(resUnauth.statusCode).toBe(401);
+  });
+
+  it('GET /admin/wizard/:shopId/step/2 blocks adult-shop', async () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const reqBlocked = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'adult-shop' }
+    });
+    const resBlocked = createRes();
+    await app.routes['/admin/wizard/:shopId/step/2'](reqBlocked, resBlocked);
+    expect(resBlocked.statusCode).toBe(403);
+  });
+
+  it('GET /admin/wizard/:shopId/step/2 renders existing products and settings', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' }
+    });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/:shopId/step/2'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Bước 2: Cấu hình Sản phẩm & Menu')).toBeTrue();
+    expect(res.body.includes('Product 1')).toBeTrue();
+    expect(res.body.includes('Menu intro text')).toBeTrue();
+    expect(res.body.includes('Chưa có ảnh Menu')).toBeTrue(); // Shows warning since we mocked empty assets
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/2/products adds product successfully', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: {
+        code: 'SP02',
+        name: 'New Product Name',
+        price_text: '20.000đ',
+        description: 'Product description here',
+        is_active: '1'
+      }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/2/products'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/wizard/my-shop/step/2?success=product');
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/2/products rejects duplicate product code', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: {
+        code: 'duplicate-code',
+        name: 'Duplicate Product Name',
+        price_text: '20.000đ'
+      }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/2/products'](req, res);
+
+    expect(res.statusCode).toBe(200); // Re-renders the form with error
+    expect(res.body.includes('Mã sản phẩm này đã tồn tại trong cửa hàng này')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/2/settings updates settings successfully', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' },
+      body: {
+        menu_intro_text: 'New Welcome Intro Text',
+        handoff_message: 'New Handoff Message Text',
+        fallback_text: 'New Fallback Text'
+      }
+    });
+    const res = createRes();
+
+    await app.routes['POST /admin/wizard/:shopId/step/2/settings'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/wizard/my-shop/step/2?success=settings');
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/2 progress validation handles rules', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    // Case 1: passing criteria is met
+    const reqPass = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' }
+    });
+    const resPass = createRes();
+    await app.routes['POST /admin/wizard/:shopId/step/2'](reqPass, resPass);
+    expect(resPass.statusCode).toBe(303);
+    expect(resPass.headers.location).toBe('/admin/wizard/my-shop/step/3');
+
+    // Case 2: empty products blocks progression
+    const reqFail = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'empty-products-shop' }
+    });
+    const resFail = createRes();
+    await app.routes['POST /admin/wizard/:shopId/step/2'](reqFail, resFail);
+    expect(resFail.statusCode).toBe(200); // Re-renders the form with warning
+    expect(resFail.body.includes('Không đủ điều kiện để tiếp tục')).toBeTrue();
+
+    process.env = originalEnv;
   });
 });

@@ -8,6 +8,8 @@ const { renderWizardLayout, escapeHtml } = require('./wizard-ui');
 const { isProductionRuntime } = require('../storage-config');
 const { createPostgresShopWriteService } = require('./shop-writes');
 const { createPostgresShopSettingsWriteService } = require('./shop-settings-writes');
+const { createPostgresProductWriteService } = require('./product-writes');
+const { createPostgresDashboardReader } = require('./reader');
 
 // Load pg Client safely
 function loadPgClient() {
@@ -90,6 +92,16 @@ function registerWizardRoutes(app, {
   });
 
   const shopSettingsWrites = createPostgresShopSettingsWriteService({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
+  const productWrites = createPostgresProductWriteService({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
+  const reader = createPostgresDashboardReader({
     databaseUrl: process.env.DATABASE_URL,
     Client
   });
@@ -586,7 +598,422 @@ function registerWizardRoutes(app, {
     }
   }
 
-  // General step rendering (Steps 2 to 6)
+  function renderStep2Html(res, { shop, settings = {}, products = [], assets = {}, error = '', success = '', values = {} } = {}) {
+    const activeProducts = products.filter(p => p.status === 'active');
+    const activeProductCount = activeProducts.length;
+    const menuImageCount = assets?.summary?.menu_image_active || assets?.summary?.menu_image || 0;
+    const menuTextExists = Boolean(settings?.menu_intro_text || values?.menu_intro_text);
+
+    // completion gate rule: Step 2 passes when at least 1 active product exists AND menu intro text is non-empty
+    const isStep2Passed = activeProductCount >= 1 && menuTextExists;
+
+    const productsHtml = products.length === 0
+      ? '<p class="meta" style="margin: 12px 0;">Cửa hàng chưa có sản phẩm nào. Vui lòng thêm ít nhất 1 sản phẩm hoạt động bên dưới.</p>'
+      : `
+        <table style="width: 100%; margin-top: 12px; margin-bottom: 18px;">
+          <thead>
+            <tr>
+              <th>Mã SP</th>
+              <th>Tên sản phẩm</th>
+              <th>Giá hiển thị</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${products.map(p => `
+              <tr>
+                <td><code>${escapeHtml(p.code)}</code></td>
+                <td>${escapeHtml(p.name)}</td>
+                <td>${escapeHtml(p.price_text || 'Chưa rõ')}</td>
+                <td>
+                  <span class="badge ${p.status === 'active' ? 'badge-success' : 'badge-neutral'}">
+                    ${p.status === 'active' ? 'Hoạt động' : 'Ẩn'}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+    const body = `
+      <div class="wizard-card">
+        <h1>Bước 2: Cấu hình Sản phẩm & Menu</h1>
+        <p>Thiết lập danh sách sản phẩm và tin nhắn chào mừng, bàn giao của cửa hàng: <strong>${escapeHtml(shop.name || shop.slug)}</strong></p>
+
+        <div class="checklist-card" style="margin: 14px 0 20px;">
+          <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 2</h3>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="badge ${activeProductCount >= 1 ? 'badge-success' : 'badge-danger'}">
+              Sản phẩm: ${activeProductCount} hoạt động (${activeProductCount >= 1 ? 'ĐẠT' : 'CHƯA ĐẠT'})
+            </span>
+            <span class="badge ${menuTextExists ? 'badge-success' : 'badge-danger'}">
+              Tin nhắn Menu: ${menuTextExists ? 'ĐÃ ĐIỀN' : 'CHƯA CÓ'}
+            </span>
+            <span class="badge ${menuImageCount > 0 ? 'badge-success' : 'badge-warning'}">
+              Ảnh Menu: ${menuImageCount > 0 ? `ĐÃ CÓ (${menuImageCount} ảnh)` : 'THIẾU (CẢNH BÁO)'}
+            </span>
+          </div>
+        </div>
+
+        ${error ? `<div class="banner banner-error">❌ <strong>Lỗi:</strong> ${escapeHtml(error)}</div>` : ''}
+        ${success ? `<div class="banner banner-success">✅ ${escapeHtml(success)}</div>` : ''}
+
+        <h2>🛒 Danh sách Sản phẩm Hiện có</h2>
+        ${productsHtml}
+
+        <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 24px;">
+          <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">➕ Thêm sản phẩm mới</h3>
+          <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/2/products" method="post" style="margin-top: 10px;">
+            <div class="form-group row">
+              <div>
+                <label for="code">Mã sản phẩm <span class="required">*</span></label>
+                <input type="text" id="code" name="code" value="${escapeHtml(values.code || '')}" placeholder="Ví dụ: SP01" required pattern="^[a-zA-Z0-9_-]+$">
+                <span class="field-help">Chỉ dùng chữ cái, số, gạch dưới và gạch nối. Không khoảng trắng.</span>
+              </div>
+              <div>
+                <label for="name">Tên sản phẩm <span class="required">*</span></label>
+                <input type="text" id="name" name="name" value="${escapeHtml(values.name || '')}" placeholder="Ví dụ: Nem chua đặc sản" required>
+              </div>
+            </div>
+
+            <div class="form-group row">
+              <div>
+                <label for="price_text">Giá hiển thị (price_text) <span class="required">*</span></label>
+                <input type="text" id="price_text" name="price_text" value="${escapeHtml(values.price_text || '')}" placeholder="Ví dụ: 50.000đ/chục" required>
+              </div>
+              <div>
+                <label for="category">Danh mục (Không bắt buộc)</label>
+                <input type="text" id="category" name="category" value="${escapeHtml(values.category || '')}" placeholder="Ví dụ: nem-chua">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="description">Mô tả sản phẩm</label>
+              <textarea id="description" name="description" placeholder="Mô tả chi tiết sản phẩm..." style="min-height: 60px;">${escapeHtml(values.description || '')}</textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="tags">Tags (Ngăn cách bằng dấu phẩy)</label>
+              <input type="text" id="tags" name="tags" value="${escapeHtml(values.tags || '')}" placeholder="Ví dụ: hot, best-seller">
+            </div>
+
+            <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="is_active" name="is_active" value="1" checked style="width: auto; min-height: auto;">
+              <label for="is_active" style="text-transform: none; font-weight: normal; margin: 0; cursor: pointer;">Kích hoạt bán sản phẩm này ngay lập tức</label>
+            </div>
+
+            <button type="submit" class="btn btn-secondary" style="margin-top: 10px;">Thêm sản phẩm</button>
+          </form>
+        </div>
+
+        <h2>💬 Cấu hình Tin nhắn & Hỗ trợ</h2>
+        <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/2/settings" method="post">
+          <div class="form-group">
+            <label for="menu_intro_text">Tin nhắn chào mừng đầu Menu <span class="required">*</span></label>
+            <textarea id="menu_intro_text" name="menu_intro_text" required style="min-height: 70px;">${escapeHtml(values.menu_intro_text || settings.menu_intro_text || '')}</textarea>
+            <span class="field-help">Hiển thị khi khách gõ "menu" hoặc khi bắt đầu cuộc hội thoại.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="handoff_message">Tin nhắn bàn giao nhân viên hỗ trợ <span class="required">*</span></label>
+            <textarea id="handoff_message" name="handoff_message" required style="min-height: 70px;">${escapeHtml(values.handoff_message || settings.handoff_message || '')}</textarea>
+            <span class="field-help">Hiển thị ngay trước khi tắt bot để nhân viên Fanpage nhảy vào trực tiếp.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="fallback_text">Tin nhắn mặc định khi bot không hiểu <span class="required">*</span></label>
+            <textarea id="fallback_text" name="fallback_text" required style="min-height: 70px;">${escapeHtml(values.fallback_text || settings.fallback_text || '')}</textarea>
+            <span class="field-help">Hiển thị khi khách hàng hỏi câu hỏi ngoài các kịch bản trả lời tự động có sẵn.</span>
+          </div>
+
+          <button type="submit" class="btn btn-secondary">Cập nhật tin nhắn</button>
+        </form>
+
+        <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);">
+          <h2>🖼️ Ảnh Menu Cửa Hàng</h2>
+          ${menuImageCount > 0 ? `
+            <div class="banner banner-success">
+              ✅ Cửa hàng đã có <strong>${menuImageCount}</strong> ảnh menu hoạt động an toàn.
+            </div>
+          ` : `
+            <div class="banner banner-warning">
+              ⚠️ <strong>Chưa có ảnh Menu:</strong> Chatbot Fanpage Basic sẽ phản hồi bằng tin nhắn chữ thay vì hình ảnh menu trực quan nếu thiếu ảnh menu. Khuyến nghị tải ảnh lên trước khi chạy thử.
+            </div>
+          `}
+          <p class="meta">Do đặc thù xử lý tệp tin và Cloudinary, tính năng tải ảnh trực tiếp được liên kết bảo mật với trang quản trị cửa hàng chính thức. Bạn có thể tải ảnh lên ở tab mới rồi quay lại đây tiếp tục.</p>
+          <a href="/admin/shops/${encodeURIComponent(shop.id)}#assets" target="_blank" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 6px;">
+            🖼️ Đi đến trang quản lý Ảnh & Tài sản (Tab mới) ↗
+          </a>
+        </div>
+
+        <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/2" method="post" style="margin-top: 28px;">
+          <div class="wizard-actions">
+            <a href="/admin/wizard/new-shop-shell" class="btn btn-secondary">← Quay lại Bước 1</a>
+            <button type="submit" class="btn btn-primary" ${!isStep2Passed ? 'disabled' : ''}>
+              ${isStep2Passed ? 'Tiếp tục sang Bước 3 →' : 'Cần thêm SP & Tin nhắn Menu để Tiếp tục'}
+            </button>
+          </div>
+          ${!isStep2Passed ? `
+            <p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">
+              * Vui lòng thêm ít nhất 1 sản phẩm hoạt động và điền tin nhắn chào mừng menu để có thể mở khóa nút Tiếp tục.
+            </p>
+          ` : ''}
+        </form>
+      </div>
+    `;
+
+    res.send(renderWizardLayout('Cấu hình Sản phẩm & Menu', body, {
+      shopId: shop.id,
+      currentStep: 2,
+      completedSteps: [0, 1]
+    }));
+  }
+
+  async function renderStep2(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: 'admin.wizard.step_2.view',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const success = req.query.success === 'product'
+        ? 'Sản phẩm đã được thêm thành công!'
+        : req.query.success === 'settings'
+        ? 'Tin nhắn cấu hình đã được cập nhật thành công!'
+        : '';
+
+      renderStep2Html(res, {
+        shop: shopDetail.shop,
+        settings: shopDetail.settings,
+        products: shopDetail.products,
+        assets: shopDetail.assets,
+        success
+      });
+    } catch (err) {
+      console.error('STEP 2 VIEW ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tải Bước 2 Setup Wizard.');
+    }
+  }
+
+  async function submitStep2Product(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_2.product.submit',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    const code = String(req.body.code || '').trim();
+    const name = String(req.body.name || '').trim();
+    const priceText = String(req.body.price_text || '').trim();
+    const description = String(req.body.description || '').trim();
+    const category = String(req.body.category || '').trim();
+    const tags = String(req.body.tags || '').trim();
+    const isActive = req.body.is_active === '1' || req.body.is_active === true;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      if (!code) {
+        return renderStep2Html(res, {
+          shop: shopDetail.shop,
+          settings: shopDetail.settings,
+          products: shopDetail.products,
+          assets: shopDetail.assets,
+          error: 'Mã sản phẩm không được bỏ trống.',
+          values: req.body
+        });
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(code)) {
+        return renderStep2Html(res, {
+          shop: shopDetail.shop,
+          settings: shopDetail.settings,
+          products: shopDetail.products,
+          assets: shopDetail.assets,
+          error: 'Định dạng Mã sản phẩm không hợp lệ. Chỉ chấp nhận ký tự chữ, số, gạch dưới và gạch nối.',
+          values: req.body
+        });
+      }
+
+      if (!name) {
+        return renderStep2Html(res, {
+          shop: shopDetail.shop,
+          settings: shopDetail.settings,
+          products: shopDetail.products,
+          assets: shopDetail.assets,
+          error: 'Tên sản phẩm không được bỏ trống.',
+          values: req.body
+        });
+      }
+
+      if (!priceText) {
+        return renderStep2Html(res, {
+          shop: shopDetail.shop,
+          settings: shopDetail.settings,
+          products: shopDetail.products,
+          assets: shopDetail.assets,
+          error: 'Giá hiển thị không được bỏ trống.',
+          values: req.body
+        });
+      }
+
+      await productWrites.createProduct({
+        principal,
+        shopId: shopDetail.shop.id,
+        body: {
+          code,
+          name,
+          price_text: priceText,
+          description,
+          category,
+          tags,
+          status: isActive ? 'active' : 'hidden'
+        },
+        requestContext: buildRequestContext(req)
+      });
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/2?success=product`);
+    } catch (err) {
+      console.error('STEP 2 ADD PRODUCT DATABASE ERROR:', err);
+
+      const shopDetail = await reader.getShopDetail(shopId);
+      let errorMsg = `Lỗi hệ thống: ${err.message}`;
+      if (err.code === 'duplicate_product_code') {
+        errorMsg = 'Mã sản phẩm này đã tồn tại trong cửa hàng này. Vui lòng chọn mã sản phẩm khác.';
+      }
+
+      renderStep2Html(res, {
+        shop: shopDetail.shop,
+        settings: shopDetail.settings,
+        products: shopDetail.products,
+        assets: shopDetail.assets,
+        error: errorMsg,
+        values: req.body
+      });
+    }
+  }
+
+  async function submitStep2Settings(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_2.settings.submit',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    const menuIntroText = String(req.body.menu_intro_text || '').trim();
+    const handoffMessage = String(req.body.handoff_message || '').trim();
+    const fallbackText = String(req.body.fallback_text || '').trim();
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      if (!menuIntroText || !handoffMessage || !fallbackText) {
+        return renderStep2Html(res, {
+          shop: shopDetail.shop,
+          settings: shopDetail.settings,
+          products: shopDetail.products,
+          assets: shopDetail.assets,
+          error: 'Tất cả các tin nhắn cấu hình bắt buộc phải điền đầy đủ.',
+          values: req.body
+        });
+      }
+
+      await shopSettingsWrites.updateSettings({
+        principal,
+        shopId: shopDetail.shop.id,
+        body: {
+          bot_mode: 'menu_code_handoff',
+          handoff_enabled: true,
+          handoff_message: handoffMessage,
+          menu_intro_text: menuIntroText,
+          fallback_text: fallbackText
+        },
+        requestContext: buildRequestContext(req)
+      });
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/2?success=settings`);
+    } catch (err) {
+      console.error('STEP 2 SETTINGS DATABASE ERROR:', err);
+
+      const shopDetail = await reader.getShopDetail(shopId);
+      renderStep2Html(res, {
+        shop: shopDetail.shop,
+        settings: shopDetail.settings,
+        products: shopDetail.products,
+        assets: shopDetail.assets,
+        error: `Lỗi hệ thống khi cập nhật tin nhắn: ${err.message}`,
+        values: req.body
+      });
+    }
+  }
+
+  async function submitStep2Progress(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_2.progress',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const activeProductCount = (shopDetail.products || []).filter(p => p.status === 'active').length;
+      const menuTextExists = Boolean(shopDetail.settings?.menu_intro_text);
+
+      if (activeProductCount < 1 || !menuTextExists) {
+        return renderStep2Html(res, {
+          shop: shopDetail.shop,
+          settings: shopDetail.settings,
+          products: shopDetail.products,
+          assets: shopDetail.assets,
+          error: 'Không đủ điều kiện để tiếp tục: Cần ít nhất 1 sản phẩm hoạt động và Tin nhắn chào mừng Menu.'
+        });
+      }
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/3`);
+    } catch (err) {
+      console.error('STEP 2 PROGRESSION DATABASE ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tiếp tục sang bước 3.');
+    }
+  }
+
+  // General step rendering (Steps 3 to 6)
   async function renderStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
     const step = parseInt(req.params.step, 10);
@@ -600,7 +1027,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 2 || step > 6) {
+    if (isNaN(step) || step < 3 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
 
@@ -610,7 +1037,7 @@ function registerWizardRoutes(app, {
     const stepNames = [
       '',
       '',
-      'Cấu hình Sản phẩm & Menu',
+      '',
       'Liên kết trang Facebook',
       'Lưu thông tin xác thực',
       'Readiness Gate (Kiểm tra sẵn sàng)',
@@ -642,7 +1069,7 @@ function registerWizardRoutes(app, {
     }));
   }
 
-  // Handle Step submissions (Steps 2 to 6)
+  // Handle Step submissions (Steps 3 to 6)
   async function submitStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
     const step = parseInt(req.params.step, 10);
@@ -656,7 +1083,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 2 || step > 6) {
+    if (isNaN(step) || step < 3 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
 
@@ -702,6 +1129,10 @@ function registerWizardRoutes(app, {
   app.post('/admin/wizard/new', submitStep0);
   app.get('/admin/wizard/new-shop-shell', renderNewShopForm);
   app.post('/admin/wizard/new-shop-shell', wizardShopGuard, submitNewShop);
+  app.get('/admin/wizard/:shopId/step/2', wizardShopGuard, renderStep2);
+  app.post('/admin/wizard/:shopId/step/2', wizardShopGuard, submitStep2Progress);
+  app.post('/admin/wizard/:shopId/step/2/products', wizardShopGuard, submitStep2Product);
+  app.post('/admin/wizard/:shopId/step/2/settings', wizardShopGuard, submitStep2Settings);
   app.get('/admin/wizard/:shopId/step/:step', wizardShopGuard, renderStepPage);
   app.post('/admin/wizard/:shopId/step/:step', wizardShopGuard, submitStepPage);
 }
