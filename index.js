@@ -11,6 +11,7 @@ const { createRuleEngine } = require('./core/rules');
 const { buildQuickReplies, resolveQuickReplyPayload } = require('./core/quick-replies');
 const { resolveShopConfigForPage } = require('./core/shops/db-shop-config');
 const { getAdminRequestToken, registerAdminRoutes } = require('./core/admin-routes');
+const { registerWizardRoutes } = require('./core/admin/wizard-routes');
 const { createAiClient } = require('./core/ai-client');
 const {
   createEventTracker,
@@ -976,6 +977,15 @@ app.get('/', (_req, res) => res.send('🤖 Shop Bot đang chạy!'));
 app.get('/healthz', (_req, res) => res.json(buildHealthPayload()));
 
 registerAdminRoutes(app, {
+  storage,
+  adminExportToken: ADMIN_EXPORT_TOKEN,
+  adminIpAllowlist: ADMIN_IP_ALLOWLIST,
+  adminLoginRateLimitWindowMs: ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS,
+  adminLoginRateLimitMax: ADMIN_LOGIN_RATE_LIMIT_MAX,
+  getClientIp
+});
+
+registerWizardRoutes(app, {
   storage,
   adminExportToken: ADMIN_EXPORT_TOKEN,
   adminIpAllowlist: ADMIN_IP_ALLOWLIST,

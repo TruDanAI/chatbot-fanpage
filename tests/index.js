@@ -38,6 +38,8 @@ require('./asset-uploads.test');
 require('./shop-control-writes.test');
 require('./shop-readiness-check.test');
 require('./admin-routes.test');
+require('./wizard-ui.test');
+require('./wizard-routes.test');
 require('./index.test');
 
 run()
