@@ -954,13 +954,33 @@ non-destructive:
 - Do not delete audit rows or product rows as a rollback shortcut. Archive only
   approved smoke products when cleanup is in scope.
 
+## Setup Wizard P1.1 MVP Completion Checkpoint - 2026-05-28
+
+This checkpoint records the successful E2E staging implementation and verification of the P1.1 Admin Setup Wizard MVP in safe dry-run mode.
+
+- **Status**: Completed and E2E Verified
+- **Commit**: `0614e17 Add setup wizard dry-run simulation step`
+- **Staging Verification URL**: `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Setup Steps Completed**:
+  - **Step 0 Pre-flight**: Env, dry-run, DB configuration, and connection checks.
+  - **Step 1 Shop Shell**: Creation form with custom slug routing.
+  - **Step 2 Products/Menu**: Bulk catalog seeding and welcoming settings.
+  - **Step 3 Page Mapping**: Safe Facebook Page mapping in draft status.
+  - **Step 4 Page Credential**: Secure context-bound credentials encryption.
+  - **Step 5 Readiness Gate**: Integrity check separating hard blockers.
+  - **Step 6 Dry-Run Simulation**: Sandbox deterministic webhook testing.
+- **wizard-smoke-shop Final State**:
+  - `dry_run = true`
+  - `live_enabled = false`
+  - `lifecycle = draft`
+  - `last_manual_test_status = passed`
+- **Incident Handling**: Addressed a staging database credential leak prior to E2E verification by rotating the database password programmatically, updating Postgres service variables, and propagating changes safely to all linked containers.
+- **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, or token health checks were executed. Credentials are strictly locked in dry-run mode.
+
 ## Open TODOs
 
-- Page mapping management for newly created shop shells is next.
-- Asset upload is still pending.
+- Asset upload and media direct integration enhancements.
 - Dashboard UX for multi-shop operations is still basic.
-- Multi-tenant admin identity separation is future work; current auth remains
-  the static-token/session bridge.
-- Product/admin pagination and search can be expanded after production MVP
-  safety is proven.
+- Multi-tenant admin identity separation is future work; current auth remains the static-token/session bridge.
+- Product/admin pagination and search can be expanded after production MVP safety is proven.
 - Metrics and analytics for multi-shop operations are future work.
