@@ -15,16 +15,42 @@ class MockPgClient {
     if (cleanSql === 'BEGIN' || cleanSql === 'COMMIT' || cleanSql === 'ROLLBACK') {
       return { command: cleanSql, rows: [] };
     }
+    if (cleanSql.includes('ACTIVE_PAGE_MAPPING_COUNT')) {
+      if (params && params[0] === 'has-credentials-shop') {
+        return { rows: [{
+          active_page_mapping_count: 1,
+          active_product_count: 1,
+          active_menu_image_count: 1,
+          active_product_image_count: 1
+        }] };
+      }
+      if (params && (params[0] === 'has-page-shop' || params[0] === 'wizard-smoke-shop')) {
+        return { rows: [{
+          active_page_mapping_count: 1,
+          active_product_count: 1,
+          active_menu_image_count: 0,
+          active_product_image_count: 0
+        }] };
+      }
+      return { rows: [{
+        active_page_mapping_count: 0,
+        active_product_count: 0,
+        active_menu_image_count: 0,
+        active_product_image_count: 0
+      }] };
+    }
     if (cleanSql.includes("SLUG = 'ADULT-SHOP'") || (params && params.includes('adult-shop'))) {
       return { rows: [{ id: 'adult-shop', slug: 'adult-shop', name: 'Adult Shop', status: 'active', lifecycle: 'live' }] };
     }
+
     if (cleanSql.includes('SELECT COUNT(*) FROM SHOPS')) {
       return { rows: [{ count: '5' }] };
     }
     if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1')) {
       if (cleanSql.includes('ORDER BY')) {
-        return { rows: [{ id: params[0], slug: params[0], name: 'My Staging Shop', status: 'active', package: 'basic', lifecycle: 'draft' }] };
+        return { rows: [{ id: params[0], slug: params[0], name: 'My Staging Shop', status: 'active', package: 'basic', lifecycle: 'draft', last_manual_test_status: 'passed' }] };
       }
+
       if (params && params[0] === 'duplicate-slug') {
         return { rows: [{ id: 'duplicate-slug', slug: 'duplicate-slug' }] };
       }
@@ -141,18 +167,19 @@ class MockPgClient {
     // Credential queries for getShopDetail & pageCredentialWrites
     if (cleanSql.includes('FROM SHOP_PAGE_CREDENTIALS') || (cleanSql.includes('SELECT') && cleanSql.includes('SHOP_PAGE_CREDENTIALS'))) {
       if (params && params[0] === 'has-credentials-shop') {
-        if (cleanSql.includes('AS COUNT')) {
-          return { rows: [{ count: 1 }] };
+        if (cleanSql.includes('AS COUNT') || cleanSql.includes('ACTIVE_CREDENTIAL_COUNT')) {
+          return { rows: [{ count: 1, active_credential_count: 1 }] };
         }
         return { rows: [
           { id: 'credential_123', page_mapping_id: 'page_abc123', status: 'active', credential_type: 'fb_page_token', page_status: 'active', total: 1 }
         ] };
       }
-      if (cleanSql.includes('AS COUNT')) {
-        return { rows: [{ count: 0 }] };
+      if (cleanSql.includes('AS COUNT') || cleanSql.includes('ACTIVE_CREDENTIAL_COUNT')) {
+        return { rows: [{ count: 0, active_credential_count: 0 }] };
       }
       return { rows: [] };
     }
+
     if (cleanSql.includes('INSERT INTO SHOP_PAGE_CREDENTIALS')) {
       return { rows: [{
         id: params[0],
@@ -164,6 +191,46 @@ class MockPgClient {
         updated_at: new Date().toISOString()
       }] };
     }
+    if (cleanSql.includes('FROM SHOP_ASSETS WHERE SHOP_ID = $1 GROUP BY ASSET_TYPE')) {
+      if (params && params[0] === 'has-credentials-shop') {
+        return { rows: [
+          { asset_type: 'menu_image', total: 1, active: 1 },
+          { asset_type: 'product_image', total: 1, active: 1 }
+        ] };
+      }
+      return { rows: [] };
+    }
+    if (cleanSql.includes('ACTIVE_PAGE_MAPPING_COUNT')) {
+      if (params && params[0] === 'has-credentials-shop') {
+        return { rows: [{
+          active_page_mapping_count: 1,
+          active_product_count: 1,
+          active_menu_image_count: 1,
+          active_product_image_count: 1
+        }] };
+      }
+      if (params && (params[0] === 'has-page-shop' || params[0] === 'wizard-smoke-shop')) {
+        return { rows: [{
+          active_page_mapping_count: 1,
+          active_product_count: 1,
+          active_menu_image_count: 0,
+          active_product_image_count: 0
+        }] };
+      }
+      return { rows: [{
+        active_page_mapping_count: 0,
+        active_product_count: 0,
+        active_menu_image_count: 0,
+        active_product_image_count: 0
+      }] };
+    }
+    if (cleanSql.includes('UPDATE SHOPS') && cleanSql.includes('LAST_READINESS_STATUS')) {
+      return { rows: [{
+        id: params ? params[0] : 'some-shop',
+        last_readiness_status: params ? params[1] : 'passed',
+        last_readiness_checked_at: new Date().toISOString()
+      }] };
+    }
     if (sql.includes('SELECT slug, name, status, lifecycle FROM shops')) {
       return { rows: [
         { slug: 'demo-shop', name: 'Demo Shop', status: 'active', lifecycle: 'configuring' },
@@ -171,6 +238,7 @@ class MockPgClient {
       ] };
     }
     return { rows: [[1]] };
+
   }
   async end() {
     this.connected = false;
@@ -1389,6 +1457,171 @@ describe('Setup Wizard Step 4 Page Credentials', () => {
     const req = createReq({
       headers: { authorization: 'Bearer test-token' },
       params: { shopId: 'has-page-shop', step: '4' }
+    });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/:shopId/step/:step'](req, res);
+
+    expect(res.statusCode).toBe(400);
+
+    process.env = originalEnv;
+  });
+});
+
+describe('Setup Wizard Step 5 Readiness Gate', () => {
+  it('GET /admin/wizard/:shopId/step/5 requires auth', async () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({ params: { shopId: 'has-page-shop' } });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/5'](req, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('GET /admin/wizard/:shopId/step/5 blocks adult-shop', async () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'adult-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/5'](req, res);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('GET /admin/wizard/:shopId/step/5 renders readiness checks and blockers safely', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    // 'has-page-shop' is mocked to have active mapping=1, products=1, menu_images=0 (failed check)
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/5'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    // Hard blockers must be detected
+    expect(res.body.includes('Readiness Status: FAILED')).toBeTrue();
+    expect(res.body.includes('CHƯA ĐẠT')).toBeTrue();
+    // Links to steps must exist
+    expect(res.body.includes('/admin/wizard/has-page-shop/step/2')).toBeTrue();
+    // Continue button must be disabled
+    expect(res.body.includes('disabled')).toBeTrue();
+    expect(res.body.includes('Cần đạt điều kiện bắt buộc để Tiếp tục')).toBeTrue();
+
+    // No leaks
+    expect(res.body.includes('111222333444555')).toBeFalse(); // raw page_id
+    expect(res.body.includes('test-master-key')).toBeFalse(); // master key
+    expect(res.body.includes('postgres://')).toBeFalse(); // DB URL
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/5/recheck runs readiness checks and redirects back', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' }
+    });
+    const res = createRes();
+    await app.routes['POST /admin/wizard/:shopId/step/5/recheck'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/wizard/has-page-shop/step/5?success=rechecked');
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/5/continue blocks continuation when hard blockers exist', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    // 'has-page-shop' has hard blockers (menu_images=0, credential=0)
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' }
+    });
+    const res = createRes();
+    await app.routes['POST /admin/wizard/:shopId/step/5/continue'](req, res);
+
+    expect(res.statusCode).toBe(200); // Re-renders
+    expect(res.body.includes('Không đủ điều kiện để tiếp tục')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('POST /admin/wizard/:shopId/step/5/continue advances to Step 6 when hard blockers are empty', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    // 'has-credentials-shop' has mapping=1, products=1, menu_images=1, credentials=1 (passed)
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-credentials-shop' }
+    });
+    const res = createRes();
+    await app.routes['POST /admin/wizard/:shopId/step/5/continue'](req, res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/wizard/has-credentials-shop/step/6');
+
+    process.env = originalEnv;
+  });
+
+  it('Generic step handler rejects step 5', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop', step: '5' }
     });
     const res = createRes();
 

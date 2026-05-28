@@ -13,6 +13,9 @@ const { createPostgresDashboardReader } = require('./reader');
 const { createPostgresPageMappingWriteService } = require('./page-mapping-writes');
 const { createPostgresPageCredentialWriteService } = require('./page-credential-writes');
 const { pageRef } = require('../utils/log-refs');
+const { createPostgresShopReadinessCheckService } = require('./shop-readiness-check');
+const { buildShopReadiness, resolveGlobalDryRunState } = require('./shop-readiness');
+
 
 // Load pg Client safely
 function loadPgClient() {
@@ -118,6 +121,12 @@ function registerWizardRoutes(app, {
     databaseUrl: process.env.DATABASE_URL,
     Client
   });
+
+  const shopReadinessChecks = createPostgresShopReadinessCheckService({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
 
   function buildRequestContext(req) {
     const ip = typeof getClientIp === 'function' ? String(getClientIp(req) || '').slice(0, 80) : '';
@@ -1793,6 +1802,312 @@ function registerWizardRoutes(app, {
     }
   }
 
+  // ──── Step 5: Readiness Gate ────
+
+
+  function getStepUrlForCheckKey(key, shopId) {
+    const mapping = {
+      bot_mode_ready: 2,
+      product_ready: 2,
+      menu_assets_ready: 2,
+      product_assets_ready: 2,
+      multiple_menu_images: 2,
+      page_mapping_ready: 3,
+      credential_ready: 4
+    };
+    const step = mapping[key];
+    if (step) {
+      return `/admin/wizard/${encodeURIComponent(shopId)}/step/${step}`;
+    }
+    return `/admin/wizard/${encodeURIComponent(shopId)}/step/5`;
+  }
+
+  function renderStep5Html(res, { shop, readiness = {}, success = '', error = '' } = {}) {
+    const hardBlockerCount = readiness.hard_blockers?.length || 0;
+    const hasHardBlockers = hardBlockerCount > 0;
+    const isStep5Passed = !hasHardBlockers;
+
+    let checkersHtml = '';
+    if (readiness.checks && readiness.checks.length > 0) {
+      checkersHtml = `
+        <div style="display: grid; gap: 12px; margin: 20px 0;">
+          ${readiness.checks.map(check => {
+            let statusBadgeClass = 'badge-neutral';
+            let statusLabel = 'Chưa rõ';
+            if (check.status === 'pass') {
+              statusBadgeClass = 'badge-success';
+              statusLabel = 'ĐẠT';
+            } else if (check.status === 'warning') {
+              statusBadgeClass = 'badge-warning';
+              statusLabel = 'CẢNH BÁO';
+            } else if (check.status === 'fail') {
+              statusBadgeClass = 'badge-danger';
+              statusLabel = 'CHƯA ĐẠT';
+            }
+
+            const stepUrl = getStepUrlForCheckKey(check.key, shop.id);
+            const isIssue = check.status === 'fail' || check.status === 'warning';
+
+            return `
+              <div class="checklist-item" style="border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: #ffffff;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+                  <div style="min-width: 0; flex: 1;">
+                    <strong style="font-size: 15px; color: var(--primary-dark);">${escapeHtml(check.label || '')}</strong>
+                    <p style="margin: 4px 0; font-size: 13px; color: #334155;">${escapeHtml(check.detail || '')}</p>
+                    ${isIssue && check.next_action ? `
+                      <div style="margin-top: 8px; font-size: 13px; color: var(--warning); display: flex; align-items: center; gap: 6px;">
+                        <span>🔧 <strong>Khuyến nghị:</strong> ${escapeHtml(check.next_action)}</span>
+                        <a href="${stepUrl}" style="text-decoration: underline; font-weight: bold; margin-left: auto;">Đi đến Bước liên quan →</a>
+                      </div>
+                    ` : ''}
+                  </div>
+                  <span class="badge ${statusBadgeClass}" style="flex-shrink: 0; min-width: 90px; text-align: center;">${statusLabel}</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    const warningBannerHtml = `
+      <div class="banner banner-warning" style="margin: 14px 0;">
+        ⚠️ <strong>Bước 6 Tiếp theo:</strong> Nhấn "Tiếp tục" sẽ đưa bạn sang <strong>Bước 6: Chạy thử giả lập (Dry-Run Smoke Test)</strong>.
+        Tại Bước 6, hệ thống chỉ chạy thử nghiệm giả lập (Dry-run: ON, Live: OFF) để bảo vệ tuyệt đối dữ liệu và không gửi tin nhắn thật hay gọi Meta API.
+      </div>
+    `;
+
+    const blockerBannerHtml = hasHardBlockers
+      ? `
+        <div class="banner banner-error" style="margin: 16px 0;">
+          ❌ <strong>Chưa đủ điều kiện:</strong> Phát hiện <strong>${hardBlockerCount}</strong> điều kiện bắt buộc chưa đạt.
+          Vui lòng khắc phục các lỗi (được đánh dấu <span class="badge badge-danger">CHƯA ĐẠT</span>) bằng cách truy cập các bước tương ứng trước khi tiếp tục.
+        </div>
+      `
+      : `
+        <div class="banner banner-success" style="margin: 16px 0;">
+          ✅ <strong>Sẵn sàng:</strong> Tất cả các điều kiện bắt buộc đã ĐẠT! Bạn có thể tiếp tục sang Bước 6.
+        </div>
+      `;
+
+    const body = `
+      <div class="wizard-card">
+        <h1>Bước 5: Readiness Gate (Kiểm tra sẵn sàng)</h1>
+        <p>Hệ thống tự động phân tích cấu hình của shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để đảm bảo bot có thể vận hành ổn định và an toàn.</p>
+
+        ${warningBannerHtml}
+
+        <div class="checklist-card" style="margin: 14px 0 20px;">
+          <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái kiểm tra sẵn sàng</h3>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="badge ${isStep5Passed ? 'badge-success' : 'badge-danger'}">
+              Readiness Status: ${(readiness.readiness_status || 'failed').toUpperCase()}
+            </span>
+            <span class="badge badge-neutral">Hard Blockers: ${hardBlockerCount}</span>
+            <span class="badge badge-neutral">Warnings: ${readiness.warnings?.length || 0}</span>
+          </div>
+        </div>
+
+        ${error ? `<div class="banner banner-error">❌ <strong>Lỗi:</strong> ${escapeHtml(error)}</div>` : ''}
+        ${success ? `<div class="banner banner-success">✅ ${escapeHtml(success)}</div>` : ''}
+
+        ${blockerBannerHtml}
+
+        <h2>📋 Danh sách hạng mục kiểm tra (Readiness Checklist)</h2>
+        ${checkersHtml}
+
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);">
+          <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/5/recheck" method="post" style="margin: 0;">
+            <button type="submit" class="btn btn-secondary">🔄 Kiểm tra lại (Recheck)</button>
+          </form>
+
+          <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/5/continue" method="post" style="margin: 0;">
+            <div class="wizard-actions" style="margin: 0;">
+              <a href="/admin/wizard/${encodeURIComponent(shop.id)}/step/4" class="btn btn-secondary">← Quay lại Bước 4</a>
+              <button type="submit" class="btn btn-primary" ${!isStep5Passed ? 'disabled' : ''}>
+                ${isStep5Passed ? 'Tiếp tục sang Bước 6 →' : 'Cần đạt điều kiện bắt buộc để Tiếp tục'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    res.send(renderWizardLayout('Kiểm tra sẵn sàng', body, {
+      shopId: shop.id,
+      currentStep: 5,
+      completedSteps: [0, 1, 2, 3, 4]
+    }));
+  }
+
+  async function renderStep5(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: 'admin.wizard.step_5.view',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const counts = {
+        products: shopDetail.products.filter(p => p.status === 'active').length,
+        menu_images: shopDetail.assets?.summary?.menu_image_active || 0,
+        product_images: shopDetail.assets?.summary?.product_image_active || 0,
+        active_page_mappings: shopDetail.pages.filter(p => p.status === 'active').length,
+        active_credentials: shopDetail.credentials?.active_fb_page_token_count || 0
+      };
+
+      const readiness = buildShopReadiness({
+        shop: shopDetail.shop,
+        settings: shopDetail.settings,
+        counts,
+        manualTestStatus: shopDetail.shop.last_manual_test_status,
+        globalDryRunState: resolveGlobalDryRunState(process.env)
+      });
+
+      const success = req.query.success === 'rechecked'
+        ? 'Kiểm tra trạng thái sẵn sàng thành công!'
+        : '';
+
+      renderStep5Html(res, {
+        shop: shopDetail.shop,
+        readiness,
+        success
+      });
+    } catch (err) {
+      console.error('STEP 5 VIEW ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tải Bước 5 Setup Wizard.');
+    }
+  }
+
+  async function submitStep5Recheck(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_5.recheck',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      await shopReadinessChecks.checkReadiness({
+        principal,
+        shopId,
+        requestContext: buildRequestContext(req)
+      });
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/5?success=rechecked`);
+    } catch (err) {
+      console.error('STEP 5 RECHECK ERROR:', err);
+
+      let shopDetail;
+      try {
+        shopDetail = await reader.getShopDetail(shopId);
+      } catch (_) {}
+
+      let counts = { products: 0, menu_images: 0, product_images: 0, active_page_mappings: 0, active_credentials: 0 };
+      if (shopDetail) {
+        counts = {
+          products: shopDetail.products.filter(p => p.status === 'active').length,
+          menu_images: shopDetail.assets?.summary?.menu_image_active || 0,
+          product_images: shopDetail.assets?.summary?.product_image_active || 0,
+          active_page_mappings: shopDetail.pages.filter(p => p.status === 'active').length,
+          active_credentials: shopDetail.credentials?.active_fb_page_token_count || 0
+        };
+      }
+
+      const readiness = buildShopReadiness({
+        shop: shopDetail ? shopDetail.shop : { id: shopId, slug: shopId },
+        settings: shopDetail ? shopDetail.settings : null,
+        counts,
+        manualTestStatus: shopDetail ? shopDetail.shop.last_manual_test_status : 'unknown',
+        globalDryRunState: resolveGlobalDryRunState(process.env)
+      });
+
+      renderStep5Html(res, {
+        shop: shopDetail ? shopDetail.shop : { id: shopId, slug: shopId },
+        readiness,
+        error: `Kiểm tra thất bại: ${err.message}`
+      });
+    }
+  }
+
+  async function submitStep5Progress(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_5.progress',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const result = await shopReadinessChecks.checkReadiness({
+        principal,
+        shopId,
+        requestContext: buildRequestContext(req)
+      });
+
+      if (result.readiness.hard_blockers.length > 0) {
+        const shopDetail = await reader.getShopDetail(shopId);
+        return renderStep5Html(res, {
+          shop: shopDetail.shop,
+          readiness: result.readiness,
+          error: 'Không đủ điều kiện để tiếp tục: Vui lòng hoàn thành toàn bộ điều kiện bắt buộc.'
+        });
+      }
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/6`);
+    } catch (err) {
+      console.error('STEP 5 PROGRESS ERROR:', err);
+
+      let shopDetail;
+      try {
+        shopDetail = await reader.getShopDetail(shopId);
+      } catch (_) {}
+
+      let counts = { products: 0, menu_images: 0, product_images: 0, active_page_mappings: 0, active_credentials: 0 };
+      if (shopDetail) {
+        counts = {
+          products: shopDetail.products.filter(p => p.status === 'active').length,
+          menu_images: shopDetail.assets?.summary?.menu_image_active || 0,
+          product_images: shopDetail.assets?.summary?.product_image_active || 0,
+          active_page_mappings: shopDetail.pages.filter(p => p.status === 'active').length,
+          active_credentials: shopDetail.credentials?.active_fb_page_token_count || 0
+        };
+      }
+
+      const readiness = buildShopReadiness({
+        shop: shopDetail ? shopDetail.shop : { id: shopId, slug: shopId },
+        settings: shopDetail ? shopDetail.settings : null,
+        counts,
+        manualTestStatus: shopDetail ? shopDetail.shop.last_manual_test_status : 'unknown',
+        globalDryRunState: resolveGlobalDryRunState(process.env)
+      });
+
+      renderStep5Html(res, {
+        shop: shopDetail ? shopDetail.shop : { id: shopId, slug: shopId },
+        readiness,
+        error: `Tiếp tục thất bại: ${err.message}`
+      });
+    }
+  }
+
   // General step rendering (Steps 5 to 6)
   async function renderStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
@@ -1807,8 +2122,9 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 5 || step > 6) {
+    if (isNaN(step) || step < 6 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
+
     }
 
     const completedSteps = [];
@@ -1863,9 +2179,10 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 5 || step > 6) {
+    if (isNaN(step) || step < 6 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
+
 
     if (step < 6) {
       res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/${step + 1}`);
@@ -1920,8 +2237,12 @@ function registerWizardRoutes(app, {
   app.get('/admin/wizard/:shopId/step/4', wizardShopGuard, renderStep4);
   app.post('/admin/wizard/:shopId/step/4', wizardShopGuard, submitStep4Create);
   app.post('/admin/wizard/:shopId/step/4/continue', wizardShopGuard, submitStep4Progress);
+  app.get('/admin/wizard/:shopId/step/5', wizardShopGuard, renderStep5);
+  app.post('/admin/wizard/:shopId/step/5/recheck', wizardShopGuard, submitStep5Recheck);
+  app.post('/admin/wizard/:shopId/step/5/continue', wizardShopGuard, submitStep5Progress);
   app.get('/admin/wizard/:shopId/step/:step', wizardShopGuard, renderStepPage);
   app.post('/admin/wizard/:shopId/step/:step', wizardShopGuard, submitStepPage);
+
 }
 
 module.exports = {
