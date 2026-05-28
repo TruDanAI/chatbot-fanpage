@@ -3473,9 +3473,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Menu assets ready');
     expect(res.body).toContain('Product assets ready');
     expect(res.body).toContain('Health ready');
-    expect(res.body).toContain('Recheck readiness');
+    expect(res.body).toContain('Chạy lại kiểm tra hoàn tất');
     expect(res.body).toContain('action="/admin/shops/adult-shop/readiness-check"');
-    expect(res.body).toContain('Updates readiness status and checked time only.');
+    expect(res.body).toContain('Chỉ cập nhật trạng thái kiểm tra sẵn sàng và thời gian kiểm tra.');
     expect(res.body).toContain('edit settings');
     expect(res.body).toContain('add page mapping');
     expect(res.body).toContain('add credential');
@@ -3495,17 +3495,17 @@ describe('admin dashboard routes', () => {
         shop: { status: 'active', lifecycle: 'configuring', dry_run: true, live_enabled: false },
         shown: 'action="/admin/shops/new-shop/pause"',
         hidden: 'action="/admin/shops/new-shop/resume"',
-        label: 'Pause shop',
+        label: 'Tạm dừng hoạt động Bot',
         placeholder: 'placeholder="PAUSE SHOP"',
-        explanation: 'Pause stops bot responses'
+        explanation: 'Tạm dừng sẽ ngắt mọi phản hồi tự động của bot'
       },
       {
         shop: { status: 'paused', lifecycle: 'paused', dry_run: true, live_enabled: false },
         shown: 'action="/admin/shops/new-shop/resume"',
         hidden: 'action="/admin/shops/new-shop/pause"',
-        label: 'Resume shop',
+        label: 'Kích hoạt lại hoạt động Bot',
         placeholder: 'placeholder="RESUME SHOP"',
-        explanation: 'Resume reactivates the shop'
+        explanation: 'Kích hoạt lại sẽ đưa bot hoạt động trở lại'
       }
     ]) {
       const app = createApp();
@@ -3524,8 +3524,8 @@ describe('admin dashboard routes', () => {
       }), res);
 
       expect(res.statusCode).toBe(200);
-      expect(res.body).toContain('<tr><th>dry_run</th><td><span class="status status-success">true</span></td></tr>');
-      expect(res.body).toContain('<tr><th>Live enabled</th><td><span class="status status-warning">disabled</span></td></tr>');
+      expect(res.body).toContain('<tr><th>Chế độ test an toàn (dry_run)</th><td><span class="status status-success">true</span></td></tr>');
+      expect(res.body).toContain('<tr><th>Cho phép chạy thật (live_enabled)</th><td><span class="status status-warning">disabled</span></td></tr>');
       expect(res.body).toContain('Emergency Brake');
       expect(res.body).toContain(item.explanation);
       expect(res.body).toContain(item.shown);
@@ -3577,12 +3577,12 @@ describe('admin dashboard routes', () => {
     }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('<tr><th>Readiness</th><td><span class="status status-success">passed</span></td></tr>');
+    expect(res.body).toContain('<tr><th>Kiểm tra hoàn tất (Readiness)</th><td><span class="status status-success">passed</span></td></tr>');
     expect(res.body).toContain('Status <span class="status status-success">ready</span>');
-    expect(res.body).toContain('Readiness warnings');
+    expect(res.body).toContain('Cảnh báo (Warnings)');
     expect(res.body).toContain('Product image coverage');
     expect(res.body).toContain('Active product images (1) are fewer than active products (5).');
-    expect(res.body).toContain('No current readiness blockers.');
+    expect(res.body).toContain('Không có lỗi chặn nào hiện tại.');
   });
 
   it('shop detail HTML switches demo-shop configuring/non-live page setup to preview-only controls', async () => {

@@ -829,10 +829,10 @@ function renderBulkMenuImageImportResultHtml({ shopId = '', error = null } = {})
 function renderPageMappingAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
-    <h3>Add page mapping</h3>
-    <label>Page ID <span class="required">required</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"><span class="page-id-help">The numeric Facebook Page ID. Find it in <strong>Facebook Page Settings &rarr; About</strong> or in the page URL. Handle this value carefully &mdash; it connects the bot to a specific Facebook page.</span></label>
-    <label>Page name<input name="page_name" maxlength="180"></label>
-    <div class="form-actions"><button type="submit">Add mapping</button><span class="meta">Creates an active page mapping only. Credentials are added separately below.</span></div>
+    <h3>Thêm kết nối Fanpage (Page Mapping)</h3>
+    <label>ID Trang (Page ID) <span class="required">bắt buộc</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"><span class="page-id-help">ID Trang Facebook dạng số. Bạn có thể tìm thấy tại <strong>Cài đặt Trang Facebook &rarr; Giới thiệu</strong> hoặc trong URL của trang. Bảo mật giá trị này cẩn thận &mdash; nó liên kết bot với một trang cụ thể.</span></label>
+    <label>Tên Trang (Không bắt buộc)<input name="page_name" maxlength="180"></label>
+    <div class="form-actions"><button type="submit">Thêm liên kết Trang</button><span class="meta">Chỉ tạo liên kết định danh. Mã Token gửi tin sẽ được điền riêng ở cột bên phải bên dưới.</span></div>
   </form>`;
 }
 
@@ -840,12 +840,12 @@ function renderPageCredentialForm(shopId = '', page = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/credentials`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
     <input type="hidden" name="credential_type" value="fb_page_token">
-    <label>Credential <span class="required">required</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
+    <label>Mã Token kết nối <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
     <label class="checkbox-label">
       <input type="checkbox" name="rotate" value="true">
-      Rotate existing active credential
+      Thay thế (Rotate) mã Token cũ đang hoạt động
     </label>
-    <div class="form-actions"><button type="submit">Save credential</button></div>
+    <div class="form-actions"><button type="submit">Lưu mã Token</button></div>
   </form>`;
 }
 
@@ -1045,24 +1045,24 @@ function renderDryRunControls(shop = {}) {
   const enableAction = `/admin/shops/${encodeRoutePart(shopId)}/dry-run/enable`;
   const disableAction = `/admin/shops/${encodeRoutePart(shopId)}/dry-run/disable`;
 
-  const globalNote = '<p class="meta"><strong>Note:</strong> Global <code>MESSENGER_DRY_RUN=true</code> still blocks all real sends, regardless of this setting.</p>';
+  const globalNote = '<p class="meta"><strong>Lưu ý:</strong> Chế độ an toàn toàn cục <code>MESSENGER_DRY_RUN=true</code> đang bật và sẽ luôn ngăn tất cả tin nhắn thật gửi đi, bất kể cấu hình riêng của shop này.</p>';
 
   // dry_run=false → show warning and re-enable form
   if (dryRun === false) {
     return `
       <div class="banner banner-warning" role="alert" id="dry-run-warning">
-        <strong>&#9888; Real-send mode active for this shop.</strong>
-        Dry-run is currently <strong>disabled</strong>. Messages may be sent to real users if the global kill switch is also off.
-        Use the form below to return this shop to dry-run mode.
+        <strong>&#9888; Cửa hàng đang ở chế độ CHẠY THẬT (Gửi tin nhắn thật).</strong>
+        Chế độ chạy thử an toàn (dry-run) hiện đang <strong>TẮT</strong>. Tin nhắn có thể được gửi trực tiếp đến người dùng thật nếu hệ thống toàn cục cho phép.
+        Sử dụng biểu mẫu bên dưới để bật lại chế độ chạy thử an toàn.
       </div>
       ${globalNote}
       <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run">
-        <label>Confirmation
+        <label>Nhập từ khóa xác nhận
           <input name="confirmation_text" placeholder="ENABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off">
         </label>
         <div class="form-actions">
-          <button type="submit">Return this shop to dry-run</button>
-          <span class="meta">Type <code>ENABLE DRY RUN</code> to confirm. Resets shop to safe dry-run mode.</span>
+          <button type="submit">Bật lại chế độ test an toàn cho cửa hàng</button>
+          <span class="meta">Nhập chính xác từ khóa <code>ENABLE DRY RUN</code> để xác nhận.</span>
         </div>
       </form>`;
   }
@@ -1072,12 +1072,12 @@ function renderDryRunControls(shop = {}) {
     return `
       ${globalNote}
       <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run">
-        <label>Confirmation <span class="required">required</span>
+        <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
           <input name="confirmation_text" placeholder="DISABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off">
         </label>
         <div class="form-actions">
-          <button type="submit" class="inline-action warning" onclick="return confirm('This allows real Messenger sends for this shop if the global kill switch is also off. Type DISABLE DRY RUN to confirm.');">Allow real-send test for this shop</button>
-          <span class="meta">Type <code>DISABLE DRY RUN</code> exactly. Readiness must be passed. Does not enable live_enabled or set lifecycle=live.</span>
+          <button type="submit" class="inline-action warning" onclick="return confirm('Hành động này cho phép gửi tin nhắn Messenger thật cho cửa hàng nếu công tắc toàn cục cũng tắt. Nhập DISABLE DRY RUN để xác nhận.');">Tắt chế độ test an toàn (Cho phép gửi thật)</button>
+          <span class="meta">Nhập chính xác <code>DISABLE DRY RUN</code>. Yêu cầu trạng thái kiểm tra sẵn sàng phải ĐẠT. Không tự động bật live_enabled hay chuyển lifecycle thành live.</span>
         </div>
       </form>`;
   }
@@ -1085,7 +1085,7 @@ function renderDryRunControls(shop = {}) {
   // dry_run=true, readiness not passed → informational only
   return `
     ${globalNote}
-    <p class="meta" id="dry-run-gate-note">Disabling dry-run requires readiness status <code>passed</code>. Current: <strong>${escapeHtml(readinessStatus || 'unknown')}</strong>. Run readiness check first.</p>`;
+    <p class="meta" id="dry-run-gate-note">Để tắt chế độ test an toàn, trạng thái kiểm tra sẵn sàng phải là <code>passed</code> (Đạt). Hiện tại: <strong>${escapeHtml(readinessStatus || 'unknown')}</strong>. Vui lòng chạy kiểm tra trước.</p>`;
 }
 
 function renderShopEmergencyControls(shop = {}) {
@@ -1094,27 +1094,27 @@ function renderShopEmergencyControls(shop = {}) {
   const resumeAction = `/admin/shops/${encodeRoutePart(shop.id)}/resume`;
   const pauseForm = `
     <form class="settings-form compact" method="post" action="${escapeHtml(pauseAction)}">
-      <label>Confirmation
+      <label>Nhập từ khóa xác nhận
         <input name="confirmation_text" placeholder="PAUSE SHOP" maxlength="40" required aria-required="true">
       </label>
       <div class="form-actions">
-        <button type="submit">Pause shop</button>
-        <span class="meta">Pause stops bot responses, forces dry_run, disables live, and preserves data.</span>
+        <button type="submit">Tạm dừng hoạt động Bot</button>
+        <span class="meta">Tạm dừng sẽ ngắt mọi phản hồi tự động của bot, kích hoạt lại test an toàn, tắt chạy thật và giữ nguyên toàn bộ dữ liệu.</span>
       </div>
     </form>`;
   const resumeForm = `
     <form class="settings-form compact" method="post" action="${escapeHtml(resumeAction)}">
-      <label>Confirmation
+      <label>Nhập từ khóa xác nhận
         <input name="confirmation_text" placeholder="RESUME SHOP" maxlength="40" required aria-required="true">
       </label>
       <div class="form-actions">
-        <button type="submit">Resume shop</button>
-        <span class="meta">Resume reactivates the shop in dry-run with live disabled.</span>
+        <button type="submit">Kích hoạt lại hoạt động Bot</button>
+        <span class="meta">Kích hoạt lại sẽ đưa bot hoạt động trở lại ở chế độ test an toàn và tắt chạy thật.</span>
       </div>
     </form>`;
   if (status === 'active') return pauseForm;
   if (status === 'paused') return resumeForm;
-  return '<p class="meta">Emergency pause/resume is available for active or paused shops only.</p>';
+  return '<p class="meta">Tính năng tạm dừng/kích hoạt lại khẩn cấp chỉ áp dụng cho shop đang hoạt động hoặc đang tạm dừng.</p>';
 }
 
 function renderControlPlaneForm(shop = {}, onboarding = {}) {
@@ -1125,64 +1125,64 @@ function renderControlPlaneForm(shop = {}, onboarding = {}) {
   const hardBlockers = Array.isArray(onboarding.hard_blockers) ? onboarding.hard_blockers : [];
   const warnings = Array.isArray(onboarding.warnings) ? onboarding.warnings : [];
   return `<section class="checklist-card" id="control-plane" aria-label="Shop control plane">
-    <h2>Control Plane</h2>
-    <p class="meta">Internal operator controls. Runtime lifecycle/live gate remains disabled unless <code>SHOP_LIVE_GATE_ENABLED</code> is explicitly enabled.</p>
+    <h2>Vận hành an toàn / Control Plane</h2>
+    <p class="meta">Bảng điều khiển nội bộ dành cho quản trị viên và vận hành viên hệ thống.</p>
     <table><tbody>
-      <tr><th>Existing status</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
-      <tr><th>Package</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
-      <tr><th>Lifecycle</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
-      <tr><th>dry_run</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
-      <tr><th>Live enabled</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
-      <tr><th>Readiness</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}</td></tr>
-      <tr><th>Readiness checked</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
-      <tr><th>Manual test</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
-      <tr><th>Manual test at</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
-      <tr><th>Last ready by</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
+      <tr><th>Trạng thái hiện tại</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
+      <tr><th>Gói dịch vụ (Package)</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
+      <tr><th>Vòng đời hoạt động (Lifecycle)</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
+      <tr><th>Chế độ test an toàn (dry_run)</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
+      <tr><th>Cho phép chạy thật (live_enabled)</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
+      <tr><th>Kiểm tra hoàn tất (Readiness)</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}</td></tr>
+      <tr><th>Lần kiểm tra hoàn tất cuối</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
+      <tr><th>Kiểm tra thủ công (Manual test)</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
+      <tr><th>Lần kiểm tra thủ công cuối</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
+      <tr><th>Người duyệt cuối</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
     </tbody></table>
     ${hardBlockers.length
-      ? renderReadinessIssues('Readiness hard blockers', hardBlockers, 'banner-error')
-      : (blockers.length ? `<div class="banner banner-error" role="status">Readiness blockers: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">No current readiness blockers.</div>')}
-    ${warnings.length ? renderReadinessIssues('Readiness warnings', warnings, 'banner-warning') : ''}
+      ? renderReadinessIssues('Lỗi chặn chưa hoàn tất (Hard blockers)', hardBlockers, 'banner-error')
+      : (blockers.length ? `<div class="banner banner-error" role="status">Lỗi chặn chưa hoàn tất: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">Không có lỗi chặn nào hiện tại.</div>')}
+    ${warnings.length ? renderReadinessIssues('Cảnh báo (Warnings)', warnings, 'banner-warning') : ''}
     <form class="settings-form compact" method="post" action="${escapeHtml(readinessAction)}">
       <div class="form-actions">
-        <button type="submit">Recheck readiness</button>
-        <span class="meta">Updates readiness status and checked time only.</span>
+        <button type="submit">Chạy lại kiểm tra hoàn tất</button>
+        <span class="meta">Chỉ cập nhật trạng thái kiểm tra sẵn sàng và thời gian kiểm tra.</span>
       </div>
     </form>
-    <h3>Dry-Run Controls</h3>
+    <h3>Cấu hình Chế độ test an toàn</h3>
     ${renderDryRunControls(shop)}
-    <h3>Emergency Brake</h3>
+    <h3>Phanh khẩn cấp (Emergency Brake)</h3>
     ${renderShopEmergencyControls(shop)}
     <form class="settings-form" method="post" action="${escapeHtml(action)}">
-      <label>Package
+      <label>Gói dịch vụ (Package)
         <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>
       </label>
-      <label>Lifecycle
+      <label>Vòng đời hoạt động (Lifecycle)
         <select name="lifecycle">${renderControlPlaneOptions(['draft', 'configuring', 'ready', 'live', 'paused', 'archived'], shop.lifecycle || 'draft')}</select>
       </label>
       <input type="hidden" name="live_enabled" value="false">
       <label class="checkbox-label">
         <input type="checkbox" name="live_enabled" value="true"${liveChecked}>
-        live_enabled
+        live_enabled (Cho phép chạy thật)
       </label>
-      <label>Manual test status
+      <label>Trạng thái kiểm tra thủ công
         <select name="manual_test_status">${renderControlPlaneOptions(['unknown', 'passed', 'failed'], shop.last_manual_test_status || 'unknown')}</select>
       </label>
       <label class="checkbox-label">
         <input type="checkbox" name="confirm_live" value="true">
-        Confirm live enable / live lifecycle change
+        Xác nhận cho phép chạy thật / thay đổi vòng đời chạy thật
       </label>
       <label class="checkbox-label">
         <input type="checkbox" name="override_readiness" value="true">
-        Override readiness blockers for this internal save
+        Bỏ qua các lỗi chặn kiểm tra sẵn sàng (Chỉ dành cho Quản trị viên)
       </label>
       <label class="checkbox-label">
         <input type="checkbox" name="confirm_pause_archive" value="true">
-        Confirm pause/archive lifecycle change
+        Xác nhận tạm dừng / lưu trữ vòng đời hoạt động
       </label>
       <div class="form-actions">
-        <button type="submit">Save control plane</button>
-        <span class="meta">Dangerous changes are audited. This form does not enable unfinished features.</span>
+        <button type="submit">Lưu cấu hình vận hành</button>
+        <span class="meta">Các thay đổi quan trọng đều được ghi nhận vào nhật ký hệ thống. Biểu mẫu này không kích hoạt các tính năng chưa hoàn thiện.</span>
       </div>
     </form>
   </section>`;
@@ -1556,47 +1556,33 @@ function renderShopDetailHtml(model = {}) {
       <p class="meta">Shop <code>${escapeHtml(shop.id)}</code> | slug <code>${escapeHtml(shop.slug)}</code> | updated ${escapeHtml(formatDate(shop.updated_at))}</p>
 
       <nav class="tabs">
-        <a href="#overview" class="active">Overview</a>
-        <a href="#pages">Pages &amp; Credentials</a>
-        <a href="#settings">Chat Behavior</a>
-        <a href="#products">Products</a>
-        <a href="#assets">Images / Assets</a>
+        <a href="#overview" class="active">Overview / Tổng quan</a>
+        <a href="#products">Products &amp; Menu / Sản phẩm &amp; Menu</a>
+        <a href="#assets">Images / Hình ảnh</a>
+        <a href="#pages">Fanpage Connection / Kết nối Fanpage</a>
+        <a href="#safety">Safety / Vận hành an toàn</a>
       </nav>
 
       <div id="overview" class="tab-section active">
         ${renderProductFlash(model.controlFlash || {})}
-        ${renderControlPlaneForm(shop, model.onboarding || {})}
         ${renderOnboardingChecklist(model.onboarding || {})}
         ${renderHealthCard(model.health)}
-        <h2 id="metadata">Metadata</h2>
+        <h2 id="metadata">Thông tin cơ bản / Metadata</h2>
         <table><tbody>
-          <tr><th>Name</th><td>${escapeHtml(shop.name)}</td></tr>
-          <tr><th>Status</th><td>${renderStatus(shop.status)}</td></tr>
-          <tr><th>Locale</th><td>${escapeHtml(shop.default_locale)}</td></tr>
-          <tr><th>Timezone</th><td>${escapeHtml(shop.timezone)}</td></tr>
-          <tr><th>Created</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
+          <tr><th>Tên Cửa Hàng (Name)</th><td>${escapeHtml(shop.name)}</td></tr>
+          <tr><th>Trạng thái (Status)</th><td>${renderStatus(shop.status)}</td></tr>
+          <tr><th>Ngôn ngữ mặc định (Locale)</th><td>${escapeHtml(shop.default_locale)}</td></tr>
+          <tr><th>Múi giờ (Timezone)</th><td>${escapeHtml(shop.timezone)}</td></tr>
+          <tr><th>Ngày khởi tạo (Created)</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
         </tbody></table>
       </div>
 
-      <div id="pages" class="tab-section">
-        <h2 id="page-mappings">Page Mappings</h2>
-        ${renderProductFlash(model.pageFlash || {})}
-        ${renderProductFlash(model.credentialFlash || {})}
-        ${pageSetupPreviewMode ? renderPageSetupPreviewSection(shop.id) : renderPageMappingAddForm(shop.id)}
-        ${renderPageMappingsSection({
-          shop,
-          pages: model.pages || [],
-          pageSetupPreviewMode,
-          archiveEnabled: Boolean(model.pageArchiveEnabled)
-        })}
-      </div>
-
-      <div id="settings" class="tab-section">
+      <div id="products" class="tab-section">
         ${renderProductFlash(model.productFlash || {})}
-        <h2 id="settings-heading">Chat Behavior Settings</h2>
+        <h2 id="settings">Chat Behavior Settings / Kịch bản phản hồi Bot</h2>
         ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
         <details class="collapsible-section">
-          <summary>Advanced: Current settings values &amp; raw JSON</summary>
+          <summary>Advanced: Current settings values &amp; raw JSON / Cấu hình chi tiết JSON</summary>
           <table><tbody>
             <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
             <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
@@ -1611,13 +1597,11 @@ function renderShopDetailHtml(model = {}) {
           </tbody></table>
           ${renderJsonBlock(model.settings?.settings_json || {})}
         </details>
-      </div>
 
-      <div id="products" class="tab-section">
-        <section class="product-section">
+        <section class="product-section" style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
           <div class="product-toolbar">
-            <h2 id="products-heading">Products</h2>
-            <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>
+            <h2 id="products-heading">Products / Quản lý sản phẩm</h2>
+            <p class="meta">Quản lý danh sách sản phẩm trong danh mục. Lưu trữ sản phẩm là lưu trữ mềm, không xóa.</p>
           </div>
           ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
           ${renderProductAddForm(shop.id)}
@@ -1638,13 +1622,30 @@ function renderShopDetailHtml(model = {}) {
       </div>
 
       <div id="assets" class="tab-section">
-        <h2 id="assets-heading">Assets</h2>
+        <h2 id="assets-heading">Images / Hình ảnh &amp; Tài sản</h2>
         ${renderProductFlash(model.assetFlash || {})}
         ${renderCounts(summary)}
         ${model.adminImageUploadEnabled ? renderAssetUploadForms(shop.id, assetProducts) : ''}
         ${renderAssetAddForm(shop.id, model.products || [])}
         ${renderBulkMenuImageImportForm(shop.id)}
         ${renderAssetGroups(assetRows, shop.id, model.products || [])}
+      </div>
+
+      <div id="pages" class="tab-section">
+        <h2 id="page-mappings">Fanpage Connection / Kết nối Fanpage</h2>
+        ${renderProductFlash(model.pageFlash || {})}
+        ${renderProductFlash(model.credentialFlash || {})}
+        ${pageSetupPreviewMode ? renderPageSetupPreviewSection(shop.id) : renderPageMappingAddForm(shop.id)}
+        ${renderPageMappingsSection({
+          shop,
+          pages: model.pages || [],
+          pageSetupPreviewMode,
+          archiveEnabled: Boolean(model.pageArchiveEnabled)
+        })}
+      </div>
+
+      <div id="safety" class="tab-section">
+        ${renderControlPlaneForm(shop, model.onboarding || {})}
       </div>
 
       <script>
