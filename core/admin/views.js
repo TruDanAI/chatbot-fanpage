@@ -314,6 +314,141 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .requirement-icon { font-size: 16px; flex-shrink: 0; }
     .requirement-detail { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .requirement-detail-text { font-size: 12px; color: var(--muted); }
+
+    /* Danger Confirmation Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.visible {
+      display: flex;
+    }
+    .modal-container {
+      background: #ffffff;
+      border: 1px solid #fee2e2;
+      border-radius: 12px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      overflow: hidden;
+      animation: modalFadeIn 0.2s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { transform: scale(0.95); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .modal-header {
+      background: #fef2f2;
+      border-bottom: 1px solid #fee2e2;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .modal-header h3 {
+      margin: 0;
+      color: #991b1b;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .modal-body {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .modal-warning-box {
+      background: #fff5f5;
+      border-left: 4px solid #ef4444;
+      padding: 12px 14px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #7f1d1d;
+      line-height: 1.5;
+    }
+    .modal-consequence {
+      font-size: 13px;
+      color: #4b5563;
+      line-height: 1.5;
+    }
+    .modal-slug-label {
+      font-size: 12px;
+      font-weight: bold;
+      color: #374151;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .modal-slug-input {
+      min-height: 38px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 14px;
+      width: 100%;
+      box-sizing: border-box;
+      background: #ffffff;
+      color: #111827;
+    }
+    .modal-checkbox-label {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #374151;
+      user-select: none;
+      line-height: 1.4;
+    }
+    .modal-checkbox-label input {
+      margin-top: 2px;
+      width: 16px;
+      height: 16px;
+    }
+    .modal-footer {
+      background: #f9fafb;
+      border-top: 1px solid #e5e7eb;
+      padding: 14px 20px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+    .modal-footer button {
+      min-height: 36px;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .modal-btn-cancel {
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      color: #374151;
+    }
+    .modal-btn-cancel:hover {
+      background: #f3f4f6;
+    }
+    .modal-btn-confirm {
+      border: 1px solid #dc2626;
+      background: #dc2626;
+      color: #ffffff;
+    }
+    .modal-btn-confirm:disabled {
+      background: #fca5a5;
+      border-color: #fca5a5;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -887,8 +1022,22 @@ function renderPageMappingAddForm(shopId = '') {
   </form>`;
 }
 
-function renderPageCredentialForm(shopId = '', page = {}) {
+function renderPageCredentialForm(shopId = '', page = {}, shop = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/credentials`;
+  const isReplacing = Number(page.active_credential_count || 0) > 0;
+
+  if (isReplacing) {
+    return `<form class="product-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Thay thế Quyền gửi tin (Token)" data-warning-text="Bạn đang chuẩn bị thay thế mã Token cũ đang hoạt động của Fanpage." data-consequence-text="Mã Token cũ sẽ bị thu hồi và lưu trữ vĩnh viễn. Đảm bảo mã Token mới hoạt động bình thường để tránh gián đoạn bot." data-submit-label="Thay thế mã Token" data-expected-confirm-text="ROTATE" data-shop-slug="${escapeHtml(shop.slug || '')}">
+      <input type="hidden" name="credential_type" value="fb_page_token">
+      <input type="hidden" name="rotate" value="true">
+      <label>Mã Token mới <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
+      <label>Xác nhận bằng chữ ROTATE <span class="required">bắt buộc</span>
+        <input name="confirmation_text" placeholder="ROTATE" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
+      </label>
+      <div class="form-actions"><button type="submit">Lưu mã Token mới</button></div>
+    </form>`;
+  }
+
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
     <input type="hidden" name="credential_type" value="fb_page_token">
     <label>Mã Token kết nối <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
@@ -954,11 +1103,13 @@ function renderPageCredentialCount(page = {}) {
   return escapeHtml(Number(page.active_credential_count || 0));
 }
 
-function renderPageArchiveForm(shopId = '', page = {}) {
+function renderPageArchiveForm(shopId = '', page = {}, shop = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/archive`;
-  return `<form class="product-form compact inline-action danger" method="post" action="${escapeHtml(action)}" data-confirm="Archive mapping">
+  return `<form class="product-form compact inline-action danger" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Lưu trữ liên kết Fanpage" data-warning-text="Hành động này sẽ ngắt kết nối Fanpage khỏi cửa hàng." data-consequence-text="Bot sẽ không nhận được tin nhắn và không thể gửi tin nhắn tự động qua trang này nữa. Credentials liên kết cũng sẽ bị lưu trữ." data-submit-label="Lưu trữ liên kết Fanpage" data-expected-confirm-text="ARCHIVE MAPPING" data-shop-slug="${escapeHtml(shop.slug || '')}">
     <input type="hidden" name="source" value="admin_ui">
-    <label>Confirm<input name="confirmation_text" maxlength="80" required aria-required="true" autocomplete="off" placeholder="ARCHIVE MAPPING"></label>
+    <label>Nhập từ khóa xác nhận
+      <input name="confirmation_text" maxlength="80" required aria-required="true" autocomplete="off" placeholder="ARCHIVE MAPPING" data-confirm-text-input="true">
+    </label>
     <div class="form-actions"><button type="submit" onclick="return confirm('Archive this mapping? It will archive active credentials for this mapping, not delete anything.');">Archive mapping</button></div>
   </form>`;
 }
@@ -967,7 +1118,8 @@ function renderActivePageMappingsTable({
   shopId = '',
   pages = [],
   pageSetupPreviewMode = false,
-  archiveEnabled = false
+  archiveEnabled = false,
+  shop = {}
 } = {}) {
   const headers = ['page ref', 'name', 'status', 'active credentials', 'updated', 'credential action'];
   if (archiveEnabled) headers.push('archive');
@@ -978,8 +1130,8 @@ function renderActivePageMappingsTable({
       <td>${renderStatus(page.status)}</td>
       <td>${renderPageCredentialCount(page)}</td>
       <td>${escapeHtml(formatDate(page.updated_at))}</td>
-      <td>${pageSetupPreviewMode ? renderPageCredentialPreviewDisabled() : renderPageCredentialForm(shopId, page)}</td>
-      ${archiveEnabled ? `<td>${renderPageArchiveForm(shopId, page)}</td>` : ''}
+      <td>${pageSetupPreviewMode ? renderPageCredentialPreviewDisabled() : renderPageCredentialForm(shopId, page, shop)}</td>
+      ${archiveEnabled ? `<td>${renderPageArchiveForm(shopId, page, shop)}</td>` : ''}
     </tr>
   `);
 }
@@ -1013,7 +1165,8 @@ function renderPageMappingsSection({
         shopId: shop.id,
         pages: activeMappings,
         pageSetupPreviewMode,
-        archiveEnabled: canArchive
+        archiveEnabled: canArchive,
+        shop
       })}
     </section>
     ${otherMappings.length ? `
@@ -1107,9 +1260,9 @@ function renderDryRunControls(shop = {}) {
         Sử dụng biểu mẫu bên dưới để bật lại chế độ chạy thử an toàn.
       </div>
       ${globalNote}
-      <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run">
+      <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run" data-danger-confirm="true" data-action-title="Bật lại chế độ test an toàn cho cửa hàng" data-warning-text="Bạn chuẩn bị bật lại chế độ test an toàn (Dry-Run: BẬT)." data-consequence-text="Bot sẽ chuyển sang chế độ test giả lập an toàn và không gửi tin nhắn Messenger thật đến khách hàng nữa." data-submit-label="Bật chế độ an toàn" data-expected-confirm-text="ENABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
         <label>Nhập từ khóa xác nhận
-          <input name="confirmation_text" placeholder="ENABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off">
+          <input name="confirmation_text" placeholder="ENABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
         </label>
         <div class="form-actions">
           <button type="submit">Bật lại chế độ test an toàn cho cửa hàng</button>
@@ -1122,9 +1275,9 @@ function renderDryRunControls(shop = {}) {
   if (dryRun === true && readinessStatus === 'passed') {
     return `
       ${globalNote}
-      <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run">
+      <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run" data-danger-confirm="true" data-action-title="Tắt chế độ test an toàn (Cho phép gửi thật)" data-warning-text="Bạn chuẩn bị tắt chế độ test an toàn (Dry-Run: TẮT)." data-consequence-text="Hành động này cho phép bot gửi tin nhắn Messenger thật cho cửa hàng này nếu chế độ an toàn toàn cục cũng tắt. Vui lòng kiểm tra kỹ cấu hình trước khi xác nhận." data-submit-label="Cho phép gửi tin thật" data-expected-confirm-text="DISABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
         <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
-          <input name="confirmation_text" placeholder="DISABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off">
+          <input name="confirmation_text" placeholder="DISABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
         </label>
         <div class="form-actions">
           <button type="submit" class="inline-action warning" onclick="return confirm('Hành động này cho phép gửi tin nhắn Messenger thật cho cửa hàng nếu công tắc toàn cục cũng tắt. Nhập DISABLE DRY RUN để xác nhận.');">Tắt chế độ test an toàn (Cho phép gửi thật)</button>
@@ -1144,9 +1297,9 @@ function renderShopEmergencyControls(shop = {}) {
   const pauseAction = `/admin/shops/${encodeRoutePart(shop.id)}/pause`;
   const resumeAction = `/admin/shops/${encodeRoutePart(shop.id)}/resume`;
   const pauseForm = `
-    <form class="settings-form compact" method="post" action="${escapeHtml(pauseAction)}">
+    <form class="settings-form compact" method="post" action="${escapeHtml(pauseAction)}" data-danger-confirm="true" data-action-title="Tạm dừng hoạt động Bot" data-warning-text="Bạn đang thực hiện tạm dừng hoạt động của Bot cho cửa hàng này." data-consequence-text="Tạm dừng sẽ ngắt mọi phản hồi tự động của bot, kích hoạt lại test an toàn, tắt chạy thật và giữ nguyên toàn bộ dữ liệu." data-submit-label="Tạm dừng hoạt động Bot" data-expected-confirm-text="PAUSE SHOP" data-shop-slug="${escapeHtml(shop.slug || '')}">
       <label>Nhập từ khóa xác nhận
-        <input name="confirmation_text" placeholder="PAUSE SHOP" maxlength="40" required aria-required="true">
+        <input name="confirmation_text" placeholder="PAUSE SHOP" maxlength="40" required aria-required="true" data-confirm-text-input="true">
       </label>
       <div class="form-actions">
         <button type="submit">Tạm dừng hoạt động Bot</button>
@@ -1154,9 +1307,9 @@ function renderShopEmergencyControls(shop = {}) {
       </div>
     </form>`;
   const resumeForm = `
-    <form class="settings-form compact" method="post" action="${escapeHtml(resumeAction)}">
+    <form class="settings-form compact" method="post" action="${escapeHtml(resumeAction)}" data-danger-confirm="true" data-action-title="Kích hoạt lại hoạt động Bot" data-warning-text="Bạn chuẩn bị kích hoạt lại hoạt động của Bot cho cửa hàng này." data-consequence-text="Kích hoạt lại sẽ đưa bot hoạt động trở lại ở chế độ test an toàn và tắt chạy thật." data-submit-label="Kích hoạt lại hoạt động Bot" data-expected-confirm-text="RESUME SHOP" data-shop-slug="${escapeHtml(shop.slug || '')}">
       <label>Nhập từ khóa xác nhận
-        <input name="confirmation_text" placeholder="RESUME SHOP" maxlength="40" required aria-required="true">
+        <input name="confirmation_text" placeholder="RESUME SHOP" maxlength="40" required aria-required="true" data-confirm-text-input="true">
       </label>
       <div class="form-actions">
         <button type="submit">Kích hoạt lại hoạt động Bot</button>
@@ -1168,7 +1321,85 @@ function renderShopEmergencyControls(shop = {}) {
   return '<p class="meta">Tính năng tạm dừng/kích hoạt lại khẩn cấp chỉ áp dụng cho shop đang hoạt động hoặc đang tạm dừng.</p>';
 }
 
-function renderControlPlaneForm(shop = {}, onboarding = {}) {
+function isDeleteDraftShopEligible(shop = {}, model = {}) {
+  // Block if protected slugs
+  const protectedSlugs = ['adult-shop', 'demo-shop', 'nem-bui-xa'];
+  const slug = String(shop.slug || '').trim().toLowerCase();
+  const id = String(shop.id || '').trim().toLowerCase();
+  const isProtected = protectedSlugs.includes(slug)
+    || protectedSlugs.includes(id)
+    || slug.includes('production')
+    || slug.includes('prod')
+    || id.includes('production')
+    || id.includes('prod');
+
+  if (isProtected) {
+    return { eligible: false, reason: 'Shop này nằm trong danh sách bảo vệ hệ thống (chứa từ khóa nhạy cảm hoặc được bảo vệ).' };
+  }
+
+  // Block if live
+  const lifecycle = String(shop.lifecycle || '').trim().toLowerCase();
+  if (shop.live_enabled === true || lifecycle === 'live') {
+    return { eligible: false, reason: 'Shop đang ở trạng thái hoạt động (live_enabled hoặc lifecycle=live).' };
+  }
+
+  // Block if not in draft/configuring
+  if (lifecycle !== 'draft' && lifecycle !== 'configuring') {
+    return { eligible: false, reason: 'Chỉ có thể xóa shop đang ở trạng thái thiết lập (draft hoặc configuring).' };
+  }
+
+  // Block if active page mappings
+  const activeMappings = Array.isArray(model.pages) && model.pages.filter(page => pageStatus(page) === 'active');
+  if (activeMappings && activeMappings.length > 0) {
+    return { eligible: false, reason: 'Shop đã kết nối với Fanpage. Vui lòng gỡ liên kết trang trước.' };
+  }
+
+  // Block if credentials exist
+  const hasCredentials = Array.isArray(model.pages) && model.pages.some(page => Number(page.active_credential_count || 0) > 0);
+  if (hasCredentials) {
+    return { eligible: false, reason: 'Shop đã có cấu hình Quyền gửi tin (Facebook Page Token).' };
+  }
+
+  // Block if customer conversations/messages/orders exist
+  const health = model.health || {};
+  if (Number(health.active_handoffs || 0) > 0 || Number(health.queue_total || 0) > 0) {
+    return { eligible: false, reason: 'Shop có tiến trình hoạt động (active handoffs hoặc queue).' };
+  }
+
+  return { eligible: true };
+}
+
+function renderDeleteDraftShopSection(shop = {}, model = {}) {
+  const check = isDeleteDraftShopEligible(shop, model);
+  const action = `/admin/shops/${encodeRoutePart(shop.id)}/delete-draft`;
+
+  if (check.eligible) {
+    return `
+      <p class="meta" style="margin-bottom: 12px; color: var(--danger);">Cửa hàng nháp này đủ điều kiện xóa vì chưa từng hoạt động thật và không có dữ liệu quan trọng liên kết.</p>
+      <form class="settings-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Xóa vĩnh viễn Cửa hàng nháp" data-warning-text="Bạn đang chuẩn bị XÓA VĨNH VIỄN cửa hàng nháp này." data-consequence-text="Hành động này là hoàn toàn KHÔNG THỂ HOÀN TÁC. Toàn bộ thông tin cấu hình, sản phẩm nháp và thiết lập của cửa hàng sẽ bị xóa vĩnh viễn khỏi hệ thống." data-submit-label="Xóa vĩnh viễn Cửa hàng" data-expected-confirm-text="DELETE DRAFT" data-shop-slug="${escapeHtml(shop.slug || '')}">
+        <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
+          <input name="confirmation_text" placeholder="DELETE DRAFT" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
+        </label>
+        <div class="form-actions">
+          <button type="submit" style="background: var(--danger); border-color: var(--danger);">Xóa shop nháp</button>
+          <span class="meta">Nhập chính xác <code>DELETE DRAFT</code> để xác nhận hành động vĩnh viễn này.</span>
+        </div>
+      </form>
+    `;
+  } else {
+    return `
+      <p class="meta" style="margin-bottom: 12px; color: var(--muted);">Trạng thái xóa: <span class="status status-neutral">Không khả dụng (Blocked)</span></p>
+      <div class="banner banner-warning" style="margin: 8px 0 12px; padding: 8px 12px; font-size: 13px;">
+        ⚠️ <strong>Không thể xóa:</strong> ${escapeHtml(check.reason)}
+      </div>
+      <button type="button" class="button-link secondary-button" disabled style="cursor: not-allowed; opacity: 0.6; pointer-events: none;">Không thể xóa — chỉ có thể lưu trữ</button>
+      <p class="meta" style="margin-top: 8px;">Khuyến nghị: Bạn có thể thay đổi vòng đời của shop thành <strong>archived</strong> (lưu trữ) trong biểu mẫu Vòng đời hoạt động ở trên để ngắt hoàn toàn hoạt động của shop một cách an toàn.</p>
+    `;
+  }
+}
+
+function renderControlPlaneForm(shop = {}, model = {}) {
+  const onboarding = model.onboarding || {};
   const action = `/admin/shops/${encodeRoutePart(shop.id)}/control-plane`;
   const readinessAction = `/admin/shops/${encodeRoutePart(shop.id)}/readiness-check`;
   const liveChecked = shop.live_enabled ? ' checked' : '';
@@ -1259,6 +1490,15 @@ function renderControlPlaneForm(shop = {}, onboarding = {}) {
           <span class="meta">Các thay đổi quan trọng đều được ghi nhận vào nhật ký hệ thống. Biểu mẫu này không kích hoạt các tính năng chưa hoàn thiện.</span>
         </div>
       </form>
+    </div>
+
+    <!-- SECTION 4: XÓA SHOP NHÁP -->
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin-top: 0; color: #b91c1c; font-size: 15px;">🗑️ Xóa cửa hàng nháp (Draft Shop Deletion)</h3>
+      <div class="banner banner-error" style="margin: 8px 0 12px; padding: 8px 12px;">
+        🛑 <strong>Hành động cực kỳ nguy hiểm:</strong> Chỉ cho phép xóa các cửa hàng nháp chưa từng đi vào hoạt động thật (Go-Live) và không có dữ liệu khách hàng quan trọng. Đối với các shop đã chạy thật, bạn chỉ có thể Lưu trữ (Archive) shop.
+      </div>
+      ${renderDeleteDraftShopSection(shop, model)}
     </div>
   </section>`;
 }
@@ -1740,7 +1980,7 @@ function renderShopDetailHtml(model = {}) {
         archiveEnabled: Boolean(model.pageArchiveEnabled)
       });
 
-  const safetyHtml = renderControlPlaneForm(shop, onboarding);
+  const safetyHtml = renderControlPlaneForm(shop, model);
 
   const body = `
     <p><a href="/admin/shops">Back to shops</a></p>
@@ -1837,6 +2077,34 @@ function renderShopDetailHtml(model = {}) {
         ${safetyHtml}
       </div>
 
+      <!-- Standardized Red Danger Confirmation Modal -->
+      <div id="danger-confirm-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-container">
+          <div class="modal-header">
+            <span style="font-size: 20px;">🚨</span>
+            <h3 id="modal-title">Xác nhận thao tác nguy hiểm</h3>
+          </div>
+          <div class="modal-body">
+            <div id="modal-warning" class="modal-warning-box"></div>
+            <div id="modal-consequence" class="modal-consequence"></div>
+
+            <div>
+              <label for="modal-slug-input" class="modal-slug-label">Nhập mã cửa hàng (Shop Slug) <code id="modal-expected-slug" style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: bold;"></code> để xác nhận:</label>
+              <input type="text" id="modal-slug-input" class="modal-slug-input" autocomplete="off" placeholder="Nhập slug cửa hàng...">
+            </div>
+
+            <label class="modal-checkbox-label">
+              <input type="checkbox" id="modal-checkbox">
+              <span>Tôi hiểu rõ đây là hành động có thể ảnh hưởng trực tiếp đến hoạt động của bot và hoàn toàn chịu trách nhiệm.</span>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="modal-cancel-btn" class="modal-btn-cancel">Hủy bỏ</button>
+            <button type="button" id="modal-submit-btn" class="modal-btn-confirm" disabled>Xác nhận (3s)</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         document.addEventListener('DOMContentLoaded', () => {
           const tabs = document.querySelectorAll('.tabs a');
@@ -1859,6 +2127,115 @@ function renderShopDetailHtml(model = {}) {
           }
           window.addEventListener('hashchange', () => activateTab(window.location.hash));
           activateTab(window.location.hash);
+
+          // Standardized Danger Confirmation Modal Client Interceptor
+          const modalBackdrop = document.getElementById('danger-confirm-modal');
+          const modalTitle = document.getElementById('modal-title');
+          const modalWarning = document.getElementById('modal-warning');
+          const modalConsequence = document.getElementById('modal-consequence');
+          const modalExpectedSlug = document.getElementById('modal-expected-slug');
+          const modalSlugInput = document.getElementById('modal-slug-input');
+          const modalCheckbox = document.getElementById('modal-checkbox');
+          const modalCancelBtn = document.getElementById('modal-cancel-btn');
+          const modalSubmitBtn = document.getElementById('modal-submit-btn');
+
+          let activeForm = null;
+          let countdownInterval = null;
+          let countdownSeconds = 0;
+
+          function updateSubmitButtonState() {
+            const expectedSlug = modalExpectedSlug.textContent.trim().toLowerCase();
+            const typedSlug = modalSlugInput.value.trim().toLowerCase();
+            const checkboxChecked = modalCheckbox.checked;
+
+            const isSlugMatched = (expectedSlug === typedSlug);
+            const isCountdownDone = (countdownSeconds <= 0);
+
+            modalSubmitBtn.disabled = !(isSlugMatched && checkboxChecked && isCountdownDone);
+          }
+
+          function startCountdown(seconds) {
+            countdownSeconds = seconds;
+            if (countdownInterval) clearInterval(countdownInterval);
+
+            function updateBtnLabel() {
+              if (countdownSeconds > 0) {
+                modalSubmitBtn.textContent = 'Xác nhận (' + countdownSeconds + 's)';
+              } else {
+                modalSubmitBtn.textContent = 'Xác nhận';
+              }
+              updateSubmitButtonState();
+            }
+
+            updateBtnLabel();
+
+            countdownInterval = setInterval(() => {
+              countdownSeconds -= 1;
+              updateBtnLabel();
+              if (countdownSeconds <= 0) {
+                clearInterval(countdownInterval);
+              }
+            }, 1000);
+          }
+
+          document.addEventListener('submit', (e) => {
+            const form = e.target;
+            if (form && form.dataset.dangerConfirm === 'true') {
+              if (form.dataset.confirmed === 'true') {
+                return;
+              }
+
+              e.preventDefault();
+              activeForm = form;
+
+              modalTitle.textContent = form.dataset.actionTitle || 'Xác nhận thao tác';
+              modalWarning.textContent = form.dataset.warningText || 'Hành động này có độ rủi ro cao.';
+              modalConsequence.textContent = form.dataset.consequenceText || '';
+              modalExpectedSlug.textContent = form.dataset.shopSlug || '';
+
+              modalSlugInput.value = '';
+              modalCheckbox.checked = false;
+              modalSubmitBtn.disabled = true;
+
+              modalBackdrop.classList.add('visible');
+
+              const seconds = parseInt(form.dataset.countdownSeconds || '3', 10);
+              startCountdown(seconds);
+            }
+          });
+
+          function closeModal() {
+            modalBackdrop.classList.remove('visible');
+            if (countdownInterval) {
+              clearInterval(countdownInterval);
+              countdownInterval = null;
+            }
+            activeForm = null;
+          }
+
+          modalCancelBtn.addEventListener('click', closeModal);
+          modalBackdrop.addEventListener('click', (e) => {
+            if (e.target === modalBackdrop) {
+              closeModal();
+            }
+          });
+
+          modalSlugInput.addEventListener('input', updateSubmitButtonState);
+          modalCheckbox.addEventListener('change', updateSubmitButtonState);
+
+          modalSubmitBtn.addEventListener('click', () => {
+            if (!activeForm) return;
+
+            const confirmInput = activeForm.querySelector('[data-confirm-text-input="true"]');
+            if (confirmInput) {
+              confirmInput.value = activeForm.dataset.expectedConfirmText || '';
+            }
+
+            activeForm.dataset.confirmed = 'true';
+            const formToSubmit = activeForm;
+            closeModal();
+            formToSubmit.submit();
+          });
 
           function parsePreviewCsv(text) {
             const rows = [];

@@ -1630,6 +1630,25 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function deleteDraftShopPlaceholderHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.delete_draft_placeholder',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    const confirmationText = String((req.body || {}).confirmation_text || '').trim();
+    if (confirmationText !== 'DELETE DRAFT') {
+      return res.status(400).type('text').send('Lỗi xác nhận: Vui lòng nhập chính xác DELETE DRAFT.');
+    }
+
+    return res.status(200).type('text').send('Mock delete draft shop handler: database delete is not implemented in P1.2d3.');
+  }
+
   function shopProductRedirect(shopId = '', message = '') {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
@@ -2672,6 +2691,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/resume', resumeShopHtml);
   app.post('/admin/shops/:shopId/dry-run/enable', enableShopDryRunHtml);
   app.post('/admin/shops/:shopId/dry-run/disable', disableShopDryRunHtml);
+  app.post('/admin/shops/:shopId/delete-draft', deleteDraftShopPlaceholderHtml);
   app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
   app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
   app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);

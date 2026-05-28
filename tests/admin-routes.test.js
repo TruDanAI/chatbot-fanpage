@@ -3320,7 +3320,7 @@ describe('admin dashboard routes', () => {
     expect(stagingRes.body).toContain('Active Mappings');
     expect(stagingRes.body).toContain('Archived Mappings (1)');
     expect(stagingRes.body).toContain('action="/admin/shops/new-shop/pages/page-active/archive"');
-    expect(stagingRes.body).toContain('data-confirm="Archive mapping"');
+    expect(stagingRes.body).toContain('data-danger-confirm="true"');
     expect(stagingRes.body).toContain('name="confirmation_text"');
     expect(stagingRes.body).toContain('placeholder="ARCHIVE MAPPING"');
     expect(stagingRes.body).toContain('>2</td>');
@@ -3346,7 +3346,7 @@ describe('admin dashboard routes', () => {
     expect(productionRes.body).toContain('Active Mappings');
     expect(productionRes.body).toContain('Archived Mappings (1)');
     expect(productionRes.body.includes('/pages/page-active/archive')).toBeFalse();
-    expect(productionRes.body.includes('Archive mapping')).toBeFalse();
+    expect(productionRes.body.includes('data-expected-confirm-text="ARCHIVE MAPPING"')).toBeFalse();
     expect(productionRes.body.includes('placeholder="ARCHIVE MAPPING"')).toBeFalse();
     expect(productionRes.body.includes('raw-active-page-id')).toBeFalse();
     expect(productionRes.body.includes('raw-archived-page-id')).toBeFalse();
