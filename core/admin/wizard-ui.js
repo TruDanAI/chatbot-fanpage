@@ -10,13 +10,13 @@ function escapeHtml(value = '') {
 }
 
 const STEP_LABELS = [
-  'Pre-flight',
-  'Shop Shell',
-  'Products & Menu',
-  'Map FB Page',
-  'Page Credential',
-  'Readiness Gate',
-  'Dry-Run Test'
+  'Kiểm tra điều kiện hệ thống',
+  'Tạo shop nháp',
+  'Sản phẩm & menu',
+  'Kết nối Fanpage',
+  'Quyền gửi tin Fanpage',
+  'Kiểm tra hoàn tất',
+  'Test thử an toàn'
 ];
 
 /**
@@ -88,12 +88,12 @@ function renderSafetyFooter(globalDryRun, envName = process.env.NODE_ENV || 'sta
   return `
     <div class="safety-footer">
       <div class="safety-badges">
-        <span class="safety-badge ${dryRunClass}">${escapeHtml(dryRunText)}</span>
-        <span class="safety-badge adult-shop">adult-shop protected</span>
-        <span class="safety-badge env-staging">${escapeHtml(envName)} mode</span>
+        <span class="safety-badge ${dryRunClass}">${escapeHtml(dryRunText)} (Chế độ test an toàn)</span>
+        <span class="safety-badge env-staging">${escapeHtml(envName)} mode (Chạy thử nghiệm)</span>
+        <span class="safety-badge adult-shop">Bảo vệ adult-shop 🛡️</span>
       </div>
       <div class="safety-info">
-        🔒 SSL &amp; AES-256-GCM Credential Encryption Active
+        🔒 Hệ thống mã hóa thông tin xác thực cao cấp kích hoạt
       </div>
     </div>
   `;
@@ -116,15 +116,18 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${escapeHtml(title)} | ZenBot Admin Setup Wizard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
-      font-family: Arial, sans-serif;
-      color: #17202a;
-      background: #f7f8fb;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      background: #f8fafc;
       --surface: #ffffff;
       --surface-muted: #f1f5f9;
-      --border: #d8e0ea;
+      --border: #e2e8f0;
       --muted: #64748b;
       --primary: #0f766e;
       --primary-dark: #115e59;
@@ -134,17 +137,17 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
       --danger: #b91c1c;
       --neutral: #475569;
     }
-    body { margin: 0; background: #f7f8fb; }
-    header { background: var(--primary-dark); color: white; padding: 18px 24px; }
+    body { margin: 0; background: #f8fafc; -webkit-font-smoothing: antialiased; }
+    header { background: var(--primary-dark); color: white; padding: 18px 24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); }
     .header-inner { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
     .logout-form { margin: 0; }
-    .logout-form button { border: 1px solid rgba(255,255,255,.55); border-radius: 6px; background: transparent; color: #ffffff; padding: 7px 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
-    .logout-form button:hover { background: rgba(255,255,255,.1); }
-    main { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
-    h1, h2 { margin: 0 0 12px; }
-    h1 { font-size: 24px; }
-    h2 { font-size: 18px; margin-top: 24px; }
-    a { color: var(--link); font-weight: 700; text-decoration: none; }
+    .logout-form button { border: 1px solid rgba(255,255,255,.55); border-radius: 6px; background: transparent; color: #ffffff; padding: 7px 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+    .logout-form button:hover { background: rgba(255,255,255,.1); border-color: white; }
+    main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1, h2 { margin: 0 0 12px; font-weight: 700; letter-spacing: -0.025em; }
+    h1 { font-size: 26px; color: #0f172a; }
+    h2 { font-size: 18px; margin-top: 24px; color: #1e293b; }
+    a { color: var(--link); font-weight: 600; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .meta { color: var(--muted); font-size: 13px; }
     
@@ -154,12 +157,12 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
       justify-content: space-between;
       align-items: center;
       position: relative;
-      margin: 10px 0 24px;
+      margin: 10px 0 28px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 16px 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      padding: 20px 16px;
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
     }
     .wizard-step {
       display: flex;
@@ -172,7 +175,7 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
     .wizard-step::after {
       content: '';
       position: absolute;
-      top: 15px;
+      top: 17px;
       left: 50%;
       width: 100%;
       height: 2px;
@@ -189,32 +192,32 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
       text-decoration: none;
       z-index: 2;
       color: var(--muted);
-      font-weight: normal;
+      font-weight: 500;
       transition: all 0.2s ease;
       cursor: pointer;
     }
     .wizard-step-link.disabled {
       cursor: not-allowed;
       pointer-events: none;
-      opacity: 0.6;
+      opacity: 0.45;
     }
     .wizard-step-link:hover {
       text-decoration: none;
       color: var(--primary);
     }
     .wizard-step-circle {
-      width: 30px;
-      height: 30px;
+      width: 34px;
+      height: 34px;
       border-radius: 50%;
       background: #f8fafc;
       border: 2px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 12px;
-      font-weight: bold;
+      font-size: 13px;
+      font-weight: 700;
       color: var(--muted);
-      margin-bottom: 6px;
+      margin-bottom: 8px;
       transition: all 0.2s ease;
     }
     .wizard-step.active .wizard-step-circle {
@@ -225,7 +228,7 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
     }
     .wizard-step.active .wizard-step-link {
       color: var(--link);
-      font-weight: bold;
+      font-weight: 700;
     }
     .wizard-step.completed .wizard-step-circle {
       background: #f0fdf4;
@@ -236,7 +239,8 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
       color: var(--success);
     }
     .wizard-step-label {
-      font-size: 11px;
+      font-size: 12px;
+      letter-spacing: -0.01em;
     }
 
     /* Wizard Content Styling */

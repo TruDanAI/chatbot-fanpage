@@ -297,8 +297,8 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 0: Pre-flight Check (Kiểm tra môi trường)</h1>
-        <p>Hệ thống tự động rà soát môi trường vận hành trước khi cho phép Operator thiết lập một shop Basic mới.</p>
+        <h1>Bước 0: Kiểm tra điều kiện hệ thống (Pre-flight Check)</h1>
+        <p>Hệ thống tự động rà soát môi trường vận hành để đảm bảo an toàn tuyệt đối trước khi cho phép khởi tạo một cửa hàng mới.</p>
         
         <h2>🛡️ Điều kiện bắt buộc (Hard Checks)</h2>
         <div style="margin: 14px 0 20px; display: grid; gap: 10px;">
@@ -313,7 +313,7 @@ function registerWizardRoutes(app, {
           <div class="checklist-item">
             <div class="checklist-label">
               <strong>2. Chế độ Global Dry-Run:</strong>
-              <span class="meta" style="display: block;">MESSENGER_DRY_RUN=true bắt buộc trên Staging.</span>
+              <span class="meta" style="display: block;">Yêu cầu an toàn toàn cục MESSENGER_DRY_RUN=true trên Staging.</span>
             </div>
             <span class="badge ${checks.dryRun ? 'badge-success' : 'badge-danger'}">${checks.dryRun ? 'ĐẠT (DRY-RUN ON)' : 'THẤT BẠI (DRY-RUN OFF)'}</span>
           </div>
@@ -321,7 +321,7 @@ function registerWizardRoutes(app, {
           <div class="checklist-item">
             <div class="checklist-label">
               <strong>3. Cấu hình DB Multi-Shop:</strong>
-              <span class="meta" style="display: block;">MULTI_SHOP_DB_CONFIG_ENABLED=true để định tuyến động.</span>
+              <span class="meta" style="display: block;">Định tuyến cơ sở dữ liệu động MULTI_SHOP_DB_CONFIG_ENABLED=true.</span>
             </div>
             <span class="badge ${checks.dbConfig ? 'badge-success' : 'badge-danger'}">${checks.dbConfig ? 'ĐẠT (DB-CONFIG ON)' : 'THẤT BẠI (DB-CONFIG OFF)'}</span>
           </div>
@@ -329,7 +329,7 @@ function registerWizardRoutes(app, {
           <div class="checklist-item">
             <div class="checklist-label">
               <strong>4. Kết nối Cơ sở dữ liệu:</strong>
-              <span class="meta" style="display: block;">Kiểm tra đọc dữ liệu qua SELECT an toàn.</span>
+              <span class="meta" style="display: block;">Kiểm tra khả năng truy xuất dữ liệu an toàn.</span>
             </div>
             <span class="badge ${checks.dbConnected ? 'badge-success' : 'badge-danger'}">${checks.dbConnected ? 'ĐẠT (KẾT NỐI OK)' : 'THẤT BẠI'}</span>
           </div>
@@ -338,7 +338,7 @@ function registerWizardRoutes(app, {
           <div class="checklist-item">
             <div class="checklist-label">
               <strong>5. Bảo vệ adult-shop (Hạn chế rủi ro):</strong>
-              <span class="meta" style="display: block;">Đảm bảo adult-shop tồn tại an toàn và bị chặn biến đổi.</span>
+              <span class="meta" style="display: block;">Đảm bảo cửa hàng mặc định an toàn và bị chặn chỉnh sửa ngoài ý muốn.</span>
             </div>
             <span class="badge ${checks.adultShopProtected ? 'badge-success' : 'badge-danger'}">${checks.adultShopProtected ? 'ĐẠT (ĐÃ BẢO VỆ)' : 'THẤT BẠI'}</span>
           </div>
@@ -346,7 +346,7 @@ function registerWizardRoutes(app, {
           <div class="checklist-item">
             <div class="checklist-label">
               <strong>6. Quyền xác thực Admin:</strong>
-              <span class="meta" style="display: block;">Phiên đăng nhập hợp lệ với quyền ghi cấu hình.</span>
+              <span class="meta" style="display: block;">Phiên đăng nhập hợp lệ với vai trò quản trị viên.</span>
             </div>
             <span class="badge badge-success">ĐẠT (HỢP LỆ)</span>
           </div>
@@ -363,15 +363,15 @@ function registerWizardRoutes(app, {
             <span>${escapeHtml(adultShopStatusText)}</span>
           </div>
           <div class="checklist-item">
-            <span class="checklist-label">Master key mã hóa token:</span>
+            <span class="checklist-label">Mã khóa bảo mật (Master key):</span>
             <span class="badge ${isMasterKeyConfigured ? 'badge-success' : 'badge-warning'}">${isMasterKeyConfigured ? 'ĐÃ CẤU HÌNH' : 'CHƯA CẤU HÌNH'}</span>
           </div>
           <div class="checklist-item">
-            <span class="checklist-label">Upload Cloudinary (Ảnh sản phẩm):</span>
+            <span class="checklist-label">Kho ảnh Cloudinary (Ảnh sản phẩm):</span>
             <span class="badge ${isCloudinaryConfigured ? 'badge-success' : 'badge-warning'}">${isCloudinaryConfigured ? 'SẴN SÀNG' : 'CHƯA CẤU HÌNH'}</span>
           </div>
           <div class="checklist-item">
-            <span class="checklist-label">Nhánh Deploy (Railway branch):</span>
+            <span class="checklist-label">Nhánh vận hành (Railway branch):</span>
             <code>${escapeHtml(deployedBranch)}</code>
           </div>
         </div>
@@ -436,16 +436,16 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 1: Tạo Shell Cửa Hàng (Shop Shell)</h1>
-        <p>Khởi tạo bản ghi cửa hàng Basic mới dưới chế độ nháp an toàn. Cửa hàng sẽ tự động cấu hình chạy thử nghiệm (dry-run) và tắt Go-Live.</p>
+        <h1>Bước 1: Tạo shop nháp (Bước 1: Tạo Shell Cửa Hàng)</h1>
+        <p>Khởi tạo thông tin cửa hàng nháp ban đầu dưới chế độ test an toàn. Cửa hàng mới sẽ tự động bật chạy thử nghiệm an toàn và ngắt hoạt động thật (Go-Live) để bảo vệ hệ thống.</p>
 
         <div class="checklist-card" style="margin: 10px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">🛡️ Các cấu hình an toàn mặc định</h3>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-            <span class="badge badge-success">Dry-Run: BẮT BUỘC BẬT (An toàn)</span>
-            <span class="badge badge-warning">Go-Live: TẮT</span>
-            <span class="badge badge-neutral">Page Mapping: CHƯA CÓ</span>
-            <span class="badge badge-neutral">Credentials: CHƯA CÓ</span>
+            <span class="badge badge-success">Chế độ test an toàn (Dry-Run: BẮT BUỘC BẬT)</span>
+            <span class="badge badge-warning">Hoạt động thật (Go-Live): TẮT ❌</span>
+            <span class="badge badge-neutral">Kết nối Fanpage: CHƯA CÓ</span>
+            <span class="badge badge-neutral">Quyền gửi tin: CHƯA CÓ</span>
           </div>
         </div>
 
@@ -453,9 +453,9 @@ function registerWizardRoutes(app, {
 
         <form action="/admin/wizard/new-shop-shell" method="post" style="margin-top: 14px;">
           <div class="form-group">
-            <label for="shop_id">Shop Slug (Slug viết liền, không dấu) <span class="required">*</span></label>
+            <label for="shop_id">Đường dẫn rút gọn (Shop Slug) <span class="required">*</span></label>
             <input type="text" id="shop_id" name="shop_id" value="${escapeHtml(values.shop_id || '')}" placeholder="vi-du: nem-bui-xa" required pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$">
-            <span class="field-help">Chỉ dùng chữ cái viết thường (a-z), số (0-9) và ký tự gạch nối (-). ví-dụ: <code>shop-cua-toi</code>. Không chấp nhận <code>adult-shop</code>.</span>
+            <span class="field-help">Chỉ dùng chữ cái viết thường (a-z), số (0-9) và ký tự gạch nối (-). Ví dụ: <code>shop-cua-toi</code>. Không chấp nhận <code>adult-shop</code>.</span>
           </div>
 
           <div class="form-group">
@@ -483,7 +483,7 @@ function registerWizardRoutes(app, {
           <div class="form-group">
             <label for="menu_intro_text">Tin nhắn chào mừng đầu Menu <span class="required">*</span></label>
             <textarea id="menu_intro_text" name="menu_intro_text" required style="min-height: 70px;">${escapeHtml(values.menu_intro_text || menuIntroDefault)}</textarea>
-            <span class="field-help">Gửi cho khách hàng khi họ nhắn "menu" hoặc bắt đầu cuộc trò chuyện.</span>
+            <span class="field-help">Lời chào tự động gửi cho khách hàng khi họ nhắn "menu" hoặc bắt đầu cuộc trò chuyện.</span>
           </div>
 
           <div class="form-group">
@@ -495,12 +495,12 @@ function registerWizardRoutes(app, {
           <div class="form-group">
             <label for="fallback_text">Tin nhắn mặc định khi bot không hiểu <span class="required">*</span></label>
             <textarea id="fallback_text" name="fallback_text" required style="min-height: 70px;">${escapeHtml(values.fallback_text || fallbackTextDefault)}</textarea>
-            <span class="field-help">Tin nhắn phản hồi tự động khi câu hỏi không khớp bất kỳ luật hay sản phẩm nào.</span>
+            <span class="field-help">Tin nhắn phản hồi tự động khi câu hỏi của khách hàng không khớp bất kỳ luật hay mã sản phẩm nào.</span>
           </div>
 
           <div class="wizard-actions" style="margin-top: 24px;">
             <a href="/admin/wizard/new" class="btn btn-secondary">← Quay lại Bước 0</a>
-            <button type="submit" class="btn btn-primary">Khởi tạo và Tiếp tục →</button>
+            <button type="submit" class="btn btn-primary">Lưu thông tin &amp; Tiếp tục →</button>
           </div>
         </form>
       </div>
@@ -661,8 +661,8 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 2: Cấu hình Sản phẩm & Menu</h1>
-        <p>Thiết lập danh sách sản phẩm và tin nhắn chào mừng, bàn giao của cửa hàng: <strong>${escapeHtml(shop.name || shop.slug)}</strong></p>
+        <h1>Bước 2: Cài đặt sản phẩm &amp; Lời chào bot (Bước 2: Cấu hình Sản phẩm & Menu)</h1>
+        <p>Thiết lập danh sách sản phẩm hoạt động và lời nhắn chào mừng, bàn giao của cửa hàng: <strong>${escapeHtml(shop.name || shop.slug)}</strong></p>
 
         <div class="checklist-card" style="margin: 14px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 2</h3>
@@ -671,10 +671,10 @@ function registerWizardRoutes(app, {
               Sản phẩm: ${activeProductCount} hoạt động (${activeProductCount >= 1 ? 'ĐẠT' : 'CHƯA ĐẠT'})
             </span>
             <span class="badge ${menuTextExists ? 'badge-success' : 'badge-danger'}">
-              Tin nhắn Menu: ${menuTextExists ? 'ĐÃ ĐIỀN' : 'CHƯA CÓ'}
+              Lời chào Menu: ${menuTextExists ? 'ĐÃ ĐIỀN' : 'CHƯA CÓ'}
             </span>
             <span class="badge ${menuImageCount > 0 ? 'badge-success' : 'badge-warning'}">
-              Ảnh Menu: ${menuImageCount > 0 ? `ĐÃ CÓ (${menuImageCount} ảnh)` : 'THIẾU (CẢNH BÁO)'}
+              Ảnh thực đơn: ${menuImageCount > 0 ? `ĐÃ CÓ (${menuImageCount} ảnh)` : 'THIẾU (CẢNH BÁO)'}
             </span>
           </div>
         </div>
@@ -730,7 +730,7 @@ function registerWizardRoutes(app, {
           </form>
         </div>
 
-        <h2>💬 Cấu hình Tin nhắn & Hỗ trợ</h2>
+        <h2>💬 Cấu hình Lời nhắn &amp; Hỗ trợ khách hàng</h2>
         <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/2/settings" method="post">
           <div class="form-group">
             <label for="menu_intro_text">Tin nhắn chào mừng đầu Menu <span class="required">*</span></label>
@@ -741,7 +741,7 @@ function registerWizardRoutes(app, {
           <div class="form-group">
             <label for="handoff_message">Tin nhắn bàn giao nhân viên hỗ trợ <span class="required">*</span></label>
             <textarea id="handoff_message" name="handoff_message" required style="min-height: 70px;">${escapeHtml(values.handoff_message || settings.handoff_message || '')}</textarea>
-            <span class="field-help">Hiển thị ngay trước khi tắt bot để nhân viên Fanpage nhảy vào trực tiếp.</span>
+            <span class="field-help">Lời nhắn gửi tự động trước khi chuyển cuộc trò chuyện sang nhân viên Fanpage để hỗ trợ thủ công.</span>
           </div>
 
           <div class="form-group">
@@ -754,10 +754,10 @@ function registerWizardRoutes(app, {
         </form>
 
         <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);">
-          <h2>🖼️ Ảnh Menu Cửa Hàng</h2>
+          <h2>🖼️ Ảnh Thực đơn Cửa Hàng</h2>
           ${menuImageCount > 0 ? `
             <div class="banner banner-success">
-              ✅ Cửa hàng đã có <strong>${menuImageCount}</strong> ảnh menu hoạt động an toàn.
+              ✅ Cửa hàng đã có <strong>${menuImageCount}</strong> ảnh thực đơn hoạt động an toàn.
             </div>
           ` : `
             <div class="banner banner-warning">
@@ -766,7 +766,7 @@ function registerWizardRoutes(app, {
           `}
           <p class="meta">Do đặc thù xử lý tệp tin và Cloudinary, tính năng tải ảnh trực tiếp được liên kết bảo mật với trang quản trị cửa hàng chính thức. Bạn có thể tải ảnh lên ở tab mới rồi quay lại đây tiếp tục.</p>
           <a href="/admin/shops/${encodeURIComponent(shop.id)}#assets" target="_blank" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 6px;">
-            🖼️ Đi đến trang quản lý Ảnh & Tài sản (Tab mới) ↗
+            🖼️ Đi đến trang quản lý Ảnh &amp; Tài sản (Tab mới) ↗
           </a>
         </div>
 
@@ -774,7 +774,7 @@ function registerWizardRoutes(app, {
           <div class="wizard-actions">
             <a href="/admin/wizard/new-shop-shell" class="btn btn-secondary">← Quay lại Bước 1</a>
             <button type="submit" class="btn btn-primary" ${!isStep2Passed ? 'disabled' : ''}>
-              ${isStep2Passed ? 'Tiếp tục sang Bước 3 →' : 'Cần thêm SP & Tin nhắn Menu để Tiếp tục'}
+              ${isStep2Passed ? 'Tiếp tục sang Bước 3 →' : 'Cần thêm SP &amp; Tin nhắn Menu để Tiếp tục'}
             </button>
           </div>
           ${!isStep2Passed ? `
@@ -1134,21 +1134,21 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 3: Liên kết trang Facebook</h1>
-        <p>Kết nối cửa hàng <strong>${escapeHtml(shop.name || shop.slug)}</strong> với một trang Facebook (Page) để nhận tin nhắn webhook.</p>
+        <h1>Bước 3: Kết nối Fanpage (Bước 3: Liên kết trang Facebook)</h1>
+        <p>Kết nối cửa hàng <strong>${escapeHtml(shop.name || shop.slug)}</strong> với một trang Facebook (Fanpage) để nhận tin nhắn khách hàng gửi đến.</p>
 
         <div class="banner banner-warning" style="margin: 14px 0;">
-          ⚠️ <strong>Lưu ý quan trọng:</strong> Bước này chỉ tạo liên kết định danh (Page Mapping) giữa shop và Page ID. Bước này <strong>không</strong> lưu token xác thực và <strong>không</strong> gửi bất kỳ tin nhắn Messenger nào. Token sẽ được thiết lập ở Bước 4.
+          ⚠️ <strong>Lưu ý quan trọng:</strong> Bước này chỉ tạo liên kết định danh (Kết nối Fanpage / Page Mapping) giữa shop và Page ID. Bước này <strong>không</strong> lưu token xác thực và <strong>không</strong> gửi bất kỳ tin nhắn thật nào. Mã quyền gửi tin (AccessToken) sẽ được thiết lập an toàn ở Bước 4.
         </div>
 
         <div class="checklist-card" style="margin: 14px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 3</h3>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
             <span class="badge ${hasActiveMapping ? 'badge-success' : 'badge-danger'}">
-              Page Mapping: ${hasActiveMapping ? 'ĐÃ LIÊN KẾT (' + activeMappings.length + ')' : 'CHƯA CÓ'}
+              Kết nối Fanpage (Page Mapping): ${hasActiveMapping ? 'ĐÃ LIÊN KẾT (' + activeMappings.length + ')' : 'CHƯA CÓ'}
             </span>
             <span class="badge badge-warning">
-              Credential: CHƯA CÓ (Bước 4)
+              Quyền gửi tin (Credential): CHƯA CÓ (Cài đặt ở Bước 4)
             </span>
           </div>
         </div>
@@ -1156,24 +1156,24 @@ function registerWizardRoutes(app, {
         ${error ? '<div class="banner banner-error">❌ <strong>Lỗi:</strong> ' + escapeHtml(error) + '</div>' : ''}
         ${success ? '<div class="banner banner-success">✅ ' + escapeHtml(success) + '</div>' : ''}
 
-        <h2>📄 Liên kết trang hiện có</h2>
+        <h2>📄 Kết nối Fanpage hiện có</h2>
         ${mappingsHtml}
         ${archivedHtml}
 
         ${hasActiveMapping ? `
           <div class="banner banner-success" style="margin: 16px 0;">
-            ✅ Cửa hàng đã có liên kết trang Facebook hoạt động. Nếu đã chọn nhầm trang, bạn có thể lưu trữ (archive) liên kết hiện tại tại <a href="/admin/shops/${encodeURIComponent(shop.id)}" target="_blank">trang quản lý cửa hàng ↗</a> rồi quay lại đây tạo liên kết mới.
+            ✅ Cửa hàng đã có liên kết trang Facebook hoạt động. Nếu đã kết nối nhầm trang, bạn có thể lưu trữ (archive) liên kết hiện tại tại <a href="/admin/shops/${encodeURIComponent(shop.id)}" target="_blank">trang quản lý cửa hàng ↗</a> rồi quay lại đây tạo liên kết mới.
           </div>
         ` : `
           <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin: 20px 0;">
-            <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">🔗 Kiểm tra và thêm liên kết trang mới</h3>
-            <p class="meta" style="margin: 6px 0 14px;">Nhập Page ID của trang Facebook. Page ID là chuỗi số dài (ví dụ: 123456789012345) lấy từ Facebook Business Settings.</p>
+            <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">🔗 Kiểm tra và kết nối trang Fanpage mới</h3>
+            <p class="meta" style="margin: 6px 0 14px;">Nhập Page ID của trang Facebook. Page ID là chuỗi số dài (ví dụ: 123456789012345) lấy từ phần Giới thiệu của trang Fanpage hoặc Trình quản lý kinh doanh Facebook.</p>
             <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/3/preview" method="post">
               <div class="form-group row">
                 <div>
-                  <label for="page_id">Page ID <span class="required">*</span></label>
+                  <label for="page_id">Mã định danh trang (Page ID) <span class="required">*</span></label>
                   <input type="text" id="page_id" name="page_id" value="${escapeHtml(values.page_id || '')}" placeholder="Ví dụ: 123456789012345" required pattern="^[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}$">
-                  <span class="field-help">Chuỗi số Page ID từ Facebook Business Settings. Không nhập token ở đây.</span>
+                  <span class="field-help">Chỉ nhập chuỗi số Page ID lấy từ Facebook. Tuyệt đối không nhập Token quyền gửi tin ở đây.</span>
                 </div>
                 <div>
                   <label for="page_name">Tên trang (Không bắt buộc)</label>
@@ -1194,7 +1194,7 @@ function registerWizardRoutes(app, {
               ${isStep3Passed ? 'Tiếp tục sang Bước 4 →' : 'Cần liên kết Page để Tiếp tục'}
             </button>
           </div>
-          ${!isStep3Passed ? '<p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">* Vui lòng tạo ít nhất 1 liên kết trang Facebook hoạt động để có thể mở khóa nút Tiếp tục.</p>' : ''}
+          ${!isStep3Passed ? '<p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">* Không đủ điều kiện: Vui lòng kết nối và xác nhận thành công liên kết trang Facebook hoạt động để mở khóa nút Tiếp tục.</p>' : ''}
         </form>
       </div>
     `;
@@ -1515,40 +1515,40 @@ function registerWizardRoutes(app, {
       ? ''
       : `
         <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin: 20px 0;">
-          <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">🔑 Nhập thông tin xác thực mới</h3>
-          <p class="meta" style="margin: 6px 0 14px;">Nhập Facebook Page Access Token từ Facebook Developers Portal. Token này sẽ được mã hóa an toàn bằng thuật toán AES-256-GCM.</p>
+          <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">🔑 Nhập thông tin xác thực mới (AccessToken)</h3>
+          <p class="meta" style="margin: 6px 0 14px;">Nhập Facebook Page Access Token từ Cổng phát triển ứng dụng Facebook (Facebook Developers Portal). Token này sẽ được mã hóa an toàn tuyệt đối bằng thuật toán AES-256-GCM.</p>
           <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/4" method="post">
             <div class="form-group">
-              <label for="page_token">Page Access Token <span class="required">*</span></label>
+              <label for="page_token">Mã bảo mật Fanpage (Page Access Token) <span class="required">*</span></label>
               <input type="password" id="page_token" name="page_token" placeholder="Nhập Facebook Page Access Token (EAA...)" required minlength="20" autocomplete="new-password">
-              <span class="field-help">Token bắt đầu bằng EAA... có độ dài từ 20 đến 5000 ký tự.</span>
+              <span class="field-help">Mã token quyền gửi tin bắt đầu bằng EAA... có độ dài từ 20 đến 5000 ký tự.</span>
             </div>
             <div class="form-group">
-              <label for="confirmation_text">Nhập <strong>CREATE PAGE CREDENTIAL</strong> để xác nhận <span class="required">*</span></label>
+              <label for="confirmation_text">Nhập chính xác dòng chữ <strong>CREATE PAGE CREDENTIAL</strong> để xác nhận <span class="required">*</span></label>
               <input type="text" id="confirmation_text" name="confirmation_text" placeholder="CREATE PAGE CREDENTIAL" required pattern="CREATE PAGE CREDENTIAL">
             </div>
-            <button type="submit" class="btn btn-primary" style="margin-top: 10px;">Lưu thông tin xác thực</button>
+            <button type="submit" class="btn btn-primary" style="margin-top: 10px;">🔒 Mã hóa &amp; Lưu mã bảo mật</button>
           </form>
         </div>
       `;
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 4: Lưu thông tin xác thực (Page Credential)</h1>
-        <p>Kết nối thông tin xác thực an toàn cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong>.</p>
+        <h1>Bước 4: Quyền gửi tin Fanpage (Bước 4: Lưu thông tin xác thực)</h1>
+        <p>Kết nối thông tin mã bảo mật xác thực quyền gửi tin an toàn cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong>.</p>
 
         <div class="banner banner-warning" style="margin: 14px 0;">
-          ⚠️ <strong>Bảo mật thông tin:</strong> Token của bạn sẽ được mã hóa và lưu trữ an toàn. Quy trình này <strong>không</strong> gọi Meta Graph API, <strong>không</strong> chạy kiểm tra sức khỏe token, và <strong>không</strong> gửi tin nhắn Messenger nào.
+          ⚠️ <strong>Bảo mật thông tin tối đa:</strong> Token của bạn sẽ được mã hóa chuẩn quân đội và lưu trữ an toàn trong cơ sở dữ liệu. Quy trình này **không** gọi Meta Graph API, **không** chạy kiểm tra sức khỏe token, và **không** gửi bất kỳ tin nhắn Messenger thật nào.
         </div>
 
         <div class="checklist-card" style="margin: 14px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 4</h3>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
             <span class="badge ${hasActiveMapping ? 'badge-success' : 'badge-danger'}">
-              Page Mapping: ${hasActiveMapping ? 'ĐÃ LIÊN KẾT' : 'CHƯA CÓ'}
+              Kết nối Fanpage (Page Mapping): ${hasActiveMapping ? 'ĐÃ LIÊN KẾT' : 'CHƯA CÓ'}
             </span>
             <span class="badge ${hasActiveCredential ? 'badge-success' : 'badge-danger'}">
-              Credential: ${hasActiveCredential ? 'ĐÃ LƯU AN TOÀN (' + activeCredentialCount + ')' : 'CHƯA CÓ'}
+              Quyền gửi tin (Credential): ${hasActiveCredential ? 'ĐÃ LƯU AN TOÀN (' + activeCredentialCount + ')' : 'CHƯA CÓ'}
             </span>
           </div>
         </div>
@@ -1556,12 +1556,12 @@ function registerWizardRoutes(app, {
         ${error ? '<div class="banner banner-error">❌ <strong>Lỗi:</strong> ' + escapeHtml(error) + '</div>' : ''}
         ${success ? '<div class="banner banner-success">✅ ' + escapeHtml(success) + '</div>' : ''}
 
-        <h2>📄 Thông tin liên kết hiện tại</h2>
+        <h2>📄 Thông tin liên kết Fanpage hiện tại</h2>
         ${mappingDetailsHtml}
 
         ${hasActiveCredential ? `
           <div class="banner banner-success" style="margin: 16px 0;">
-            ✅ Thông tin xác thực Facebook Page đã được lưu trữ và mã hóa thành công. Bạn đã sẵn sàng để chuyển sang bước tiếp theo.
+            ✅ Quyền gửi tin (Page Credential) Facebook Page đã được lưu trữ và mã hóa thành công. Bạn đã sẵn sàng để chuyển sang bước tiếp theo.
           </div>
         ` : ''}
 
@@ -1574,7 +1574,7 @@ function registerWizardRoutes(app, {
               ${isStep4Passed ? 'Tiếp tục sang Bước 5 →' : 'Cần lưu Credential để Tiếp tục'}
             </button>
           </div>
-          ${!isStep4Passed ? '<p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">* Vui lòng nhập và lưu thành công thông tin xác thực Facebook Page hoạt động để có thể mở khóa nút Tiếp tục.</p>' : ''}
+          ${!isStep4Passed ? '<p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">* Không đủ điều kiện: Vui lòng nhập và lưu thành công thông tin xác thực Facebook Page hoạt động để có thể mở khóa nút Tiếp tục.</p>' : ''}
         </form>
       </div>
     `;
@@ -1892,8 +1892,8 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 5: Readiness Gate (Kiểm tra sẵn sàng)</h1>
-        <p>Hệ thống tự động phân tích cấu hình của shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để đảm bảo bot có thể vận hành ổn định và an toàn.</p>
+        <h1>Bước 5: Kiểm tra hoàn tất (Bước 5: Readiness Gate - Kiểm tra sẵn sàng)</h1>
+        <p>Hệ thống tự động phân tích cấu hình của shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để đảm bảo bot có thể vận hành ổn định và an toàn tuyệt đối.</p>
 
         ${warningBannerHtml}
 
@@ -1901,10 +1901,10 @@ function registerWizardRoutes(app, {
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái kiểm tra sẵn sàng</h3>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
             <span class="badge ${isStep5Passed ? 'badge-success' : 'badge-danger'}">
-              Readiness Status: ${(readiness.readiness_status || 'failed').toUpperCase()}
+              Readiness Status: ${(readiness.readiness_status || 'failed').toUpperCase()} (Trạng thái kiểm tra sẵn sàng)
             </span>
-            <span class="badge badge-neutral">Hard Blockers: ${hardBlockerCount}</span>
-            <span class="badge badge-neutral">Warnings: ${readiness.warnings?.length || 0}</span>
+            <span class="badge badge-neutral">Lỗi cần xử lý (Hard Blockers): ${hardBlockerCount}</span>
+            <span class="badge badge-neutral">Cảnh báo không chặn (Warnings): ${readiness.warnings?.length || 0}</span>
           </div>
         </div>
 
@@ -1913,12 +1913,12 @@ function registerWizardRoutes(app, {
 
         ${blockerBannerHtml}
 
-        <h2>📋 Danh sách hạng mục kiểm tra (Readiness Checklist)</h2>
+        <h2>📋 Danh sách hạng mục kiểm tra hoàn tất (Readiness Checklist)</h2>
         ${checkersHtml}
 
         <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);">
           <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/5/recheck" method="post" style="margin: 0;">
-            <button type="submit" class="btn btn-secondary">🔄 Kiểm tra lại (Recheck)</button>
+            <button type="submit" class="btn btn-secondary">🔄 Cập nhật &amp; Kiểm tra lại (Recheck)</button>
           </form>
 
           <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/5/continue" method="post" style="margin: 0;">
@@ -2169,16 +2169,16 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 6: Dry-Run Smoke Test (Chạy thử giả lập)</h1>
+        <h1>Bước 6: Test thử an toàn (Bước 6: Dry-Run Smoke Test - Chạy thử giả lập)</h1>
         <p>Hệ thống hỗ trợ chạy thử nghiệm giả lập offline an toàn tuyệt đối cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để kiểm thử luồng tin nhắn tự động mà không gọi Meta API hay gửi tin nhắn thật đến người dùng.</p>
 
         <div class="banner banner-warning" style="margin: 16px 0;">
-          ⚠️ <strong>Simulation only:</strong> Không có bất kỳ tin nhắn Messenger thật nào được gửi đi. Toàn bộ quá trình diễn ra giả lập hoàn toàn trong sandbox.
+          ⚠️ <strong>Simulation only:</strong> Chế độ test an toàn (Không có bất kỳ tin nhắn Messenger thật nào được gửi đi. Toàn bộ quá trình diễn ra giả lập hoàn toàn trong sandbox).
         </div>
 
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0;">
           <div class="count">
-            <span>Messenger Dry-Run (Global)</span>
+            <span>Chế độ test an toàn (Global)</span>
             <strong style="color: ${globalDryRun ? 'var(--success)' : 'var(--danger)'};">${globalDryRun ? 'ĐANG BẬT (An toàn)' : 'ĐANG TẮT (Nguy hiểm)'}</strong>
           </div>
           <div class="count">
