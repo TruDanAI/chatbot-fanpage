@@ -100,6 +100,66 @@ function renderSafetyFooter(globalDryRun, envName = process.env.NODE_ENV || 'sta
 }
 
 /**
+ * Renders a guidance card with title, description, and optional action button.
+ * Used for "what to do next" or "how to fix" operator guidance.
+ */
+function renderGuidanceCard(title, description, actionHref = '', actionLabel = '') {
+  const actionHtml = actionHref && actionLabel
+    ? `<a href="${escapeHtml(actionHref)}" class="btn btn-secondary" style="margin-top: 10px;">${escapeHtml(actionLabel)}</a>`
+    : '';
+  return `
+    <div class="guidance-card">
+      <div class="guidance-card-icon">💡</div>
+      <div class="guidance-card-body">
+        <strong class="guidance-card-title">${escapeHtml(title)}</strong>
+        <p class="guidance-card-desc">${escapeHtml(description)}</p>
+        ${actionHtml}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Renders an empty-state placeholder with icon, heading, and explanation.
+ * Used when a list/table has no data yet.
+ */
+function renderEmptyState(icon, title, description) {
+  return `
+    <div class="empty-state">
+      <div class="empty-state-icon">${escapeHtml(icon)}</div>
+      <strong class="empty-state-title">${escapeHtml(title)}</strong>
+      <p class="empty-state-desc">${escapeHtml(description)}</p>
+    </div>
+  `;
+}
+
+/**
+ * Renders a requirement checklist showing pass/fail status.
+ * @param {Array<{label: string, met: boolean, detail: string}>} items
+ */
+function renderRequirementList(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  const rows = items.map(item => {
+    const icon = item.met ? '✅' : '⬜';
+    const badgeClass = item.met ? 'badge-success' : 'badge-danger';
+    const statusText = item.met ? 'Đạt' : 'Chưa đạt';
+    return `
+      <div class="requirement-item">
+        <div class="requirement-label">
+          <span class="requirement-icon">${icon}</span>
+          <span>${escapeHtml(item.label)}</span>
+        </div>
+        <div class="requirement-detail">
+          <span class="badge ${badgeClass}">${statusText}</span>
+          ${item.detail ? `<span class="requirement-detail-text">${escapeHtml(item.detail)}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+  return `<div class="requirement-list">${rows}</div>`;
+}
+
+/**
  * Server-rendered layouts specifically for the Setup Wizard.
  * Embeds custom CSS styles in head to prevent altering index.css or views.js.
  */
@@ -458,14 +518,82 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
       color: #0284c7;
       border: 1px solid #bae6fd;
     }
-    .safety-badge.env-staging::before {
-      content: '';
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #0284c7;
-    }
-  </style>
+     .safety-badge.env-staging::before {
+       content: '';
+       width: 6px;
+       height: 6px;
+       border-radius: 50%;
+       background: #0284c7;
+     }
+
+     /* Guidance Card */
+     .guidance-card {
+       display: flex;
+       gap: 12px;
+       padding: 14px 16px;
+       background: #eff6ff;
+       border: 1px solid #bfdbfe;
+       border-radius: 10px;
+       margin: 16px 0;
+       align-items: flex-start;
+     }
+     .guidance-card-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+     .guidance-card-body { min-width: 0; }
+     .guidance-card-title { display: block; font-size: 14px; color: #1e40af; margin-bottom: 4px; }
+     .guidance-card-desc { margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5; }
+
+     /* Empty State */
+     .empty-state {
+       display: flex;
+       flex-direction: column;
+       align-items: center;
+       justify-content: center;
+       padding: 32px 16px;
+       background: var(--surface-muted);
+       border: 1px dashed var(--border);
+       border-radius: 10px;
+       text-align: center;
+       margin: 16px 0;
+     }
+     .empty-state-icon { font-size: 32px; margin-bottom: 10px; }
+     .empty-state-title { font-size: 15px; color: #334155; margin-bottom: 6px; }
+     .empty-state-desc { margin: 0; font-size: 13px; color: var(--muted); max-width: 420px; line-height: 1.5; }
+
+     /* Requirement List */
+     .requirement-list { display: grid; gap: 8px; margin: 14px 0; }
+     .requirement-item {
+       display: flex;
+       align-items: center;
+       justify-content: space-between;
+       gap: 12px;
+       padding: 10px 14px;
+       background: #ffffff;
+       border: 1px solid var(--border);
+       border-radius: 8px;
+     }
+     .requirement-label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #334155; }
+     .requirement-icon { font-size: 16px; flex-shrink: 0; }
+     .requirement-detail { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+     .requirement-detail-text { font-size: 12px; color: var(--muted); }
+
+     /* Checklist Card (was used but undefined) */
+     .checklist-card {
+       background: var(--surface);
+       border: 1px solid var(--border);
+       border-radius: 10px;
+       padding: 16px;
+     }
+
+     /* Count Card (was used but undefined) */
+     .count {
+       background: var(--surface);
+       border: 1px solid var(--border);
+       border-radius: 8px;
+       padding: 12px;
+     }
+     .count span { color: var(--muted); font-size: 13px; display: block; margin-bottom: 4px; }
+     .count strong { display: block; font-size: 18px; }
+   </style>
 </head>
 <body>
   <header>
@@ -495,5 +623,8 @@ module.exports = {
   renderProgressBar,
   renderSafetyFooter,
   renderWizardLayout,
+  renderGuidanceCard,
+  renderEmptyState,
+  renderRequirementList,
   STEP_LABELS
 };

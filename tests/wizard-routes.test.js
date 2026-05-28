@@ -563,7 +563,7 @@ describe('Setup Wizard Step 1 Create Shop Shell Form logic', () => {
     await app.routes['/admin/wizard/new-shop-shell'](reqAuth, resAuth);
 
     expect(resAuth.statusCode).toBe(200);
-    expect(resAuth.body.includes('Bước 1: Tạo Shell Cửa Hàng')).toBeTrue();
+    expect(resAuth.body.includes('Bước 1: Tạo shop nháp')).toBeTrue();
     expect(resAuth.body.includes('Dry-Run: BẮT BUỘC BẬT')).toBeTrue();
     expect(resAuth.body.includes('Tin nhắn chào mừng đầu Menu')).toBeTrue();
     expect(resAuth.body.includes('Tin nhắn bàn giao nhân viên hỗ trợ')).toBeTrue();
@@ -706,7 +706,7 @@ describe('Setup Wizard Step 2 Products and Menu configuration logic', () => {
     await app.routes['/admin/wizard/:shopId/step/2'](req, res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.includes('Bước 2: Cấu hình Sản phẩm & Menu')).toBeTrue();
+    expect(res.body.includes('Bước 2')).toBeTrue();
     expect(res.body.includes('Product 1')).toBeTrue();
     expect(res.body.includes('Menu intro text')).toBeTrue();
     expect(res.body.includes('Chưa có ảnh Menu')).toBeTrue(); // Shows warning since we mocked empty assets
@@ -1526,7 +1526,7 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
 
     expect(res.statusCode).toBe(200);
     // Hard blockers must be detected
-    expect(res.body.includes('Readiness Status: FAILED')).toBeTrue();
+    expect(res.body.includes('CHƯA ĐỦ ĐIỀU KIỆN')).toBeTrue();
     expect(res.body.includes('CHƯA ĐẠT')).toBeTrue();
     // Links to steps must exist
     expect(res.body.includes('/admin/wizard/has-page-shop/step/2')).toBeTrue();
@@ -1681,8 +1681,8 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
       await app.routes['/admin/wizard/:shopId/step/6'](req, res);
 
       expect(res.statusCode).toBe(200);
-      expect(res.body.includes('Dry-Run Smoke Test')).toBeTrue();
-      expect(res.body.includes('Simulation only:')).toBeTrue();
+      expect(res.body.includes('Test thử an toàn')).toBeTrue();
+      expect(res.body.includes('Chỉ là giả lập an toàn')).toBeTrue();
       expect(res.body.includes('MESSENGER_DRY_RUN')).toBeFalse();
       expect(res.body.includes('DATABASE_URL')).toBeFalse();
 
@@ -1783,7 +1783,7 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body.includes('Setup Wizard Hoàn Tất!')).toBeTrue();
-      expect(res.body.includes('Chạy thử an toàn (Dry-run: ON, Live: OFF)')).toBeTrue();
+      expect(res.body.includes('test an toàn (Dry-Run: BẬT, Live: TẮT)')).toBeTrue();
 
       process.env = originalEnv;
     });
@@ -1806,5 +1806,221 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
 
       process.env = originalEnv;
     });
+  });
+});
+
+describe('Setup Wizard Guidance States', () => {
+  it('Step 0 shows actionable guidance when hard checks fail', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'false';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+    await app.routes['/admin/wizard/new'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Bạn cần làm gì nếu lỗi?')).toBeTrue();
+    expect(res.body.includes('guidance-card')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 1 shows shop-nháp explanation and safe defaults guidance', async () => {
+    const app = createApp();
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+    await app.routes['/admin/wizard/new-shop-shell'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Shop nháp')).toBeTrue();
+    expect(res.body.includes('Chưa hoạt động thật')).toBeTrue();
+    expect(res.body.includes('Dry-Run: BẬT')).toBeTrue();
+    expect(res.body.includes('nem-bui-xa')).toBeTrue();
+    expect(res.body.includes('banh-mi-ha-noi')).toBeTrue();
+  });
+
+  it('Step 2 shows empty-state when no products and requirement list', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'empty-products-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/2'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('empty-state')).toBeTrue();
+    expect(res.body.includes('Chưa có sản phẩm nào')).toBeTrue();
+    expect(res.body.includes('requirement-list')).toBeTrue();
+    expect(res.body.includes('Ít nhất 1 sản phẩm hoạt động')).toBeTrue();
+    expect(res.body.includes('Cần làm tiếp')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 3 shows empty-state for no mapping and token clarification', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'my-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/3'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('empty-state')).toBeTrue();
+    expect(res.body.includes('Chưa có kết nối Fanpage')).toBeTrue();
+    expect(res.body.includes('Token')).toBeTrue();
+    expect(res.body.includes('Bước 4')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 4 shows encryption guidance and archive note for wrong token', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/4'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('AES-256-GCM')).toBeTrue();
+    expect(res.body.includes('không hiển thị lại')).toBeTrue();
+    expect(res.body.includes('archive')).toBeTrue();
+    expect(res.body.includes('guidance-card')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 5 clearly distinguishes blockers from warnings', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockPgClient
+    });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-page-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/5'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('chặn tiếp tục')).toBeTrue();
+    expect(res.body.includes('không chặn tiếp tục')).toBeTrue();
+    expect(res.body.includes('bắt buộc hoàn thành trước khi tiếp tục')).toBeTrue();
+    expect(res.body.includes('khuyến nghị nhưng không chặn')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 6 shows safe simulation guidance and completion wording', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.MESSENGER_DRY_RUN = 'true';
+
+    registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-credentials-shop' }
+    });
+    const res = createRes();
+    await app.routes['/admin/wizard/:shopId/step/6'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Bước này kiểm tra gì?')).toBeTrue();
+    expect(res.body.includes('guidance-card')).toBeTrue();
+    expect(res.body.includes('giả lập an toàn')).toBeTrue();
+    expect(res.body.includes('sandbox')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('Step 6 completion page emphasizes test mode and Go-Live requires approval', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.MESSENGER_DRY_RUN = 'true';
+    process.env.CREDENTIAL_MASTER_KEY = 'test-master-key-xyz-12345';
+
+    registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+    // Patch for passed manual test
+    const origClient = MockPgClient;
+    const PatchedClient = class extends origClient {
+      async query(sql, params) {
+        const cleanSql = String(sql || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1') && cleanSql.includes('ORDER BY')) {
+          return { rows: [{ id: params[0], slug: params[0], name: 'My Shop', status: 'active', package: 'basic', lifecycle: 'draft', last_manual_test_status: 'passed', dry_run: true }] };
+        }
+        return super.query(sql, params);
+      }
+    };
+
+    const app2 = createApp();
+    registerWizardRoutes(app2, { adminExportToken: 'test-token', Client: PatchedClient });
+
+    const req = createReq({
+      headers: { authorization: 'Bearer test-token' },
+      params: { shopId: 'has-credentials-shop' }
+    });
+    const res = createRes();
+    await app2.routes['POST /admin/wizard/:shopId/step/6/complete'](req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('Setup Wizard hoàn tất')).toBeTrue();
+    expect(res.body.includes('chế độ test an toàn')).toBeTrue();
+    expect(res.body.includes('Shop chưa hoạt động thật')).toBeTrue();
+    expect(res.body.includes('Go-Live')).toBeTrue();
+    expect(res.body.includes('Bạn cần làm gì tiếp theo')).toBeTrue();
+
+    process.env = originalEnv;
   });
 });

@@ -4,7 +4,7 @@ const { parseAdminRoles } = require('./route-auth');
 const { createAdminRouteAuthorizer } = require('./route-auth');
 const { createAdminSessionManager } = require('./session');
 const { createPostgresAuditLogger } = require('./audit');
-const { renderWizardLayout, escapeHtml } = require('./wizard-ui');
+const { renderWizardLayout, escapeHtml, renderGuidanceCard, renderEmptyState, renderRequirementList } = require('./wizard-ui');
 const { isProductionRuntime } = require('../storage-config');
 const { createPostgresShopWriteService } = require('./shop-writes');
 const { createPostgresShopSettingsWriteService } = require('./shop-settings-writes');
@@ -383,8 +383,12 @@ function registerWizardRoutes(app, {
 
         ${!isAllHardChecksPassed ? `
           <div class="banner banner-error">
-            ❌ <strong>Không đủ điều kiện:</strong> Một hoặc nhiều điều kiện bắt buộc (Hard Checks) chưa đạt. Nút "Bắt đầu tạo Shop" đã bị khóa. Hãy liên hệ kỹ thuật để cấu hình lại các biến môi trường hoặc cơ sở dữ liệu.
+            ❌ <strong>Không đủ điều kiện:</strong> Một hoặc nhiều điều kiện bắt buộc chưa đạt. Nút "Bắt đầu tạo Shop" đã bị khóa.
           </div>
+          ${renderGuidanceCard(
+            'Bạn cần làm gì nếu lỗi?',
+            'Liên hệ quản trị viên kỹ thuật để kiểm tra cấu hình hệ thống: đảm bảo chế độ test an toàn (Dry-Run) đã bật, cơ sở dữ liệu đã kết nối, và hệ thống đang chạy ở môi trường thử nghiệm (không phải Production).'
+          )}
         ` : ''}
 
         <form action="/admin/wizard/new" method="post" style="margin-top: 20px;">
@@ -436,8 +440,12 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 1: Tạo shop nháp (Bước 1: Tạo Shell Cửa Hàng)</h1>
-        <p>Khởi tạo thông tin cửa hàng nháp ban đầu dưới chế độ test an toàn. Cửa hàng mới sẽ tự động bật chạy thử nghiệm an toàn và ngắt hoạt động thật (Go-Live) để bảo vệ hệ thống.</p>
+        <h1>Bước 1: Tạo shop nháp</h1>
+        <p><strong>Shop nháp</strong> là cửa hàng thử nghiệm để bạn cấu hình sản phẩm, tin nhắn tự động và kết nối Fanpage trước khi chạy thật. Shop nháp luôn ở chế độ test an toàn — không gửi tin nhắn thật đến khách hàng.</p>
+        ${renderGuidanceCard(
+          'Các cấu hình an toàn mặc định khi tạo shop',
+          'Chưa hoạt động thật (Live: TẮT) • Đang ở chế độ test an toàn (Dry-Run: BẬT) • Chưa kết nối Fanpage • Chưa có quyền gửi tin'
+        )}
 
         <div class="checklist-card" style="margin: 10px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">🛡️ Các cấu hình an toàn mặc định</h3>
@@ -455,7 +463,7 @@ function registerWizardRoutes(app, {
           <div class="form-group">
             <label for="shop_id">Đường dẫn rút gọn (Shop Slug) <span class="required">*</span></label>
             <input type="text" id="shop_id" name="shop_id" value="${escapeHtml(values.shop_id || '')}" placeholder="vi-du: nem-bui-xa" required pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$">
-            <span class="field-help">Chỉ dùng chữ cái viết thường (a-z), số (0-9) và ký tự gạch nối (-). Ví dụ: <code>shop-cua-toi</code>. Không chấp nhận <code>adult-shop</code>.</span>
+            <span class="field-help">Đường dẫn rút gọn dùng để nhận diện cửa hàng trong hệ thống. Chỉ dùng chữ cái viết thường (a-z), số (0-9) và gạch nối (-). Ví dụ: <code>shop-cua-toi</code>, <code>nem-bui-xa</code>, <code>banh-mi-ha-noi</code>. Không chấp nhận <code>adult-shop</code>.</span>
           </div>
 
           <div class="form-group">
@@ -631,7 +639,7 @@ function registerWizardRoutes(app, {
     const isStep2Passed = activeProductCount >= 1 && menuTextExists;
 
     const productsHtml = products.length === 0
-      ? '<p class="meta" style="margin: 12px 0;">Cửa hàng chưa có sản phẩm nào. Vui lòng thêm ít nhất 1 sản phẩm hoạt động bên dưới.</p>'
+      ? renderEmptyState('📦', 'Chưa có sản phẩm nào', 'Cửa hàng cần ít nhất 1 sản phẩm hoạt động để tiếp tục. Thêm sản phẩm đầu tiên ở mục bên dưới.')
       : `
         <table style="width: 100%; margin-top: 12px; margin-bottom: 18px;">
           <thead>
@@ -661,8 +669,15 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 2: Cài đặt sản phẩm &amp; Lời chào bot (Bước 2: Cấu hình Sản phẩm & Menu)</h1>
+        <h1>Bước 2: Sản phẩm & Lời chào bot</h1>
         <p>Thiết lập danh sách sản phẩm hoạt động và lời nhắn chào mừng, bàn giao của cửa hàng: <strong>${escapeHtml(shop.name || shop.slug)}</strong></p>
+
+        <h3 style="margin-top: 18px; font-size: 14px; color: var(--muted); text-transform: uppercase;">📋 Cần làm tiếp để hoàn thành Bước 2</h3>
+        ${renderRequirementList([
+          { label: 'Ít nhất 1 sản phẩm hoạt động', met: activeProductCount >= 1, detail: activeProductCount >= 1 ? activeProductCount + ' sản phẩm' : 'Thêm sản phẩm bên dưới' },
+          { label: 'Tin nhắn chào mừng Menu đã điền', met: menuTextExists, detail: menuTextExists ? 'Đã điền' : 'Điền ở mục Lời nhắn bên dưới' },
+          { label: 'Ảnh thực đơn (khuyến nghị, không bắt buộc)', met: menuImageCount > 0, detail: menuImageCount > 0 ? menuImageCount + ' ảnh' : 'Tùy chọn — bot sẽ dùng tin nhắn chữ' }
+        ])}
 
         <div class="checklist-card" style="margin: 14px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 2</h3>
@@ -774,7 +789,7 @@ function registerWizardRoutes(app, {
           <div class="wizard-actions">
             <a href="/admin/wizard/new-shop-shell" class="btn btn-secondary">← Quay lại Bước 1</a>
             <button type="submit" class="btn btn-primary" ${!isStep2Passed ? 'disabled' : ''}>
-              ${isStep2Passed ? 'Tiếp tục sang Bước 3 →' : 'Cần thêm SP &amp; Tin nhắn Menu để Tiếp tục'}
+              ${isStep2Passed ? 'Tiếp tục sang Bước 3 →' : 'Cần thêm Sản phẩm & Tin nhắn Menu để tiếp tục'}
             </button>
           </div>
           ${!isStep2Passed ? `
@@ -1047,7 +1062,7 @@ function registerWizardRoutes(app, {
     const isStep3Passed = hasActiveMapping;
 
     const mappingsHtml = activeMappings.length === 0
-      ? '<p class="meta" style="margin: 12px 0;">Cửa hàng chưa có liên kết trang Facebook nào. Vui lòng thêm liên kết trang ở phần bên dưới.</p>'
+      ? renderEmptyState('🔗', 'Chưa có kết nối Fanpage', 'Bước này liên kết cửa hàng với một trang Facebook (Fanpage) để nhận tin nhắn khách hàng. Nhập Page ID ở phần bên dưới để bắt đầu kết nối.')
       : `
         <table style="width: 100%; margin-top: 12px; margin-bottom: 18px;">
           <thead>
@@ -1134,8 +1149,8 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 3: Kết nối Fanpage (Bước 3: Liên kết trang Facebook)</h1>
-        <p>Kết nối cửa hàng <strong>${escapeHtml(shop.name || shop.slug)}</strong> với một trang Facebook (Fanpage) để nhận tin nhắn khách hàng gửi đến.</p>
+        <h1>Bước 3: Kết nối Fanpage</h1>
+        <p>Kết nối cửa hàng <strong>${escapeHtml(shop.name || shop.slug)}</strong> với một trang Facebook (Fanpage) để nhận tin nhắn khách hàng gửi đến. Bước này chỉ tạo liên kết định danh — mã bảo mật gửi tin (Token) sẽ được nhập an toàn ở Bước 4.</p>
 
         <div class="banner banner-warning" style="margin: 14px 0;">
           ⚠️ <strong>Lưu ý quan trọng:</strong> Bước này chỉ tạo liên kết định danh (Kết nối Fanpage / Page Mapping) giữa shop và Page ID. Bước này <strong>không</strong> lưu token xác thực và <strong>không</strong> gửi bất kỳ tin nhắn thật nào. Mã quyền gửi tin (AccessToken) sẽ được thiết lập an toàn ở Bước 4.
@@ -1534,12 +1549,16 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 4: Quyền gửi tin Fanpage (Bước 4: Lưu thông tin xác thực)</h1>
-        <p>Kết nối thông tin mã bảo mật xác thực quyền gửi tin an toàn cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong>.</p>
+        <h1>Bước 4: Quyền gửi tin Fanpage</h1>
+        <p>Lưu mã bảo mật (Token) cho phép bot gửi tin nhắn tự động qua Fanpage của shop <strong>${escapeHtml(shop.name || shop.slug)}</strong>.</p>
 
         <div class="banner banner-warning" style="margin: 14px 0;">
-          ⚠️ <strong>Bảo mật thông tin tối đa:</strong> Token của bạn sẽ được mã hóa chuẩn quân đội và lưu trữ an toàn trong cơ sở dữ liệu. Quy trình này **không** gọi Meta Graph API, **không** chạy kiểm tra sức khỏe token, và **không** gửi bất kỳ tin nhắn Messenger thật nào.
+          ⚠️ <strong>Bảo mật thông tin tối đa:</strong> Token của bạn sẽ được mã hóa AES-256-GCM và lưu trữ an toàn. Quy trình này <strong>không</strong> gọi Meta Graph API, <strong>không</strong> chạy kiểm tra sức khỏe token, và <strong>không</strong> gửi bất kỳ tin nhắn Messenger thật nào.
         </div>
+        ${renderGuidanceCard(
+          'Token được mã hóa và không hiển thị lại',
+          'Sau khi lưu, token sẽ được mã hóa vĩnh viễn và không thể xem lại giá trị gốc. Nếu nhập nhầm token, bạn có thể lưu trữ (archive) credential cũ và tạo mới từ trang quản lý cửa hàng.'
+        )}
 
         <div class="checklist-card" style="margin: 14px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 4</h3>
@@ -1892,7 +1911,7 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 5: Kiểm tra hoàn tất (Bước 5: Readiness Gate - Kiểm tra sẵn sàng)</h1>
+        <h1>Bước 5: Kiểm tra hoàn tất</h1>
         <p>Hệ thống tự động phân tích cấu hình của shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để đảm bảo bot có thể vận hành ổn định và an toàn tuyệt đối.</p>
 
         ${warningBannerHtml}
@@ -1901,11 +1920,18 @@ function registerWizardRoutes(app, {
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái kiểm tra sẵn sàng</h3>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
             <span class="badge ${isStep5Passed ? 'badge-success' : 'badge-danger'}">
-              Readiness Status: ${(readiness.readiness_status || 'failed').toUpperCase()} (Trạng thái kiểm tra sẵn sàng)
+              Trạng thái: ${isStep5Passed ? 'SẴN SÀNG' : 'CHƯA ĐỦ ĐIỀU KIỆN'}
             </span>
-            <span class="badge badge-neutral">Lỗi cần xử lý (Hard Blockers): ${hardBlockerCount}</span>
-            <span class="badge badge-neutral">Cảnh báo không chặn (Warnings): ${readiness.warnings?.length || 0}</span>
+            <span class="badge ${hardBlockerCount > 0 ? 'badge-danger' : 'badge-success'}">
+              Lỗi cần xử lý (chặn tiếp tục): ${hardBlockerCount}
+            </span>
+            <span class="badge badge-neutral">
+              Cảnh báo (không chặn tiếp tục): ${readiness.warnings?.length || 0}
+            </span>
           </div>
+          <p style="margin: 10px 0 0; font-size: 12px; color: var(--muted);">
+            <strong>Lỗi cần xử lý</strong> = bắt buộc hoàn thành trước khi tiếp tục. <strong>Cảnh báo</strong> = khuyến nghị nhưng không chặn.
+          </p>
         </div>
 
         ${error ? `<div class="banner banner-error">❌ <strong>Lỗi:</strong> ${escapeHtml(error)}</div>` : ''}
@@ -2169,12 +2195,16 @@ function registerWizardRoutes(app, {
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước 6: Test thử an toàn (Bước 6: Dry-Run Smoke Test - Chạy thử giả lập)</h1>
-        <p>Hệ thống hỗ trợ chạy thử nghiệm giả lập offline an toàn tuyệt đối cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để kiểm thử luồng tin nhắn tự động mà không gọi Meta API hay gửi tin nhắn thật đến người dùng.</p>
+        <h1>Bước 6: Test thử an toàn</h1>
+        <p>Chạy thử nghiệm giả lập <strong>offline an toàn</strong> cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> — kiểm tra luồng tin nhắn tự động mà không gọi Meta API hay gửi tin nhắn thật.</p>
 
         <div class="banner banner-warning" style="margin: 16px 0;">
-          ⚠️ <strong>Simulation only:</strong> Chế độ test an toàn (Không có bất kỳ tin nhắn Messenger thật nào được gửi đi. Toàn bộ quá trình diễn ra giả lập hoàn toàn trong sandbox).
+          ⚠️ <strong>Chỉ là giả lập an toàn:</strong> Đây là kiểm tra nội bộ trong hệ thống. Không có tin nhắn Messenger thật nào được gửi đi. Toàn bộ quá trình diễn ra giả lập trong sandbox.
         </div>
+        ${renderGuidanceCard(
+          'Bước này kiểm tra gì?',
+          'Hệ thống mô phỏng khách hàng gửi tin nhắn "menu" và mã sản phẩm, sau đó kiểm tra xem bot có phản hồi đúng không. Nếu tất cả đạt, bạn có thể hoàn tất Setup Wizard.'
+        )}
 
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0;">
           <div class="count">
@@ -2398,26 +2428,26 @@ function registerWizardRoutes(app, {
         <div class="wizard-card">
           <h1>🎉 Setup Wizard Hoàn Tất!</h1>
           <div class="banner banner-success">
-            Đã cấu hình và hoàn thành chạy thử thành công cho shop <strong>${escapeHtml(shopDetail.shop.name || shopDetail.shop.slug)}</strong>!
+            ✅ Setup Wizard hoàn tất cho shop <strong>${escapeHtml(shopDetail.shop.name || shopDetail.shop.slug)}</strong>!
           </div>
           
           <div style="margin: 20px 0; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border);">
-            <h3>🛡️ Hoàn thành ở chế độ chạy thử (Dry-Run Mode):</h3>
+            <h3>🛡️ Hoàn thành ở chế độ test an toàn</h3>
             <p style="margin: 6px 0; line-height: 1.5; font-size: 14px; color: #334155;">
-              Cửa hàng hiện đã kết thúc toàn bộ 6 bước thiết lập trong trạng thái <strong>Chạy thử an toàn (Dry-run: ON, Live: OFF)</strong>.
-              Bot chỉ phản hồi giả lập, tuyệt đối không gửi tin nhắn thật hay gây ảnh hưởng tới người dùng Messenger của bạn.
+              Cửa hàng đã hoàn tất toàn bộ 6 bước thiết lập trong chế độ <strong>test an toàn (Dry-Run: BẬT, Live: TẮT)</strong>.
+              Bot hiện chỉ phản hồi giả lập — tuyệt đối không gửi tin nhắn thật hay ảnh hưởng đến khách hàng Messenger.
             </p>
             <p style="margin: 12px 0 6px; font-weight: bold; font-size: 14px; color: var(--warning);">
-              ⚠️ Việc kích hoạt chế độ chạy thật (Live) là hành động riêng biệt và cần có phê duyệt của quản trị viên hệ thống.
+              ⚠️ Shop chưa hoạt động thật. Việc kích hoạt chế độ chạy thật (Go-Live) là hành động riêng biệt, cần phê duyệt rõ ràng của quản trị viên hệ thống.
             </p>
           </div>
 
           <div style="margin: 20px 0; padding: 16px; background: #ffffff; border-radius: 8px; border: 1px solid var(--border);">
-            <h3>📋 Các bước vận hành tiếp theo khuyến nghị:</h3>
+            <h3>📋 Bạn cần làm gì tiếp theo?</h3>
             <ul style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px; color: #475569;">
-              <li>Truy cập trang Quản lý Shop để xem chi tiết cấu hình.</li>
-              <li>Tải lên thêm các hình ảnh sản phẩm hoạt động thiếu (nếu có).</li>
-              <li>Sử dụng các công tắc bật/tắt Dry-run và Live ở trang chi tiết Shop sau khi được duyệt.</li>
+              <li>Truy cập <strong>trang Quản lý Shop</strong> để xem lại toàn bộ cấu hình.</li>
+              <li>Tải lên thêm ảnh sản phẩm hoặc ảnh menu nếu còn thiếu.</li>
+              <li>Khi sẵn sàng, liên hệ quản trị viên để bật chế độ chạy thật (Go-Live).</li>
             </ul>
           </div>
 
