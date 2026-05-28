@@ -11,6 +11,7 @@ const { createPostgresShopSettingsWriteService } = require('./shop-settings-writ
 const { createPostgresProductWriteService } = require('./product-writes');
 const { createPostgresDashboardReader } = require('./reader');
 const { createPostgresPageMappingWriteService } = require('./page-mapping-writes');
+const { createPostgresPageCredentialWriteService } = require('./page-credential-writes');
 const { pageRef } = require('../utils/log-refs');
 
 // Load pg Client safely
@@ -109,6 +110,11 @@ function registerWizardRoutes(app, {
   });
 
   const pageMappingWrites = createPostgresPageMappingWriteService({
+    databaseUrl: process.env.DATABASE_URL,
+    Client
+  });
+
+  const pageCredentialWrites = createPostgresPageCredentialWriteService({
     databaseUrl: process.env.DATABASE_URL,
     Client
   });
@@ -1458,7 +1464,336 @@ function registerWizardRoutes(app, {
     }
   }
 
-  // General step rendering (Steps 4 to 6)
+  // ──── Step 4: Page Credentials ────
+
+  function renderStep4Html(res, { shop, activeMapping = null, error = '', success = '' } = {}) {
+    const hasActiveMapping = Boolean(activeMapping);
+    const activeCredentialCount = activeMapping ? (activeMapping.active_credential_count || 0) : 0;
+    const hasActiveCredential = activeCredentialCount > 0;
+    const isStep4Passed = hasActiveMapping && hasActiveCredential;
+
+    let mappingDetailsHtml = '';
+    if (hasActiveMapping) {
+      mappingDetailsHtml = `
+        <table style="width: 100%; margin-top: 12px; margin-bottom: 18px;">
+          <thead>
+            <tr>
+              <th>Page Ref (Mã tham chiếu)</th>
+              <th>Tên trang</th>
+              <th>Trạng thái Mapping</th>
+              <th>Số Credential hoạt động</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>${escapeHtml(activeMapping.page_ref || 'unknown')}</code></td>
+              <td>${escapeHtml(activeMapping.page_name || 'Chưa đặt tên')}</td>
+              <td><span class="badge badge-success">Hoạt động</span></td>
+              <td><span class="badge ${hasActiveCredential ? 'badge-success' : 'badge-danger'}">${activeCredentialCount}</span></td>
+            </tr>
+          </tbody>
+        </table>
+      `;
+    } else {
+      mappingDetailsHtml = `
+        <div class="banner banner-error" style="margin: 14px 0;">
+          ❌ <strong>Lỗi:</strong> Cửa hàng này chưa có liên kết trang Facebook hoạt động. Vui lòng hoàn thành <a href="/admin/wizard/${encodeURIComponent(shop.id)}/step/3">Bước 3: Liên kết trang Facebook</a> trước khi thực hiện bước này.
+        </div>
+      `;
+    }
+
+    const formHtml = (!hasActiveMapping || hasActiveCredential)
+      ? ''
+      : `
+        <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin: 20px 0;">
+          <h3 style="margin-top: 0; font-size: 16px; color: var(--primary-dark);">🔑 Nhập thông tin xác thực mới</h3>
+          <p class="meta" style="margin: 6px 0 14px;">Nhập Facebook Page Access Token từ Facebook Developers Portal. Token này sẽ được mã hóa an toàn bằng thuật toán AES-256-GCM.</p>
+          <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/4" method="post">
+            <div class="form-group">
+              <label for="page_token">Page Access Token <span class="required">*</span></label>
+              <input type="password" id="page_token" name="page_token" placeholder="Nhập Facebook Page Access Token (EAA...)" required minlength="20" autocomplete="new-password">
+              <span class="field-help">Token bắt đầu bằng EAA... có độ dài từ 20 đến 5000 ký tự.</span>
+            </div>
+            <div class="form-group">
+              <label for="confirmation_text">Nhập <strong>CREATE PAGE CREDENTIAL</strong> để xác nhận <span class="required">*</span></label>
+              <input type="text" id="confirmation_text" name="confirmation_text" placeholder="CREATE PAGE CREDENTIAL" required pattern="CREATE PAGE CREDENTIAL">
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top: 10px;">Lưu thông tin xác thực</button>
+          </form>
+        </div>
+      `;
+
+    const body = `
+      <div class="wizard-card">
+        <h1>Bước 4: Lưu thông tin xác thực (Page Credential)</h1>
+        <p>Kết nối thông tin xác thực an toàn cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong>.</p>
+
+        <div class="banner banner-warning" style="margin: 14px 0;">
+          ⚠️ <strong>Bảo mật thông tin:</strong> Token của bạn sẽ được mã hóa và lưu trữ an toàn. Quy trình này <strong>không</strong> gọi Meta Graph API, <strong>không</strong> chạy kiểm tra sức khỏe token, và <strong>không</strong> gửi tin nhắn Messenger nào.
+        </div>
+
+        <div class="checklist-card" style="margin: 14px 0 20px;">
+          <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">📊 Trạng thái hoàn thành bước 4</h3>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="badge ${hasActiveMapping ? 'badge-success' : 'badge-danger'}">
+              Page Mapping: ${hasActiveMapping ? 'ĐÃ LIÊN KẾT' : 'CHƯA CÓ'}
+            </span>
+            <span class="badge ${hasActiveCredential ? 'badge-success' : 'badge-danger'}">
+              Credential: ${hasActiveCredential ? 'ĐÃ LƯU AN TOÀN (' + activeCredentialCount + ')' : 'CHƯA CÓ'}
+            </span>
+          </div>
+        </div>
+
+        ${error ? '<div class="banner banner-error">❌ <strong>Lỗi:</strong> ' + escapeHtml(error) + '</div>' : ''}
+        ${success ? '<div class="banner banner-success">✅ ' + escapeHtml(success) + '</div>' : ''}
+
+        <h2>📄 Thông tin liên kết hiện tại</h2>
+        ${mappingDetailsHtml}
+
+        ${hasActiveCredential ? `
+          <div class="banner banner-success" style="margin: 16px 0;">
+            ✅ Thông tin xác thực Facebook Page đã được lưu trữ và mã hóa thành công. Bạn đã sẵn sàng để chuyển sang bước tiếp theo.
+          </div>
+        ` : ''}
+
+        ${formHtml}
+
+        <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/4/continue" method="post" style="margin-top: 28px;">
+          <div class="wizard-actions">
+            <a href="/admin/wizard/${encodeURIComponent(shop.id)}/step/3" class="btn btn-secondary">← Quay lại Bước 3</a>
+            <button type="submit" class="btn btn-primary" ${!isStep4Passed ? 'disabled' : ''}>
+              ${isStep4Passed ? 'Tiếp tục sang Bước 5 →' : 'Cần lưu Credential để Tiếp tục'}
+            </button>
+          </div>
+          ${!isStep4Passed ? '<p class="meta" style="color: var(--danger); text-align: right; margin-top: 8px;">* Vui lòng nhập và lưu thành công thông tin xác thực Facebook Page hoạt động để có thể mở khóa nút Tiếp tục.</p>' : ''}
+        </form>
+      </div>
+    `;
+
+    res.send(renderWizardLayout('Lưu thông tin xác thực', body, {
+      shopId: shop.id,
+      currentStep: 4,
+      completedSteps: [0, 1, 2, 3]
+    }));
+  }
+
+  async function renderStep4(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.DASHBOARD_READ,
+      bearerOnly: true,
+      action: 'admin.wizard.step_4.view',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      // Check for active mapping
+      const activeMapping = (shopDetail.pages || []).find(p => p.status === 'active');
+      let safeActiveMapping = null;
+      if (activeMapping) {
+        safeActiveMapping = {
+          id: activeMapping.id || '',
+          page_ref: activeMapping.page_id ? pageRef(activeMapping.page_id) : 'unknown',
+          page_name: activeMapping.page_name || '',
+          status: activeMapping.status || '',
+          active_credential_count: activeMapping.active_credential_count || 0
+        };
+      }
+
+      const success = req.query.success === 'credential'
+        ? 'Thông tin xác thực đã được lưu trữ và mã hóa an toàn!'
+        : '';
+
+      renderStep4Html(res, {
+        shop: shopDetail.shop,
+        activeMapping: safeActiveMapping,
+        success
+      });
+    } catch (err) {
+      console.error('STEP 4 VIEW ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tải Bước 4 Setup Wizard.');
+    }
+  }
+
+  async function submitStep4Create(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_4.create',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    const pageToken = String(req.body.page_token || '').trim();
+    const confirmationText = String(req.body.confirmation_text || '').trim();
+
+    let shopDetail;
+    try {
+      shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const activeMapping = (shopDetail.pages || []).find(p => p.status === 'active');
+      if (!activeMapping) {
+        return renderStep4Html(res, {
+          shop: shopDetail.shop,
+          activeMapping: null,
+          error: 'Không tìm thấy liên kết trang Facebook hoạt động để lưu thông tin xác thực.'
+        });
+      }
+
+      const safeActiveMapping = {
+        id: activeMapping.id || '',
+        page_ref: activeMapping.page_id ? pageRef(activeMapping.page_id) : 'unknown',
+        page_name: activeMapping.page_name || '',
+        status: activeMapping.status || '',
+        active_credential_count: activeMapping.active_credential_count || 0
+      };
+
+      // Check confirmation text
+      if (confirmationText.toUpperCase() !== 'CREATE PAGE CREDENTIAL') {
+        return renderStep4Html(res, {
+          shop: shopDetail.shop,
+          activeMapping: safeActiveMapping,
+          error: 'Bạn phải nhập đúng "CREATE PAGE CREDENTIAL" để xác nhận.'
+        });
+      }
+
+      // Reject duplicate credential if active already exists (wizard constraint)
+      if (activeMapping.active_credential_count > 0) {
+        return renderStep4Html(res, {
+          shop: shopDetail.shop,
+          activeMapping: safeActiveMapping,
+          error: 'Thông tin xác thực hoạt động đã tồn tại cho trang Facebook này. Không thể tạo trùng lặp.'
+        });
+      }
+
+      if (!pageToken) {
+        return renderStep4Html(res, {
+          shop: shopDetail.shop,
+          activeMapping: safeActiveMapping,
+          error: 'Token xác thực không được bỏ trống.'
+        });
+      }
+
+      // Use canonical credential service
+      await pageCredentialWrites.createPageCredential({
+        principal,
+        shopId: shopDetail.shop.id,
+        pageMappingId: activeMapping.id,
+        body: {
+          token: pageToken
+        },
+        requestContext: buildRequestContext(req)
+      });
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/4?success=credential`);
+    } catch (err) {
+      console.error('STEP 4 CREATE ERROR:', err);
+
+      let errorMsg = `Lỗi hệ thống: ${err.message}`;
+      if (err.code === 'active_credential_exists' || err.code === 'duplicate_active_credential') {
+        errorMsg = 'Thông tin xác thực hoạt động đã tồn tại cho trang Facebook này. Không thể tạo trùng lặp.';
+      } else if (
+        err.code === 'credential_master_key_missing' ||
+        err.message.includes('master_key') ||
+        err.message.includes('key_missing') ||
+        err.message.includes('encryption')
+      ) {
+        errorMsg = 'Lỗi cấu hình hệ thống: Không thể mã hóa thông tin xác thực tại thời điểm này. Vui lòng liên hệ quản trị viên.';
+      } else if (err.code === 'credential_token_invalid') {
+        errorMsg = 'Định dạng token xác thực không hợp lệ hoặc độ dài không đúng.';
+      }
+
+      // Re-read shop detail to get updated mappings
+      if (!shopDetail) {
+        try {
+          shopDetail = await reader.getShopDetail(shopId);
+        } catch (_) {}
+      }
+
+      let safeActiveMapping = null;
+      if (shopDetail && shopDetail.pages) {
+        const activeMapping = (shopDetail.pages || []).find(p => p.status === 'active');
+        if (activeMapping) {
+          safeActiveMapping = {
+            id: activeMapping.id || '',
+            page_ref: activeMapping.page_id ? pageRef(activeMapping.page_id) : 'unknown',
+            page_name: activeMapping.page_name || '',
+            status: activeMapping.status || '',
+            active_credential_count: activeMapping.active_credential_count || 0
+          };
+        }
+      }
+
+      // Never echo token or preserve it!
+      renderStep4Html(res, {
+        shop: shopDetail ? shopDetail.shop : { id: shopId, slug: shopId },
+        activeMapping: safeActiveMapping,
+        error: errorMsg
+      });
+    }
+  }
+
+  async function submitStep4Progress(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_4.progress',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      const activeMapping = (shopDetail.pages || []).find(p => p.status === 'active');
+      const activeCredentialCount = activeMapping ? (activeMapping.active_credential_count || 0) : 0;
+
+      if (!activeMapping || activeCredentialCount < 1) {
+        let safeActiveMapping = null;
+        if (activeMapping) {
+          safeActiveMapping = {
+            id: activeMapping.id || '',
+            page_ref: activeMapping.page_id ? pageRef(activeMapping.page_id) : 'unknown',
+            page_name: activeMapping.page_name || '',
+            status: activeMapping.status || '',
+            active_credential_count: activeCredentialCount
+          };
+        }
+        return renderStep4Html(res, {
+          shop: shopDetail.shop,
+          activeMapping: safeActiveMapping,
+          error: 'Không đủ điều kiện để tiếp tục: Cần ít nhất 1 thông tin xác thực hoạt động.'
+        });
+      }
+
+      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopDetail.shop.id)}/step/5`);
+    } catch (err) {
+      console.error('STEP 4 PROGRESSION ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tiếp tục sang bước 5.');
+    }
+  }
+
+  // General step rendering (Steps 5 to 6)
   async function renderStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
     const step = parseInt(req.params.step, 10);
@@ -1472,7 +1807,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 4 || step > 6) {
+    if (isNaN(step) || step < 5 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
 
@@ -1514,7 +1849,7 @@ function registerWizardRoutes(app, {
     }));
   }
 
-  // Handle Step submissions (Steps 4 to 6)
+  // Handle Step submissions (Steps 5 to 6)
   async function submitStepPage(req, res) {
     const shopId = String(req.params.shopId || '').trim();
     const step = parseInt(req.params.step, 10);
@@ -1528,7 +1863,7 @@ function registerWizardRoutes(app, {
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 4 || step > 6) {
+    if (isNaN(step) || step < 5 || step > 6) {
       return res.status(400).send('Số bước không hợp lệ.');
     }
 
@@ -1582,6 +1917,9 @@ function registerWizardRoutes(app, {
   app.post('/admin/wizard/:shopId/step/3', wizardShopGuard, submitStep3Create);
   app.post('/admin/wizard/:shopId/step/3/preview', wizardShopGuard, submitStep3Preview);
   app.post('/admin/wizard/:shopId/step/3/continue', wizardShopGuard, submitStep3Progress);
+  app.get('/admin/wizard/:shopId/step/4', wizardShopGuard, renderStep4);
+  app.post('/admin/wizard/:shopId/step/4', wizardShopGuard, submitStep4Create);
+  app.post('/admin/wizard/:shopId/step/4/continue', wizardShopGuard, submitStep4Progress);
   app.get('/admin/wizard/:shopId/step/:step', wizardShopGuard, renderStepPage);
   app.post('/admin/wizard/:shopId/step/:step', wizardShopGuard, submitStepPage);
 }
