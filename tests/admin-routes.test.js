@@ -3526,7 +3526,7 @@ describe('admin dashboard routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body).toContain('<tr><th>Chế độ test an toàn (dry_run)</th><td><span class="status status-success">true</span></td></tr>');
       expect(res.body).toContain('<tr><th>Cho phép chạy thật (live_enabled)</th><td><span class="status status-warning">disabled</span></td></tr>');
-      expect(res.body).toContain('Emergency Brake');
+      expect(res.body).toContain('Emergency');
       expect(res.body).toContain(item.explanation);
       expect(res.body).toContain(item.shown);
       expect(res.body).toContain(item.label);
