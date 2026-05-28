@@ -48,7 +48,7 @@ class MockPgClient {
     }
     if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1')) {
       if (cleanSql.includes('ORDER BY')) {
-        return { rows: [{ id: params[0], slug: params[0], name: 'My Staging Shop', status: 'active', package: 'basic', lifecycle: 'draft', last_manual_test_status: 'passed' }] };
+        return { rows: [{ id: params[0], slug: params[0], name: 'My Staging Shop', status: 'active', package: 'basic', lifecycle: 'draft', last_manual_test_status: 'passed', dry_run: true }] };
       }
 
       if (params && params[0] === 'duplicate-slug') {
@@ -229,6 +229,13 @@ class MockPgClient {
         id: params ? params[0] : 'some-shop',
         last_readiness_status: params ? params[1] : 'passed',
         last_readiness_checked_at: new Date().toISOString()
+      }] };
+    }
+    if (cleanSql.includes('UPDATE SHOPS') && cleanSql.includes('LAST_MANUAL_TEST_STATUS')) {
+      return { rows: [{
+        id: params ? params[1] : 'some-shop',
+        last_manual_test_status: params ? params[0] : 'passed',
+        last_manual_test_at: new Date().toISOString()
       }] };
     }
     if (sql.includes('SELECT slug, name, status, lifecycle FROM shops')) {
@@ -1630,5 +1637,174 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
     expect(res.statusCode).toBe(400);
 
     process.env = originalEnv;
+  });
+
+  describe('Setup Wizard Step 6 Dry-Run Simulation', () => {
+    it('GET /admin/wizard/:shopId/step/6 requires auth', async () => {
+      const app = createApp();
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({ params: { shopId: 'has-credentials-shop' } });
+      const res = createRes();
+      await app.routes['/admin/wizard/:shopId/step/6'](req, res);
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('GET /admin/wizard/:shopId/step/6 blocks adult-shop', async () => {
+      const app = createApp();
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'adult-shop' }
+      });
+      const res = createRes();
+      await app.routes['/admin/wizard/:shopId/step/6'](req, res);
+
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('GET /admin/wizard/:shopId/step/6 renders dry-run status and simulation UI safely', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+      process.env.MESSENGER_DRY_RUN = 'true';
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop' }
+      });
+      const res = createRes();
+      await app.routes['/admin/wizard/:shopId/step/6'](req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.includes('Dry-Run Smoke Test')).toBeTrue();
+      expect(res.body.includes('Simulation only:')).toBeTrue();
+      expect(res.body.includes('MESSENGER_DRY_RUN')).toBeFalse();
+      expect(res.body.includes('DATABASE_URL')).toBeFalse();
+
+      process.env = originalEnv;
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/simulate blocks if global dry-run is false', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+      process.env.MESSENGER_DRY_RUN = 'false';
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop' },
+        body: { productCode: 'code1' }
+      });
+      const res = createRes();
+      await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.includes('Giả lập chạy thử chỉ được thực hiện khi cả global dry-run và local shop dry-run đều được bật.')).toBeTrue();
+
+      process.env = originalEnv;
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/simulate passes when menu text and active product code resolve', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+      process.env.MESSENGER_DRY_RUN = 'true';
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop' },
+        body: { productCode: 'code1' }
+      });
+      const res = createRes();
+      await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
+
+      expect(res.statusCode).toBe(303);
+      expect(res.headers.location.includes('success=simulated')).toBeTrue();
+      expect(res.headers.location.includes('menu_pass=1')).toBeTrue();
+      expect(res.headers.location.includes('product_pass=1')).toBeTrue();
+
+      process.env = originalEnv;
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/complete blocks without passed manual test', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-page-shop' }
+      });
+      const res = createRes();
+
+      const originalQuery = MockPgClient.prototype.query;
+      MockPgClient.prototype.query = async function(sql, params) {
+        const cleanSql = String(sql || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1') && cleanSql.includes('ORDER BY')) {
+          return { rows: [{ id: params[0], slug: params[0], status: 'active', lifecycle: 'draft', last_manual_test_status: 'unknown', dry_run: true }] };
+        }
+        return originalQuery.call(this, sql, params);
+      };
+
+      try {
+        await app.routes['POST /admin/wizard/:shopId/step/6/complete'](req, res);
+        expect(res.statusCode).toBe(400);
+        expect(res.body.includes('Cần hoàn thành chạy thử giả lập trước khi hoàn tất.')).toBeTrue();
+      } finally {
+        MockPgClient.prototype.query = originalQuery;
+        process.env = originalEnv;
+      }
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/complete succeeds after passed manual test', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop' }
+      });
+      const res = createRes();
+      await app.routes['POST /admin/wizard/:shopId/step/6/complete'](req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.includes('Setup Wizard Hoàn Tất!')).toBeTrue();
+      expect(res.body.includes('Chạy thử an toàn (Dry-run: ON, Live: OFF)')).toBeTrue();
+
+      process.env = originalEnv;
+    });
+
+    it('Generic step handler rejects step 6', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop', step: '6' }
+      });
+      const res = createRes();
+      await app.routes['/admin/wizard/:shopId/step/:step'](req, res);
+
+      expect(res.statusCode).toBe(400);
+
+      process.env = originalEnv;
+    });
   });
 });

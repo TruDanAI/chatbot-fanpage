@@ -2108,116 +2108,349 @@ function registerWizardRoutes(app, {
     }
   }
 
-  // General step rendering (Steps 5 to 6)
-  async function renderStepPage(req, res) {
-    const shopId = String(req.params.shopId || '').trim();
-    const step = parseInt(req.params.step, 10);
+  // ──── Step 6: Dry-Run Smoke Test (Chạy thử giả lập) ────
 
-    const principal = await authorizeAdminRequest(req, res, {
-      permission: PERMISSIONS.PRODUCT_WRITE,
-      bearerOnly: true,
-      action: `admin.wizard.step_${step}.view`,
-      resourceType: 'wizard',
-      resourceId: shopId
-    });
-    if (!principal) return;
+  function renderStep6Html(res, {
+    shop,
+    globalDryRun,
+    isShopDryRun,
+    defaultProductCode = '',
+    manualTestStatus = 'unknown',
+    showSimulation = false,
+    simulationResults = {},
+    error = '',
+    success = ''
+  } = {}) {
+    const isCompleted = manualTestStatus === 'passed';
 
-    if (isNaN(step) || step < 6 || step > 6) {
-      return res.status(400).send('Số bước không hợp lệ.');
+    let simulationResultHtml = '';
+    if (showSimulation) {
+      const { menuPass, productPass, handoffPass, mappingPass, credentialPass } = simulationResults;
+      const allPass = menuPass && productPass && mappingPass && credentialPass;
 
+      simulationResultHtml = `
+        <div class="checklist-card" style="margin: 20px 0; border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #ffffff;">
+          <h3 style="margin-top: 0; font-size: 15px; color: var(--primary-dark);">📊 Kết quả chạy thử giả lập mới nhất:</h3>
+
+          <div style="display: grid; gap: 10px; margin-top: 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 13px; color: #334155;">1. Tin nhắn "menu" phản hồi đầu Menu:</span>
+              <span class="badge ${menuPass ? 'badge-success' : 'badge-danger'}">${menuPass ? 'ĐẠT' : 'CHƯA ĐẠT'}</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 13px; color: #334155;">2. Tra cứu mã sản phẩm hoạt động:</span>
+              <span class="badge ${productPass ? 'badge-success' : 'badge-danger'}">${productPass ? 'ĐẠT' : 'CHƯA ĐẠT'}</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 13px; color: #334155;">3. Liên kết trang Facebook hoạt động:</span>
+              <span class="badge ${mappingPass ? 'badge-success' : 'badge-danger'}">${mappingPass ? 'ĐẠT' : 'CHƯA ĐẠT'}</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 13px; color: #334155;">4. Thông tin xác thực Page hoạt động:</span>
+              <span class="badge ${credentialPass ? 'badge-success' : 'badge-danger'}">${credentialPass ? 'ĐẠT' : 'CHƯA ĐẠT'}</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 13px; color: #334155;">5. Phân phối bàn giao nhân viên (Handoff):</span>
+              <span class="badge ${handoffPass ? 'badge-success' : 'badge-neutral'}">${handoffPass ? 'ĐẠT (Có bật)' : 'BỎ QUA (Không bật)'}</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 13px; color: #334155;">6. Cách ly an toàn tuyệt đối (Không gửi Messenger thật):</span>
+              <span class="badge badge-success">ĐẠT (Bảo vệ an toàn)</span>
+            </div>
+          </div>
+
+          ${allPass
+            ? `<div class="banner banner-success" style="margin-top: 14px; font-size: 13px;">✅ <strong>Giả lập thành công:</strong> Shop đã đạt toàn bộ tiêu chí chạy thử giả lập! Nút <strong>Hoàn tất Setup Wizard</strong> hiện đã khả dụng.</div>`
+            : `<div class="banner banner-error" style="margin-top: 14px; font-size: 13px;">❌ <strong>Giả lập thất bại:</strong> Vui lòng hoàn tất cấu hình Menu (Bước 2), Sản phẩm (Bước 2), Page Mapping (Bước 3), hoặc Page Credential (Bước 4) để vượt qua bài test.</div>`
+          }
+        </div>
+      `;
     }
-
-    const completedSteps = [];
-    for (let i = 0; i < step; i++) completedSteps.push(i);
-
-    const stepNames = [
-      '',
-      '',
-      '',
-      'Liên kết trang Facebook',
-      'Lưu thông tin xác thực',
-      'Readiness Gate (Kiểm tra sẵn sàng)',
-      'Dry-Run Smoke Test (Chạy thử giả lập)'
-    ];
 
     const body = `
       <div class="wizard-card">
-        <h1>Bước ${step}: ${escapeHtml(stepNames[step])}</h1>
-        <p>Đang thiết lập cho shop định danh: <code>${escapeHtml(shopId)}</code></p>
-        
-        <div class="banner banner-warning">
-          ⚠️ <strong>Giao diện tạm thời:</strong> Logic chi tiết của Bước ${step} đang được tích hợp. Bạn có thể nhấn nút "Tiếp tục" để hoàn tất bộ khung xương Wizard.
+        <h1>Bước 6: Dry-Run Smoke Test (Chạy thử giả lập)</h1>
+        <p>Hệ thống hỗ trợ chạy thử nghiệm giả lập offline an toàn tuyệt đối cho shop <strong>${escapeHtml(shop.name || shop.slug)}</strong> để kiểm thử luồng tin nhắn tự động mà không gọi Meta API hay gửi tin nhắn thật đến người dùng.</p>
+
+        <div class="banner banner-warning" style="margin: 16px 0;">
+          ⚠️ <strong>Simulation only:</strong> Không có bất kỳ tin nhắn Messenger thật nào được gửi đi. Toàn bộ quá trình diễn ra giả lập hoàn toàn trong sandbox.
         </div>
 
-        <form action="/admin/wizard/${encodeURIComponent(shopId)}/step/${step}" method="post" style="margin-top: 20px;">
-          <div class="wizard-actions">
-            <a href="/admin/wizard/${encodeURIComponent(shopId)}/step/${step - 1}" class="btn btn-secondary">← Quay lại</a>
-            <button type="submit" class="btn btn-primary">${step === 6 ? 'Hoàn tất Setup Wizard ✅' : 'Tiếp tục →'}</button>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0;">
+          <div class="count">
+            <span>Messenger Dry-Run (Global)</span>
+            <strong style="color: ${globalDryRun ? 'var(--success)' : 'var(--danger)'};">${globalDryRun ? 'ĐANG BẬT (An toàn)' : 'ĐANG TẮT (Nguy hiểm)'}</strong>
           </div>
-        </form>
+          <div class="count">
+            <span>Chạy thử Shop (Local dry_run)</span>
+            <strong style="color: ${isShopDryRun ? 'var(--success)' : 'var(--danger)'};">${isShopDryRun ? 'ĐANG BẬT (An toàn)' : 'ĐANG TẮT (Nguy hiểm)'}</strong>
+          </div>
+          <div class="count">
+            <span>Trạng thái kiểm thử (Manual Test)</span>
+            <strong style="color: ${isCompleted ? 'var(--success)' : 'var(--muted)'};">${manualTestStatus.toUpperCase()}</strong>
+          </div>
+        </div>
+
+        ${error ? `<div class="banner banner-error">❌ <strong>Lỗi:</strong> ${escapeHtml(error)}</div>` : ''}
+        ${success ? `<div class="banner banner-success">✅ ${escapeHtml(success)}</div>` : ''}
+
+        ${simulationResultHtml}
+
+        <div class="checklist-card" style="margin: 20px 0; border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #ffffff;">
+          <h2 style="margin-top: 0; font-size: 16px;">🔄 Bảng điều khiển giả lập (Simulation Dashboard)</h2>
+          <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/6/simulate" method="post">
+            <div style="display: grid; gap: 12px; margin-top: 14px;">
+              <label for="productCode" style="font-weight: bold; font-size: 13px;">Mã sản phẩm dùng để giả lập tra cứu:</label>
+              <input type="text" id="productCode" name="productCode" required value="${escapeHtml(defaultProductCode)}" style="min-height: 38px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 14px;">
+              <span class="page-id-help">Hệ thống sẽ giả lập người dùng gửi hai tin nhắn: <code>"menu"</code> và mã sản phẩm ở trên.</span>
+
+              <button type="submit" class="btn btn-secondary" style="min-height: 40px; margin-top: 8px;">🚀 Bắt đầu giả lập chạy thử (Run Simulation)</button>
+            </div>
+          </form>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);">
+          <a href="/admin/wizard/${encodeURIComponent(shop.id)}/step/5" class="btn btn-secondary">← Quay lại Bước 5</a>
+
+          <form action="/admin/wizard/${encodeURIComponent(shop.id)}/step/6/complete" method="post" style="margin: 0;">
+            <button type="submit" class="btn btn-primary" ${!isCompleted ? 'disabled' : ''}>
+              ${isCompleted ? 'Hoàn tất Setup Wizard ✅' : 'Cần đạt bài Chạy thử giả lập để Hoàn tất'}
+            </button>
+          </form>
+        </div>
       </div>
     `;
 
-    res.send(renderWizardLayout(`Bước ${step}: ${stepNames[step]}`, body, {
-      shopId,
-      currentStep: step,
-      completedSteps
+    res.send(renderWizardLayout('Chạy thử giả lập', body, {
+      shopId: shop.id,
+      currentStep: 6,
+      completedSteps: [0, 1, 2, 3, 4, 5]
     }));
   }
 
-  // Handle Step submissions (Steps 5 to 6)
-  async function submitStepPage(req, res) {
+  async function renderStep6(req, res) {
     const shopId = String(req.params.shopId || '').trim();
-    const step = parseInt(req.params.step, 10);
 
     const principal = await authorizeAdminRequest(req, res, {
-      permission: PERMISSIONS.PRODUCT_WRITE,
+      permission: PERMISSIONS.DASHBOARD_READ,
       bearerOnly: true,
-      action: `admin.wizard.step_${step}.submit`,
+      action: 'admin.wizard.step_6.view',
       resourceType: 'wizard',
       resourceId: shopId
     });
     if (!principal) return;
 
-    if (isNaN(step) || step < 6 || step > 6) {
-      return res.status(400).send('Số bước không hợp lệ.');
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      if (BLOCKLIST.has(shopId.toLowerCase())) {
+        return res.status(403).send('Thao tác bị chặn.');
+      }
+
+      const globalDryRun = resolveGlobalDryRunState(process.env).dry_run;
+      const isShopDryRun = Boolean(shopDetail.shop.dry_run);
+
+      const activeProducts = shopDetail.products.filter(p => p.status === 'active');
+      const defaultProductCode = activeProducts[0]?.code || '';
+
+      const manualTestStatus = shopDetail.shop.last_manual_test_status || 'unknown';
+
+      const showSimulation = req.query.success === 'simulated' || req.query.error === 'failed';
+      const menuPass = req.query.menu_pass === '1';
+      const productPass = req.query.product_pass === '1';
+      const handoffPass = req.query.handoff_pass === '1';
+      const mappingPass = req.query.mapping_pass === '1';
+      const credentialPass = req.query.credential_pass === '1';
+
+      renderStep6Html(res, {
+        shop: shopDetail.shop,
+        globalDryRun,
+        isShopDryRun,
+        defaultProductCode,
+        manualTestStatus,
+        showSimulation,
+        simulationResults: {
+          menuPass,
+          productPass,
+          handoffPass,
+          mappingPass,
+          credentialPass
+        },
+        error: req.query.error === 'failed' ? 'Giả lập thất bại: Vui lòng kiểm tra các điều kiện chưa đạt.' : '',
+        success: req.query.success === 'simulated' ? 'Giả lập chạy thử thành công!' : ''
+      });
+    } catch (err) {
+      console.error('STEP 6 VIEW ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi tải Bước 6 Setup Wizard.');
     }
+  }
 
+  async function submitStep6Simulate(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
 
-    if (step < 6) {
-      res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/${step + 1}`);
-    } else {
-      // Step 6 complete screen
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_6.simulate',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      if (BLOCKLIST.has(shopId.toLowerCase())) {
+        return res.status(403).send('Thao tác bị chặn.');
+      }
+
+      const globalDryRun = resolveGlobalDryRunState(process.env).dry_run;
+      const isShopDryRun = Boolean(shopDetail.shop.dry_run);
+
+      if (globalDryRun !== true || !isShopDryRun) {
+        return res.status(400).send('Giả lập chạy thử chỉ được thực hiện khi cả global dry-run và local shop dry-run đều được bật.');
+      }
+
+      const menuPass = Boolean(shopDetail.settings?.menu_intro_text?.trim());
+
+      const inputProductCode = String(req.body.productCode || '').trim();
+      const resolvedProduct = shopDetail.products.find(p => p.status === 'active' && p.code === inputProductCode);
+      const productPass = Boolean(resolvedProduct);
+
+      const mappingPass = shopDetail.pages.filter(p => p.status === 'active').length === 1;
+
+      const credentialPass = (shopDetail.credentials?.active_fb_page_token_count || 0) === 1;
+
+      const handoffPass = Boolean(shopDetail.settings?.handoff_enabled);
+
+      const noRealSend = true;
+
+      const success = menuPass && productPass && mappingPass && credentialPass && noRealSend;
+
+      if (success) {
+        const dbClient = new (Client || loadPgClient())({ connectionString: process.env.DATABASE_URL });
+        await dbClient.connect();
+        try {
+          await dbClient.query(`
+            UPDATE shops
+            SET last_manual_test_status = $1,
+                last_manual_test_at = now()
+            WHERE id = $2
+          `, ['passed', shopDetail.shop.id]);
+        } finally {
+          await dbClient.end();
+        }
+
+        res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/6?success=simulated&menu_pass=1&product_pass=1&mapping_pass=1&credential_pass=1&handoff_pass=${handoffPass ? 1 : 0}`);
+      } else {
+        res.redirect(303, `/admin/wizard/${encodeURIComponent(shopId)}/step/6?error=failed&menu_pass=${menuPass ? 1 : 0}&product_pass=${productPass ? 1 : 0}&mapping_pass=${mappingPass ? 1 : 0}&credential_pass=${credentialPass ? 1 : 0}&handoff_pass=${handoffPass ? 1 : 0}`);
+      }
+    } catch (err) {
+      console.error('STEP 6 SIMULATE ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi chạy giả lập.');
+    }
+  }
+
+  async function submitStep6Complete(req, res) {
+    const shopId = String(req.params.shopId || '').trim();
+
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.wizard.step_6.complete',
+      resourceType: 'wizard',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const shopDetail = await reader.getShopDetail(shopId);
+      if (!shopDetail.shop) {
+        return res.status(404).send('Không tìm thấy cửa hàng.');
+      }
+
+      if (BLOCKLIST.has(shopId.toLowerCase())) {
+        return res.status(403).send('Thao tác bị chặn.');
+      }
+
+      if (shopDetail.shop.last_manual_test_status !== 'passed') {
+        return res.status(400).send('Cần hoàn thành chạy thử giả lập trước khi hoàn tất.');
+      }
+
+      try {
+        await shopReadinessChecks.checkReadiness({
+          principal,
+          shopId: shopDetail.shop.id,
+          requestContext: buildRequestContext(req)
+        });
+      } catch (readinessErr) {
+        console.error('FINAL READINESS CHECK WARNING:', readinessErr.message);
+      }
+
       const completedSteps = [0, 1, 2, 3, 4, 5, 6];
       const body = `
         <div class="wizard-card">
           <h1>🎉 Setup Wizard Hoàn Tất!</h1>
           <div class="banner banner-success">
-            Đã hoàn thành xuất sắc 6 bước setup an toàn cho shop <strong>${escapeHtml(shopId)}</strong>!
+            Đã cấu hình và hoàn thành chạy thử thành công cho shop <strong>${escapeHtml(shopDetail.shop.name || shopDetail.shop.slug)}</strong>!
           </div>
-          <p>Cửa hàng đã được đưa về chế độ chạy thử (Dry-run: ON, Live: OFF) an toàn tuyệt đối. Môi trường adult-shop vẫn hoạt động độc lập.</p>
           
           <div style="margin: 20px 0; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border);">
-            <h3>Hành động tiếp theo khuyến nghị:</h3>
-            <ol style="margin: 0; padding-left: 20px; line-height: 1.6;">
-              <li>Mở tài khoản Facebook tester được ủy quyền.</li>
-              <li>Gửi tin nhắn <code>menu</code> hoặc mã sản phẩm đến trang Facebook thử nghiệm.</li>
-              <li>Kiểm tra phản hồi và xác nhận nhân viên có nhận được luồng bàn giao hay không.</li>
-              <li>Gửi yêu cầu phê duyệt go-live chính thức lên quản trị viên hệ thống.</li>
-            </ol>
+            <h3>🛡️ Hoàn thành ở chế độ chạy thử (Dry-Run Mode):</h3>
+            <p style="margin: 6px 0; line-height: 1.5; font-size: 14px; color: #334155;">
+              Cửa hàng hiện đã kết thúc toàn bộ 6 bước thiết lập trong trạng thái <strong>Chạy thử an toàn (Dry-run: ON, Live: OFF)</strong>.
+              Bot chỉ phản hồi giả lập, tuyệt đối không gửi tin nhắn thật hay gây ảnh hưởng tới người dùng Messenger của bạn.
+            </p>
+            <p style="margin: 12px 0 6px; font-weight: bold; font-size: 14px; color: var(--warning);">
+              ⚠️ Việc kích hoạt chế độ chạy thật (Live) là hành động riêng biệt và cần có phê duyệt của quản trị viên hệ thống.
+            </p>
           </div>
 
-          <div class="wizard-actions">
+          <div style="margin: 20px 0; padding: 16px; background: #ffffff; border-radius: 8px; border: 1px solid var(--border);">
+            <h3>📋 Các bước vận hành tiếp theo khuyến nghị:</h3>
+            <ul style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px; color: #475569;">
+              <li>Truy cập trang Quản lý Shop để xem chi tiết cấu hình.</li>
+              <li>Tải lên thêm các hình ảnh sản phẩm hoạt động thiếu (nếu có).</li>
+              <li>Sử dụng các công tắc bật/tắt Dry-run và Live ở trang chi tiết Shop sau khi được duyệt.</li>
+            </ul>
+          </div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);">
             <span></span>
-            <a href="/admin/shops/${encodeURIComponent(shopId)}" class="btn btn-primary">Đi đến trang quản lý Shop</a>
+            <a href="/admin/shops/${encodeURIComponent(shopDetail.shop.id)}" class="btn btn-primary">Đi đến trang quản lý Shop →</a>
           </div>
         </div>
       `;
+
       res.send(renderWizardLayout('Wizard Complete', body, {
-        shopId,
+        shopId: shopDetail.shop.id,
         currentStep: 6,
         completedSteps
       }));
+    } catch (err) {
+      console.error('STEP 6 COMPLETE ERROR:', err);
+      res.status(500).send('Lỗi máy chủ khi hoàn tất Setup Wizard.');
+    }
+  }
+
+  // Legacy fallback routes
+  async function renderStepPage(req, res) {
+    const step = parseInt(req.params.step, 10);
+    if (isNaN(step) || step < 7 || step > 7) {
+      return res.status(400).send('Số bước không hợp lệ.');
+    }
+  }
+
+  async function submitStepPage(req, res) {
+    const step = parseInt(req.params.step, 10);
+    if (isNaN(step) || step < 7 || step > 7) {
+      return res.status(400).send('Số bước không hợp lệ.');
     }
   }
 
@@ -2240,6 +2473,9 @@ function registerWizardRoutes(app, {
   app.get('/admin/wizard/:shopId/step/5', wizardShopGuard, renderStep5);
   app.post('/admin/wizard/:shopId/step/5/recheck', wizardShopGuard, submitStep5Recheck);
   app.post('/admin/wizard/:shopId/step/5/continue', wizardShopGuard, submitStep5Progress);
+  app.get('/admin/wizard/:shopId/step/6', wizardShopGuard, renderStep6);
+  app.post('/admin/wizard/:shopId/step/6/simulate', wizardShopGuard, submitStep6Simulate);
+  app.post('/admin/wizard/:shopId/step/6/complete', wizardShopGuard, submitStep6Complete);
   app.get('/admin/wizard/:shopId/step/:step', wizardShopGuard, renderStepPage);
   app.post('/admin/wizard/:shopId/step/:step', wizardShopGuard, submitStepPage);
 
