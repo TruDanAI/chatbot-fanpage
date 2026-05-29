@@ -67,6 +67,23 @@ function renderStatus(value = '') {
   return `<span class="${statusClass(label)}">${escapeHtml(label)}</span>`;
 }
 
+function renderProductStatus(value = '') {
+  const status = String(value || '').toLowerCase();
+  let label = value;
+  let helper = '';
+  if (status === 'active') {
+    label = 'Hoạt động';
+    helper = 'bot có thể tư vấn';
+  } else if (status === 'hidden') {
+    label = 'Tạm ẩn';
+    helper = 'bot không tư vấn';
+  } else if (status === 'archived') {
+    label = 'Đã lưu trữ';
+    helper = 'giữ lại lịch sử, không dùng trong bot';
+  }
+  return `<span class="${statusClass(value)}">${escapeHtml(label)}</span><br><span class="meta" style="font-size: 11px; display: block; margin-top: 4px; font-weight: normal; text-transform: none; line-height: 1.3;">${escapeHtml(helper)}</span>`;
+}
+
 function dashboardQueryString(filters = {}, overrides = {}) {
   const params = new URLSearchParams();
   const next = { ...filters, ...overrides };
@@ -528,6 +545,10 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     }
     body:not(.js-enabled) .js-edit-product-btn {
       display: none;
+    }
+    @media (max-width: 640px) {
+      .product-section table { display: none !important; }
+      .product-mobile-list { display: flex !important; flex-direction: column; gap: 12px; }
     }
   </style>
 </head>
@@ -2032,25 +2053,127 @@ function renderShopDetailHtml(model = {}) {
     '• Kịch bản phản hồi Bot: Thiết lập phản hồi tự động khi chuyển giao cho nhân viên (Handoff), chào mừng menu (Menu intro), và trả lời khi không hiểu câu hỏi (Fallback).\n• Quản lý sản phẩm: Thêm danh mục sản phẩm hoạt động kèm mã code định danh (Ví dụ: M1, M2). Chatbot sẽ nhận diện các mã này trong tin nhắn khách để tư vấn chi tiết.'
   );
 
+  const productMobileListHtml = (!model.products || model.products.length === 0)
+    ? ''
+    : `<div class="product-mobile-list" style="display: none;">
+        ${model.products.map(product => {
+          const isArchived = String(product.status || '').toLowerCase() === 'archived';
+          const style = isArchived ? 'opacity: 0.6; ' : '';
+          const productImage = assetRows.find(a =>
+            a.asset_type === 'product_image' &&
+            a.status === 'active' &&
+            (
+              (a.product_id && String(a.product_id) === String(product.id)) ||
+              (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
+            )
+          );
+          const hasImage = !!(productImage && productImage.public_url);
+          let imgHtml = '';
+          if (hasImage) {
+            imgHtml = `<img src="${escapeHtml(productImage.public_url)}" alt="${escapeHtml(product.name)}" style="width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div style="display: none; width: 64px; height: 64px; border-radius: 6px; background: #fee2e2; border: 1px solid var(--border); align-items: center; justify-content: center; text-align: center; font-size: 10px; color: var(--danger);" class="thumb-broken">Lỗi ảnh</div>`;
+          } else {
+            const isActive = String(product.status || '').toLowerCase() === 'active';
+            if (isActive) {
+              imgHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; text-align: center; box-sizing: border-box; padding: 4px;">
+                <span style="font-size: 16px;">⚠</span>
+                <span style="font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 2px;">Thiếu ảnh</span>
+              </div>`;
+            } else {
+              imgHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b;">
+                <span style="font-size: 18px;">🖼️</span>
+              </div>`;
+            }
+          }
+
+          return `
+            <article class="product-card-fallback" style="${style}background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; gap: 12px; margin-bottom: 12px;">
+              <div class="product-card-img" style="flex-shrink: 0;">${imgHtml}</div>
+              <div class="product-card-info" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                  <code style="font-size: 13px; font-weight: bold;">${escapeHtml(product.code)}</code>
+                  <span class="meta" style="font-size: 11px;">Mã khách nhắn</span>
+                </div>
+                <h4 style="margin: 0; font-size: 14px; color: #17202a; font-weight: bold;">${escapeHtml(product.name)}</h4>
+                <p style="margin: 0; font-size: 12px; color: var(--muted);">${escapeHtml(limitText(product.description, 80))}</p>
+                <div style="margin-top: 4px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+                  <strong style="color: var(--primary); font-size: 13px;">${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</strong>
+                  <div>${renderProductStatus(product.status)}</div>
+                </div>
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                  <span class="meta" style="font-size: 11px;">Thứ tự: ${escapeHtml(product.sort_order || 0)}</span>
+                  <div style="display: flex; gap: 6px;">
+                    <button type="button" class="js-edit-product-btn button-link" style="padding: 4px 8px; font-size: 12px; font-weight: bold; background: var(--primary);">Sửa</button>
+                    ${renderProductStatusActions(shop.id, product)}
+                  </div>
+                </div>
+                <div class="js-fallback-form-container" style="display: none; margin-top: 8px;">
+                  ${renderProductEditForm(shop.id, product)}
+                </div>
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>`;
+
   const productsListHtml = (!model.products || model.products.length === 0)
     ? renderEmptyState('📦', 'Chưa có sản phẩm nào / Empty Catalog', 'Danh mục sản phẩm của shop đang trống. Hãy kéo xuống dưới để sử dụng form "Thêm sản phẩm thủ công" hoặc "Nhập sản phẩm từ CSV" nhằm khởi tạo dữ liệu.')
-    : renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products, product => `
-        <tr>
-          <td><code>${escapeHtml(product.code)}</code></td>
-          <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
-          <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
-          <td>${renderStatus(product.status)}</td>
-          <td>${escapeHtml(product.sort_order || 0)}</td>
-          <td>${escapeHtml(formatDate(product.updated_at))}</td>
-          <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
-          <td>
-            <button type="button" class="js-edit-product-btn button-link" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>
-            <div class="js-fallback-form-container">
-              ${renderProductEditForm(shop.id, product)}
+    : renderTable(['code', 'Ảnh', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products, product => {
+        const isArchived = String(product.status || '').toLowerCase() === 'archived';
+        const rowStyle = isArchived ? ' style="opacity: 0.6;"' : '';
+        const productImage = assetRows.find(a =>
+          a.asset_type === 'product_image' &&
+          a.status === 'active' &&
+          (
+            (a.product_id && String(a.product_id) === String(product.id)) ||
+            (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
+          )
+        );
+        const hasImage = !!(productImage && productImage.public_url);
+        let imageHtml = '';
+        if (hasImage) {
+          imageHtml = `
+            <div style="position: relative; width: 48px; height: 48px;">
+              <img src="${escapeHtml(productImage.public_url)}" alt="${escapeHtml(product.name)}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+              <div style="display: none; width: 48px; height: 48px; border-radius: 6px; background: #fee2e2; border: 1px solid var(--border); align-items: center; justify-content: center; text-align: center; font-size: 9px; color: var(--danger);" class="thumb-broken">Lỗi ảnh</div>
             </div>
-          </td>
-        </tr>
-      `);
+          `;
+        } else {
+          const isActive = String(product.status || '').toLowerCase() === 'active';
+          if (isActive) {
+            imageHtml = `
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 56px; min-height: 56px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; padding: 4px; box-sizing: border-box; text-align: center;" title="Thiếu ảnh">
+                <span style="font-size: 14px;">⚠</span>
+                <span style="font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 2px;">Thiếu ảnh</span>
+              </div>
+            `;
+          } else {
+            imageHtml = `
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b;" title="Chưa có ảnh">
+                <span style="font-size: 16px;">🖼️</span>
+              </div>
+            `;
+          }
+        }
+        return `
+          <tr${rowStyle}>
+            <td><code>${escapeHtml(product.code)}</code><br><span class="meta" style="font-size: 11px; display: block; margin-top: 2px; font-weight: normal; text-transform: none; line-height: 1.3;">Mã khách nhắn cho bot</span></td>
+            <td>${imageHtml}</td>
+            <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
+            <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
+            <td>${renderProductStatus(product.status)}</td>
+            <td>${escapeHtml(product.sort_order || 0)}</td>
+            <td>${escapeHtml(formatDate(product.updated_at))}</td>
+            <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
+            <td>
+              <button type="button" class="js-edit-product-btn button-link" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>
+              <div class="js-fallback-form-container">
+                ${renderProductEditForm(shop.id, product)}
+              </div>
+            </td>
+          </tr>
+        `;
+      }) + productMobileListHtml;
 
   const assetsGuidanceCard = renderGuidanceCard(
     '💡 Phân biệt các loại hình ảnh',

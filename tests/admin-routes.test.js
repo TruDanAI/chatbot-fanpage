@@ -3242,13 +3242,109 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('shop detail HTML render product search/filter controls, badges, and archive confirmation', async () => {
+  it('shop detail HTML render product search/filter controls, localized badges, and visual placeholders', async () => {
     const app = createApp();
+    const reader = createDashboardReaderStub();
+
+    // Customize getShopDetail to return products with localized states and a missing image case
+    reader.getShopDetail = async (shopId) => {
+      return {
+        schemaReady: true,
+        shop: {
+          id: shopId,
+          slug: 'adult-shop',
+          name: 'Adult Shop',
+          status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          dry_run: false,
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_readiness_checked_at: '2026-05-12T00:30:00.000Z',
+          last_manual_test_status: 'passed',
+          last_manual_test_at: '2026-05-12T00:20:00.000Z',
+          last_ready_by: 'admin-1',
+          default_locale: 'vi-VN',
+          timezone: 'Asia/Bangkok',
+          created_at: '2026-05-11T00:00:00.000Z',
+          updated_at: '2026-05-12T00:00:00.000Z'
+        },
+        pages: [],
+        settings: {},
+        products: [
+          {
+            id: 'prod-1',
+            code: 'DB1',
+            name: 'DB Product',
+            description: 'safe product',
+            price_text: '150k',
+            status: 'active',
+            sort_order: 1,
+            updated_at: '2026-05-12T00:00:00.000Z'
+          },
+          {
+            id: 'prod-2',
+            code: 'DB2',
+            name: 'Hidden Product',
+            description: 'hidden product',
+            price_text: '220k',
+            status: 'hidden',
+            sort_order: 2,
+            updated_at: '2026-05-12T00:10:00.000Z'
+          },
+          {
+            id: 'prod-3',
+            code: 'DB3',
+            name: 'Archived Product',
+            description: 'archived product',
+            price_text: '330k',
+            status: 'archived',
+            sort_order: 3,
+            updated_at: '2026-05-12T00:20:00.000Z'
+          },
+          {
+            id: 'prod-4',
+            code: 'DB4',
+            name: 'Active Product No Image',
+            description: 'active product without image',
+            price_text: '440k',
+            status: 'active',
+            sort_order: 4,
+            updated_at: '2026-05-12T00:30:00.000Z'
+          }
+        ],
+        assets: {
+          summary: {
+            total: 1,
+            active: 1,
+            product_image: 1,
+            product_image_active: 1
+          },
+          rows: [{
+            id: 'asset-1',
+            product_id: 'prod-1',
+            product_code: 'DB1',
+            asset_type: 'product_image',
+            storage_provider: 'public_url',
+            public_url: 'https://cdn.example.test/db1.jpg',
+            content_type: 'image/jpeg',
+            status: 'active',
+            sort_order: 1,
+            updated_at: '2026-05-12T00:00:00.000Z'
+          }]
+        },
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1
+        }
+      };
+    };
+
     registerAdminRoutes(app, {
       storage: createStorageStub(),
       adminExportToken: 'secret',
       getClientIp: () => '127.0.0.1',
-      dashboardReader: createDashboardReaderStub(),
+      dashboardReader: reader,
       adminPrincipalRoles: ['maintainer']
     });
 
@@ -3264,9 +3360,31 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('name/title');
     expect(res.body).toContain('price_text');
     expect(res.body).toContain('sort_order');
-    expect(res.body).toContain('status status-success">active');
-    expect(res.body).toContain('status status-warning">hidden');
-    expect(res.body).toContain('status status-danger">archived');
+
+    // Localized status labels & helper copy
+    expect(res.body).toContain('status status-success">Hoạt động');
+    expect(res.body).toContain('bot có thể tư vấn');
+    expect(res.body).toContain('status status-warning">Tạm ẩn');
+    expect(res.body).toContain('bot không tư vấn');
+    expect(res.body).toContain('status status-danger">Đã lưu trữ');
+    expect(res.body).toContain('giữ lại lịch sử, không dùng trong bot');
+
+    // Style archived rows
+    expect(res.body).toContain('<tr style="opacity: 0.6;">');
+
+    // Product code helper
+    expect(res.body).toContain('Mã khách nhắn cho bot');
+
+    // "Ảnh" column & image thumbnails/placeholders
+    expect(res.body).toContain('<th>Ảnh</th>');
+    expect(res.body).toContain('https://cdn.example.test/db1.jpg'); // prod-1 thumbnail URL
+    expect(res.body).toContain('⚠'); // active product missing image warning symbol
+    expect(res.body).toContain('Thiếu ảnh'); // active product missing image warning text
+
+    // Mobile card fallback list
+    expect(res.body).toContain('class="product-mobile-list"');
+    expect(res.body).toContain('class="product-card-fallback"');
+
     expect(res.body).toContain('data-confirm="Archive product"');
     expect(res.body).toContain('Archive this product? It will be hidden from active use, not deleted.');
     expect(res.body).toContain('Add asset URL');
