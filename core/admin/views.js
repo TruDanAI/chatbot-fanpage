@@ -299,6 +299,27 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .collapsible-section summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 0; }
     .collapsible-section summary:hover { color: #17202a; }
     .page-id-help { font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; line-height: 1.4; }
+    .connection-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 14px; margin: 14px 0 18px; }
+    .connection-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .connection-card h3 { margin: 0; font-size: 17px; color: #17202a; }
+    .connection-card p { margin: 4px 0 0; line-height: 1.45; }
+    .environment-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .environment-badge.env-production { color: #991b1b; background: #fee2e2; }
+    .environment-badge.env-staging { color: #854d0e; background: #fef3c7; }
+    .environment-badge.env-local { color: #166534; background: #dcfce7; }
+    .connection-state-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .connection-state-label { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; font-size: 13px; font-weight: 800; }
+    .connection-state-label.state-ok { color: var(--success); background: #dcfce7; }
+    .connection-state-label.state-warning { color: var(--warning); background: #fef3c7; }
+    .connection-state-label.state-danger { color: var(--danger); background: #fee2e2; }
+    .connection-state-label.state-neutral { color: var(--neutral); background: #e2e8f0; }
+    .connection-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .connection-summary-item { border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 10px; }
+    .connection-summary-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .connection-summary-item strong { display: block; margin-top: 4px; font-size: 18px; color: #17202a; overflow-wrap: anywhere; }
+    .connection-notes { margin: 0; padding-left: 18px; color: #334155; font-size: 13px; line-height: 1.5; }
+    .connection-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .connection-action-disabled { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--muted); background: #f8fafc; font: inherit; font-size: 14px; font-weight: 700; cursor: not-allowed; }
     .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; padding-bottom: 1px; }
     .tabs a { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
     .tabs a:hover { color: #17202a; }
@@ -1396,6 +1417,18 @@ function renderPageCredentialPreviewDisabled() {
   return '<span class="meta">Credential writes are disabled in preview mode.</span>';
 }
 
+function resolveAdminEnvironmentBadge(env = process.env) {
+  const values = [
+    env.ADMIN_ENV,
+    env.RAILWAY_ENVIRONMENT,
+    env.RAILWAY_ENVIRONMENT_NAME,
+    env.NODE_ENV
+  ].map(value => String(value || '').trim().toLowerCase());
+  if (values.some(value => value.includes('prod'))) return { label: 'production', className: 'env-production' };
+  if (values.some(value => value.includes('staging'))) return { label: 'staging', className: 'env-staging' };
+  return { label: 'local', className: 'env-local' };
+}
+
 function isAdultShopView(shop = {}) {
   return [shop.id, shop.slug]
     .map(value => String(value || '').trim().toLowerCase())
@@ -1456,6 +1489,128 @@ function renderReadOnlyPageMappingsTable(pages = []) {
   `);
 }
 
+function resolveActiveCredentialCount(model = {}, activeMappings = []) {
+  const counts = activeMappings
+    .map(page => page.active_credential_count)
+    .filter(value => value != null)
+    .map(value => Number(value || 0));
+  if (counts.length) return counts.reduce((sum, value) => sum + value, 0);
+  if (model.onboarding?.counts?.active_credential_count != null) {
+    return Number(model.onboarding.counts.active_credential_count || 0);
+  }
+  if (model.credentials?.active_fb_page_token_count != null) {
+    return Number(model.credentials.active_fb_page_token_count || 0);
+  }
+  return 0;
+}
+
+function resolveFanpageConnectionState({ activeMappingCount = 0, activeCredentialCount = 0 } = {}) {
+  if (activeMappingCount > 1 || activeCredentialCount > 1) {
+    return {
+      code: 'S6',
+      label: 'XUNG ĐỘT KẾT NỐI',
+      className: 'state-danger',
+      help: 'Có nhiều liên kết hoặc nhiều quyền gửi tin đang hoạt động. Cần kỹ thuật kiểm tra trước khi vận hành.'
+    };
+  }
+  if (activeMappingCount === 0) {
+    return {
+      code: 'S0',
+      label: 'CHƯA KẾT NỐI',
+      className: 'state-danger',
+      help: 'Shop chưa có Page Mapping đang hoạt động nên bot chưa biết tin nhắn từ Page nào thuộc shop này.'
+    };
+  }
+  if (activeMappingCount === 1 && activeCredentialCount === 0) {
+    return {
+      code: 'S1',
+      label: 'THIẾU QUYỀN GỬI TIN',
+      className: 'state-warning',
+      help: 'Shop đã biết Page nhận tin nhưng chưa có token được mã hóa để bot trả lời khách.'
+    };
+  }
+  if (activeMappingCount === 1 && activeCredentialCount === 1) {
+    return {
+      code: 'S2',
+      label: 'ĐÃ KẾT NỐI',
+      className: 'state-ok',
+      help: 'Shop có đúng một Page Mapping và một quyền gửi tin đang hoạt động.'
+    };
+  }
+  return {
+    code: 'UNKNOWN',
+    label: 'CẦN KIỂM TRA',
+    className: 'state-neutral',
+    help: 'Trạng thái hiện tại không khớp mẫu vận hành chuẩn. Cần kiểm tra dữ liệu trước khi chạy thật.'
+  };
+}
+
+function renderFanpageConnectionCard(model = {}) {
+  const pages = Array.isArray(model.pages) ? model.pages : [];
+  const activeMappings = pages.filter(page => pageStatus(page) === 'active');
+  const activeCredentialCount = resolveActiveCredentialCount(model, activeMappings);
+  const state = resolveFanpageConnectionState({
+    activeMappingCount: activeMappings.length,
+    activeCredentialCount
+  });
+  const envBadge = resolveAdminEnvironmentBadge();
+  const activeRefs = activeMappings
+    .map(page => page.page_ref || (page.page_id ? pageRef(page.page_id) : ''))
+    .filter(Boolean);
+  const primaryRef = activeRefs.length === 1 ? activeRefs[0] : '';
+  const tokenCta = activeMappings.length === 1
+    ? '<a class="button-link" href="#page-credential-actions">Thay thế Token</a>'
+    : '<button type="button" class="connection-action-disabled" disabled>Thay thế Token</button>';
+
+  return `
+    <section class="connection-card" aria-label="Current Fanpage connection">
+      <div class="connection-card-header">
+        <div>
+          <h3>Current Connection / Kết nối hiện tại</h3>
+          <p class="meta">Kết nối Fanpage = cho ZenBot biết tin nhắn từ Page nào thuộc shop này.</p>
+        </div>
+        <span class="environment-badge ${escapeHtml(envBadge.className)}">Môi trường: ${escapeHtml(envBadge.label)}</span>
+      </div>
+      <div class="connection-state-row">
+        <span class="connection-state-label ${escapeHtml(state.className)}">${escapeHtml(state.label)}</span>
+        <span class="meta">${escapeHtml(state.code)} - ${escapeHtml(state.help)}</span>
+      </div>
+      <div class="connection-summary-grid">
+        <div class="connection-summary-item">
+          <span>Active mapping</span>
+          <strong>${escapeHtml(activeMappings.length)}</strong>
+          <span class="meta">${primaryRef ? `Page ref ${escapeHtml(primaryRef)}` : 'Không hiển thị Page ID thô'}</span>
+        </div>
+        <div class="connection-summary-item">
+          <span>Quyền gửi tin</span>
+          <strong>${escapeHtml(activeCredentialCount)}</strong>
+          <span class="meta">Token được mã hóa để bot trả lời khách.</span>
+        </div>
+        <div class="connection-summary-item">
+          <span>Token visibility</span>
+          <strong>Không hiển thị lại</strong>
+          <span class="meta">Token không bao giờ hiển thị lại sau khi lưu.</span>
+        </div>
+      </div>
+      ${activeRefs.length > 1 ? `
+        <div class="empty">
+          <strong>Page refs đang active:</strong>
+          ${activeRefs.map(ref => `<code>${escapeHtml(ref)}</code>`).join(' ')}
+        </div>
+      ` : ''}
+      <ul class="connection-notes">
+        <li>Token phải nhập đúng môi trường vì staging/prod keys khác nhau.</li>
+        <li>Không tự động kiểm tra Meta trong màn hình này.</li>
+      </ul>
+      <div class="connection-actions" id="connection-actions">
+        ${tokenCta}
+        <button type="button" class="connection-action-disabled" disabled title="Chưa triển khai thay thế Trang trong tác vụ này">Thay thế Trang</button>
+        <span class="meta">Các nút thay thế là lối vào UX; tác vụ này không đổi hành vi thay thế.</span>
+      </div>
+    </section>
+  `;
+}
+
 function renderPageMappingsSection({
   shop = {},
   pages = [],
@@ -1467,7 +1622,7 @@ function renderPageMappingsSection({
   const otherMappings = (pages || []).filter(page => !['active', 'archived'].includes(pageStatus(page)));
   const canArchive = Boolean(archiveEnabled) && !isAdultShopView(shop);
   return `
-    <section class="asset-group">
+    <section class="asset-group" id="page-credential-actions">
       <h3>Active Mappings</h3>
       ${renderActivePageMappingsTable({
         shopId: shop.id,
@@ -1483,10 +1638,10 @@ function renderPageMappingsSection({
         ${renderReadOnlyPageMappingsTable(otherMappings)}
       </section>
     ` : ''}
-    <details class="collapsible-section">
+    ${archivedMappings.length ? `<details class="collapsible-section">
       <summary>Archived Mappings (${escapeHtml(archivedMappings.length)})</summary>
       ${renderReadOnlyPageMappingsTable(archivedMappings)}
-    </details>
+    </details>` : ''}
   `;
 }
 
@@ -2567,6 +2722,7 @@ function renderShopDetailHtml(model = {}) {
         <h2 id="page-mappings">Fanpage Connection / Kết nối Fanpage</h2>
         ${renderProductFlash(model.pageFlash || {})}
         ${renderProductFlash(model.credentialFlash || {})}
+        ${renderFanpageConnectionCard(model)}
         ${pagesGuidanceCard}
         ${pageSetupPreviewMode ? renderPageSetupPreviewSection(shop.id) : renderPageMappingAddForm(shop.id)}
         ${pagesHtml}

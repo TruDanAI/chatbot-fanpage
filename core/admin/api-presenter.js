@@ -24,13 +24,17 @@ function compactObject(value = {}) {
   );
 }
 
-const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|authorization|cookie|credential|api[_-]?key|access[_-]?key|private[_-]?key|customer|phone|address|email)/i;
+const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|authorization|cookie|credential|api[_-]?key|access[_-]?key|private[_-]?key|database[_-]?url|db[_-]?url|customer|phone|address|email)/i;
+const SENSITIVE_VALUE_PATTERN = /\b(?:postgres(?:ql)?:\/\/|mysql:\/\/|mongodb(?:\+srv)?:\/\/|redis:\/\/)/i;
 
 function sanitizeAdminValue(value, key = '', depth = 0) {
   if (SENSITIVE_KEY_PATTERN.test(String(key || ''))) return '[redacted]';
   if (value == null) return value;
   if (depth > 6) return '[truncated]';
-  if (typeof value === 'string') return limitText(value, 500);
+  if (typeof value === 'string') {
+    if (SENSITIVE_VALUE_PATTERN.test(value)) return '[redacted]';
+    return limitText(value, 500);
+  }
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (Array.isArray(value)) return value.slice(0, 80).map(item => sanitizeAdminValue(item, key, depth + 1));
   if (typeof value === 'object') {

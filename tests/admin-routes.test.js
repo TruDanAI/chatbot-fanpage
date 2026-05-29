@@ -3482,6 +3482,168 @@ describe('admin dashboard routes', () => {
     expect(productionRes.body.includes('raw-archived-page-id')).toBeFalse();
   });
 
+  it('shop detail Fanpage Connection tab renders operator state labels without leaking identifiers or credentials', async () => {
+    const cases = [{
+      name: 'S0',
+      model: createOnboardingShopDetailModel({
+        settings: {
+          bot_mode: 'menu_code_handoff',
+          settings_json: {
+            database_url: 'postgres://secret-user:secret-pass@db.example.test/app',
+            harmless: 'visible'
+          }
+        }
+      }),
+      label: 'CHƯA KẾT NỐI'
+    }, {
+      name: 'S1',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-1',
+          page_id: 'raw-page-id-s1',
+          page_ref: 'p:safe-s1',
+          page_name: 'Safe Page S1',
+          status: 'active',
+          active_credential_count: 0
+        }]
+      }),
+      label: 'THIẾU QUYỀN GỬI TIN'
+    }, {
+      name: 'S2',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-2',
+          page_id: 'raw-page-id-s2',
+          page_ref: 'p:safe-s2',
+          page_name: 'Safe Page S2',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return',
+          access_token: 'EAAB-secret'
+        }
+      }),
+      label: 'ĐÃ KẾT NỐI'
+    }, {
+      name: 'S6',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-3',
+          page_id: 'raw-page-id-s6a',
+          page_ref: 'p:safe-s6a',
+          page_name: 'Safe Page S6 A',
+          status: 'active',
+          active_credential_count: 1
+        }, {
+          id: 'page-map-4',
+          page_id: 'raw-page-id-s6b',
+          page_ref: 'p:safe-s6b',
+          page_name: 'Safe Page S6 B',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 2,
+          encrypted_value: 'do-not-return'
+        }
+      }),
+      label: 'XUNG ĐỘT KẾT NỐI'
+    }, {
+      name: 'UNKNOWN',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-5',
+          page_id: 'raw-page-id-unknown',
+          page_ref: 'p:safe-unknown',
+          page_name: 'Safe Page Unknown',
+          status: 'active',
+          active_credential_count: -1
+        }]
+      }),
+      label: 'CẦN KIỂM TRA'
+    }];
+
+    for (const item of cases) {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(item.model),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('Current Connection / Kết nối hiện tại');
+      expect(res.body).toContain(item.label);
+      expect(res.body).toContain(`${item.name} -`);
+      expect(res.body).toContain('Kết nối Fanpage = cho ZenBot biết tin nhắn từ Page nào thuộc shop này.');
+      expect(res.body).toContain('Token không bao giờ hiển thị lại');
+      expect(res.body).toContain('Token phải nhập đúng môi trường vì staging/prod keys khác nhau.');
+      expect(res.body).toContain('Không tự động kiểm tra Meta');
+      expect(res.body).toContain('Thay thế Token');
+      expect(res.body).toContain('Thay thế Trang');
+      expect(res.body).toContain('Môi trường:');
+      expect(res.body.includes('raw-page-id')).toBeFalse();
+      expect(res.body.includes('EAAB-secret')).toBeFalse();
+      expect(res.body.includes('do-not-return')).toBeFalse();
+      expect(res.body.includes('postgres://secret-user')).toBeFalse();
+    }
+  });
+
+  it('shop detail Fanpage Connection tab preserves existing mapping and credential forms', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-active',
+          page_id: 'raw-active-page-id',
+          page_ref: 'p:safe-active',
+          page_name: 'Active Page',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return'
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pages"');
+    expect(res.body).toContain('name="page_id"');
+    expect(res.body).toContain('name="page_name"');
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pages/page-active/credentials"');
+    expect(res.body).toContain('name="credential_type" value="fb_page_token"');
+    expect(res.body).toContain('name="token" type="password"');
+    expect(res.body).toContain('name="rotate" value="true"');
+    expect(res.body).toContain('name="confirmation_text"');
+    expect(res.body.includes('raw-active-page-id')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+  });
+
   it('shop detail HTML renders image manager groups, large lazy thumbnails, badges, and replace URL forms', async () => {
     const app = createApp();
     const reader = createShopDetailReader(createOnboardingShopDetailModel({
