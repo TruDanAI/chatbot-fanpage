@@ -1697,17 +1697,17 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
       <div class="settings-checkbox-grid">${toggleRows}</div>
       <span class="help">Per-shop switches that control specific bot features at runtime.</span>
     </fieldset>
-    <label class="wide">Handoff message
+    <label class="wide">Tin nhắn chuyển giao (Handoff message)
       <textarea name="handoff_message" maxlength="1000">${escapeHtml(settings?.handoff_message || '')}</textarea>
-      <span class="help">Sent when the bot hands a customer to staff.</span>
+      <span class="help">Sent when the bot hands a customer to staff. / Tin nhắn tự động gửi cho khách khi bot chuyển cuộc hội thoại cho nhân viên trực fanpage hỗ trợ (khi khách yêu cầu gặp nhân viên hoặc khi bot không hiểu câu hỏi của khách).</span>
     </label>
-    <label class="wide">Menu intro text
+    <label class="wide">Tin nhắn giới thiệu Menu (Menu intro text)
       <textarea name="menu_intro_text" maxlength="1000">${escapeHtml(settings?.menu_intro_text || '')}</textarea>
-      <span class="help">Shown before menu or product-list content.</span>
+      <span class="help">Shown before menu or product-list content. / Lời chào dẫn dắt gửi kèm hình ảnh thực đơn/danh mục khi khách gõ chữ "menu" hoặc khi khách muốn xem danh sách sản phẩm.</span>
     </label>
-    <label class="wide">Fallback text
+    <label class="wide">Tin nhắn dự phòng (Fallback text)
       <textarea name="fallback_text" maxlength="1000">${escapeHtml(settings?.fallback_text || '')}</textarea>
-      <span class="help">Used when the bot cannot confidently answer.</span>
+      <span class="help">Used when the bot cannot confidently answer. / Tin nhắn tự động gửi khi bot không nhận diện được câu hỏi của khách hàng (nhằm xin lỗi lịch sự và hướng dẫn khách gõ đúng mã sản phẩm).</span>
     </label>
     <div class="form-actions">
       <button type="submit">Save settings</button>
@@ -1943,7 +1943,7 @@ function renderShopDetailHtml(model = {}) {
   );
 
   const productsListHtml = (!model.products || model.products.length === 0)
-    ? renderEmptyState('📦', 'Chưa có sản phẩm nào', 'Danh mục sản phẩm của shop đang trống. Vui lòng thêm ít nhất 1 sản phẩm bên dưới để chatbot có dữ liệu hoạt động.')
+    ? renderEmptyState('📦', 'Chưa có sản phẩm nào / Empty Catalog', 'Danh mục sản phẩm của shop đang trống. Hãy kéo xuống dưới để sử dụng form "Thêm sản phẩm thủ công" hoặc "Nhập sản phẩm từ CSV" nhằm khởi tạo dữ liệu.')
     : renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products, product => `
         <tr>
           <td><code>${escapeHtml(product.code)}</code></td>
@@ -2016,37 +2016,106 @@ function renderShopDetailHtml(model = {}) {
       <div id="products" class="tab-section">
         ${renderProductFlash(model.productFlash || {})}
         ${productsGuidanceCard}
-        <h2 id="settings">Chat Behavior Settings / Kịch bản phản hồi Bot</h2>
-        ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
-        <details class="collapsible-section">
-          <summary>Advanced: Current settings values &amp; raw JSON / Cấu hình chi tiết JSON</summary>
-          <table><tbody>
-            <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
-            <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
-            <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
-            <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
-            <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
-            <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
-              ...(model.settings?.settings_json?.botMode || {}),
-              ...(model.settings?.settings_json?.ruleToggles || {})
-            })))}</td></tr>
-            <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
-          </tbody></table>
-          ${renderJsonBlock(model.settings?.settings_json || {})}
-        </details>
 
-        <section class="product-section" style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
-          <div class="product-toolbar">
-            <h2 id="products-heading">Products / Quản lý sản phẩm</h2>
-            <p class="meta">Quản lý danh sách sản phẩm trong danh mục. Lưu trữ sản phẩm là lưu trữ mềm, không xóa.</p>
+        <div style="background: #ffffff; padding: 20px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px;">
+          <h2 id="settings" style="margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 12px; color: var(--primary);">⚙️ Kịch bản phản hồi của Bot (Chat Behavior Settings)</h2>
+          <p class="meta" style="margin-bottom: 16px; font-weight: normal; text-transform: none;">Thiết lập chế độ hoạt động và nội dung tin nhắn tự động chatbot gửi cho khách hàng.</p>
+          ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
+
+          <details class="collapsible-section" style="margin-top: 14px;">
+            <summary>Advanced: Current settings values &amp; raw JSON / Cấu hình chi tiết JSON</summary>
+            <table><tbody>
+              <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
+              <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
+              <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
+              <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
+              <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+              <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
+                ...(model.settings?.settings_json?.botMode || {}),
+                ...(model.settings?.settings_json?.ruleToggles || {})
+              })))}</td></tr>
+              <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
+            </tbody></table>
+            ${renderJsonBlock(model.settings?.settings_json || {})}
+          </details>
+        </div>
+
+        <section class="product-section" style="margin-top: 32px; padding-top: 24px; border-top: 2px solid var(--border);">
+          <div class="product-toolbar" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+            <div>
+              <h2 id="products-heading" style="margin: 0; color: var(--primary);">📦 Danh mục sản phẩm / Product Catalog</h2>
+              <p class="meta" style="margin: 4px 0 0; font-weight: normal; text-transform: none;">Quản lý mã định danh chatbot tư vấn, tên hiển thị, giá bán và hình ảnh sản phẩm.</p>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <a href="#add-product-section" class="button-link" style="background: var(--primary); color: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; text-decoration: none;">+ Thêm sản phẩm</a>
+              <a href="#csv-import-section" class="button-link secondary-button" style="border: 1px solid var(--border); color: var(--neutral); background: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; text-decoration: none;">Nhập sản phẩm CSV</a>
+            </div>
           </div>
+
+          <div class="guidance-card" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 13px; color: #1e3a5f; display: block; width: auto;">
+            <strong>💡 Hướng dẫn Vận hành Danh mục sản phẩm:</strong>
+            <ul style="margin: 6px 0 0; padding-left: 20px; line-height: 1.5;">
+              <li><strong>Mã Code:</strong> Là mã định danh chatbot dùng để nhận diện (Ví dụ khách gõ <code>M10</code> bot sẽ gửi thông tin chi tiết).</li>
+              <li><strong>Hình ảnh:</strong> Mỗi sản phẩm đang hoạt động nên được gán ít nhất 1 hình ảnh trực quan. Việc thiếu ảnh chỉ hiển thị cảnh báo (Warning), không chặn chatbot tư vấn thông tin chữ.</li>
+              <li><strong>Lưu trữ (Archive):</strong> Ưu tiên chuyển trạng thái hoặc lưu trữ (soft-archive) sản phẩm thay vì xóa cứng để đảm bảo tính toàn vẹn dữ liệu đơn hàng lịch sử.</li>
+            </ul>
+          </div>
+
+          ${(() => {
+            if (!model.products || model.products.length === 0) return '';
+            const activeProducts = (model.products || []).filter(p => p.status === 'active');
+            const inactiveProducts = (model.products || []).filter(p => p.status !== 'active');
+
+            // Calculate active products missing images
+            const productCodesWithImages = new Set(
+              assetRows
+                .filter(a => a.asset_type === 'product_image' && a.status === 'active')
+                .map(a => String(a.product_code || '').trim().toLowerCase())
+            );
+
+            const activeProductsMissingImages = activeProducts.filter(p => {
+              const code = String(p.code || '').trim().toLowerCase();
+              return !productCodesWithImages.has(code);
+            });
+
+            const missingImagesCount = activeProductsMissingImages.length;
+
+            return `
+              <div class="counts" style="margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                <div class="count" style="border-left: 4px solid var(--success); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm hoạt động</span>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #111827;">${activeProducts.length}</strong>
+                </div>
+                <div class="count" style="border-left: 4px solid ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'}; padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm thiếu ảnh</span>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'};">${missingImagesCount}</strong>
+                  ${missingImagesCount > 0
+                    ? '<span class="meta" style="color: var(--warning); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">⚠ Hãy bổ sung ảnh ở tab "Hình ảnh" để tư vấn tốt hơn</span>'
+                    : '<span class="meta" style="color: var(--success); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">✓ Tất cả sản phẩm đều có ảnh minh họa</span>'
+                  }
+                </div>
+                <div class="count" style="border-left: 4px solid var(--neutral); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm ẩn/lưu trữ</span>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #4b5563;">${inactiveProducts.length}</strong>
+                </div>
+              </div>
+            `;
+          })()}
+
           ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
 
-          <div style="background: var(--surface-muted); padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; display: grid; gap: 16px;">
-            <h3 style="margin-top: 0; font-size: 14px; color: #1e3a5f;">📥 Thêm & Nhập Sản phẩm (Actions Area)</h3>
-            <p class="meta" style="margin-bottom: 4px; font-weight: normal; text-transform: none;">Thêm sản phẩm thủ công từng sản phẩm hoặc nhập hàng loạt nhanh từ tập tin CSV.</p>
-            ${renderProductAddForm(shop.id)}
-            ${renderProductBulkImportForm(shop.id)}
+          <div style="background: var(--surface-muted); padding: 20px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; display: grid; gap: 20px;">
+            <div id="add-product-section" style="padding-bottom: 20px; border-bottom: 1px solid var(--border);">
+              <h3 style="margin-top: 0; font-size: 15px; color: #1e3a5f;">➕ Thêm sản phẩm thủ công / Add Product Manual</h3>
+              <p class="meta" style="margin-bottom: 12px; font-weight: normal; text-transform: none;">Thêm sản phẩm đơn lẻ vào danh mục tư vấn của chatbot.</p>
+              ${renderProductAddForm(shop.id)}
+            </div>
+
+            <div id="csv-import-section">
+              <h3 style="margin-top: 0; font-size: 15px; color: #1e3a5f;">📥 Nhập sản phẩm từ CSV / Bulk Import CSV</h3>
+              <p class="meta" style="margin-bottom: 12px; font-weight: normal; text-transform: none;">Nhập hàng loạt nhanh danh mục sản phẩm từ tập tin CSV.</p>
+              ${renderProductBulkImportForm(shop.id)}
+            </div>
           </div>
 
           ${productsListHtml}
