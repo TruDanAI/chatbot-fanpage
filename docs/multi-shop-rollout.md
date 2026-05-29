@@ -977,6 +977,24 @@ This checkpoint records the successful E2E staging implementation and verificati
 - **Incident Handling**: Addressed a staging database credential leak prior to E2E verification by rotating the database password programmatically, updating Postgres service variables, and propagating changes safely to all linked containers.
 - **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, or token health checks were executed. Credentials are strictly locked in dry-run mode.
 
+## Shop Detail UX and Delete Draft Checkpoint (P1.2d) - 2026-05-29
+
+This checkpoint records the successful E2E staging implementation, testing, deployment, and verification of the P1.2d update suite. This update comprises clean tabbed layout groupings, status-based action guidance, danger-confirmation modals, and a transactional Delete Draft Shop safety service.
+
+- **Status**: Completed and E2E Verified
+- **Staging Verification URL**: `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Key Deliverables Completed**:
+  - **P1.2d1 Tabbed Layout**: Reorganized Shop Detail view into 5 navigation tabs (Tổng quan, Sản phẩm & Menu, Hình ảnh, Kết nối Fanpage, Vận hành an toàn) in commit `bbdb7f5`.
+  - **P1.2d2 Status Guidance & Empty States**: Integrated status summary cards, next action guidance cards, and visual onboarding empty states.
+  - **P1.2d3 Danger Confirmation Modals**: Deployed red-themed confirmation modals in commit `a284a35` on staging (deployment `b17c4d4f-51cc-439a-b38f-5599ad605ae6`) featuring checked-to-unlock checkboxes, exact slug typing verification, and 3-second disabled confirmation countdown timers.
+  - **P1.2d4 Safe Delete Draft Shop Service**: Created transactional cascade deletion service in commit `2d4615f` on staging (deployment `d735284e-eadb-4667-b3ba-63807c1e1580`) allowing deletion strictly for draft/configuring shops while hard-blocking protected slugs (`adult-shop`, `demo-shop`, `nem-bui-xa`, and `prod`/`production` markers) or shops with runtime/customer data (orders, messages, conversations, events, queue, profiles).
+- **Staging Verification**:
+  - **Success Path**: Created and verified deletion of disposable shop `delete-draft-smoke-1780022921` (returned 200 OK success HTML, and subsequent fetches returned 404).
+  - **Safety Blocker Path**: Attempted deletion of protected `adult-shop` (returned 409 Conflict detailing blocker reasons).
+  - **Negative Input Path**: Deletion of `delete-draft-smoke-neg-1780022921` with wrong slug returned 400 Bad Request.
+  - **System Isolation**: `adult-shop`, `demo-shop`, `nem-bui-xa`, and `wizard-smoke-shop` are completely untouched and unchanged.
+- **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, token health checks, or production data writes were executed.
+
 ## Open TODOs
 
 - Asset upload and media direct integration enhancements.
