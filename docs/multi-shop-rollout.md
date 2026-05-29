@@ -930,7 +930,8 @@ approval.
   control; page IDs are only a transition override.
 - Product updates, status changes, and archive actions must stay shop-scoped;
   no cross-shop updates.
-- Product code uniqueness is enforced per shop for active products.
+- Product code uniqueness is enforced per shop across active, hidden, and
+  archived products; archived codes remain reserved historical identifiers.
 - Keep `WEBHOOK_QUEUE_ENABLED=false` in production until schema apply, worker
   operation, retry observability, and rollback have separate approval.
 - Keep file-backed config as rollback fallback until production DB-backed
@@ -995,22 +996,54 @@ This checkpoint records the successful E2E staging implementation, testing, depl
   - **System Isolation**: `adult-shop`, `demo-shop`, `nem-bui-xa`, and `wizard-smoke-shop` are completely untouched and unchanged.
 - **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, token health checks, or production data writes were executed.
 
-## Product Image, Status Polish and Lifecycle Safety Checkpoint (P1.2e3) - 2026-05-29
+## Product/Menu Management UX Polish Checkpoint (P1.2e) - 2026-05-29
 
-This checkpoint records the successful E2E staging implementation, testing, deployment, and verification of the P1.2e3 update suite. This update covers catalog image previews, localized product statuses, visual row action controls, and robust transaction-level product code history safety rules.
+This checkpoint records the completed Product/Menu management UX polish across
+layout, drawer editing, image/status table polish, product lifecycle safety,
+CSV import preview, and CSV import result summaries. It is documentation-only
+and is not approval to deploy, change environment variables, write any
+database, touch `/data`, touch production, call Meta Graph API, run token
+health checks, or send Messenger messages.
 
 - **Status**: Completed and E2E Verified
-- **Staging Verification URL**: `https://chatbot-fanpage-staging-staging.up.railway.app`
-- **Key Deliverables Completed**:
-  - **P1.2e3a Product Image & Status Visual Polish**: Deployed an active "Ảnh" preview column, warning flags (`⚠ Thiếu ảnh` inside `#fffbeb` panels for active products), localized status badges (`Hoạt động`, `Tạm ẩn`, `Đã lưu trữ`), and card-based mobile fallback displays in commit `2dbd193` on staging (deployment `72d569f2-19d7-4592-a662-176924952831`).
-  - **P1.2e3b1 Product Lifecycle Row Actions**: Integrated `Tạm ẩn`/`Lưu trữ` quick actions for active rows, `Hiện lại`/`Lưu trữ` for hidden rows, disabled action placeholders for archived rows, and an intercepting modal window (`#product-archive-modal`) in commit `94b0915` on staging (deployment `aaa77674-c28f-4a23-a7f3-786b61e0b37b`).
-  - **P1.2e3b2 Product Code History Safety**: Enforced complete reservation of product codes (active, hidden, and archived) within the shop, safe restore-to-hidden redirection, block on duplicate codes returning localized errors, and CSV import safety blocking archived code conflicts in commit `d545b4a` on staging (deployment `3a1b47c3-20df-4521-98c3-7f976c74abfb`). No hard-delete product exists in this slice.
-- **Staging Verification**:
-  - **E2E Smoke Verification**: Executed E2E smoke tests on the disposable `wizard-smoke-shop` using unique timestamped codes (`archived-code-smoke-${timestamp}`). Checked product creation, archived the product, confirmed duplicate creation is blocked with a 409 response, restored the archived product strictly to hidden status, and re-archived it for database cleanup.
-  - **Duplicate Prevention Verification**: Verified that zero redundant rows are created when a duplicate code is blocked; the original archived row remains isolated and intact.
-  - **State Machine Verification**: Verified that restoring a non-archived product is correctly blocked with a 409 `product_not_archived` status.
-  - **System Isolation**: `adult-shop`, `demo-shop`, and `nem-bui-xa` remained completely unaffected and safe.
-- **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, token health checks, or production data writes were executed. Detailed checkpoint results and visual transitions are recorded in [product-lifecycle-checkpoint.md](file:///c:/Users/Pc/Desktop/New%20folder/chatbot-fanpage/docs/product-lifecycle-checkpoint.md).
+- **Staging Verification URL**:
+  `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Detailed Checkpoint**:
+  [product-menu-polish-checkpoint.md](product-menu-polish-checkpoint.md)
+
+| Slice | Commit | Staging deployment | Completed scope |
+| --- | --- | --- | --- |
+| P1.2e1 Products & Menu layout polish | `97e8f90` | `9727ec8b-0e2f-49c4-b2ed-adbb1a967742` | Separated bot script settings from the product catalog, added the catalog health summary, and added Add Product / CSV anchors for faster operator navigation. |
+| P1.2e2 Product drawer editing UI | `65d5b5e` | `9e739790-4ac0-4dac-95cf-123bfdbb21f5` | Added drawer-based add/edit UX with progressive enhancement, preserved fallback forms, and fixed the `activeDrawerForm` collision. |
+| P1.2e3a Product image/status visual polish | `2dbd193` | `72d569f2-19d7-4592-a662-176924952831` | Added the image column, missing-image warning, localized status labels, and mobile fallback. |
+| P1.2e3b1 Product lifecycle row actions | `94b0915` | `aaa77674-c28f-4a23-a7f3-786b61e0b37b` | Added `Tạm ẩn`, `Hiện lại`, and `Lưu trữ` row actions, the archive modal, and archived row placeholders. |
+| P1.2e3b2 Product code history safety | `d545b4a` | `3a1b47c3-20df-4521-98c3-7f976c74abfb` | Reserved archived codes, restored archived products to `hidden`, and blocked duplicate archived-code creates. |
+| P1.2e3c1 CSV import preview | `758a5dc` | `36729b08-83de-4265-a323-c4a8f6ee673f` | Added preview classifications for `create`, `update`, `archived_conflict`, `duplicate_in_csv`, and `error`; preview is read-only, and blocker CSVs hide final import. |
+| P1.2e3c2 CSV import result summary | `3d668a3` | `0ca452ab-227c-407d-81ed-951fa6c22a02` | Added success summary labels, removed partial-success claims from failed imports, and verified the staging smoke with a disposable product imported then archived. |
+
+Final Product/Menu policy:
+
+- `active` products are customer-visible and available to chatbot product-code
+  matching.
+- `hidden` products remain editable but are temporarily unavailable to the
+  chatbot until explicitly shown again.
+- `archived` products are retired historical records; they stay out of normal
+  catalog operation while preserving prior references.
+- Product code is a historical identifier. Once a code has existed in a shop,
+  that code remains reserved for that product.
+- Archived product codes cannot be reused by new products in the same shop.
+- CSV import is preview-first and all-or-nothing; blockers prevent final import
+  instead of applying partial writes.
+- CSV import never auto-restores archived products. An archived-code match is a
+  blocker that requires an explicit operator lifecycle action.
+
+Safety boundary for this documentation checkpoint:
+
+- No deployment was performed.
+- No environment variable was changed.
+- No database or `/data` write was performed.
+- No production system was touched.
+- No Meta Graph API call, token health check, or Messenger send was performed.
 
 ## Open TODOs
 
