@@ -4623,6 +4623,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Required columns:');
     expect(res.body).toContain('metadata_json');
     expect(res.body).toContain('name="validate_only"');
+    expect(res.body).toContain('Xem trước CSV');
+    expect(res.body).toContain('data-product-import-form');
+    expect(res.body).toContain('data-product-import-server-preview');
     expect(res.body).toContain('data-product-import-preview');
     expect(res.body).toContain('safeImportPreviewCell');
     expect(res.body).toContain("return 'not shown';");
@@ -4911,14 +4914,22 @@ describe('admin dashboard routes', () => {
         ignored_columns: [],
         errors: [],
         validate_only: true,
+        create_count: 1,
+        update_count: 0,
+        archived_conflict_count: 0,
+        duplicate_count: 0,
+        error_count: 0,
+        blocking: false,
         preview_rows: [{
           row: 2,
+          status: 'create',
           code: 'M7',
           name: 'Demo Product',
-          status: 'active',
+          product_status: 'active',
           sort_order: 1,
           has_image_url: true,
-          metadata_keys: ['priceText']
+          metadata_keys: ['priceText'],
+          message: 'Sẽ tạo sản phẩm mới.'
         }]
       }
     });
@@ -4940,11 +4951,80 @@ describe('admin dashboard routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers.location).toBe(undefined);
-    expect(res.body).toContain('Validation passed. No products were written.');
+    expect(res.body).toContain('CSV preview passed. No products were written.');
     expect(res.body).toContain('Server Preview');
+    expect(res.body).toContain('Sẽ tạo');
+    expect(res.body).toContain('Tạo mới');
     expect(res.body).toContain('<code>M7</code>');
-    expect(res.body.includes('Demo Product')).toBeFalse();
+    expect(res.body).toContain('Demo Product');
+    expect(res.body).toContain('Nhập chính thức');
+    expect(res.body).toContain('Final import revalidates');
     expect(productImports.calls[0].input.body.validate_only).toBe('true');
+  });
+
+  it('product import HTML validate-only hides final import when preview has blockers', async () => {
+    const app = createApp();
+    const productImports = createProductImportServiceStub({
+      result: {
+        shop_id: 'adult-shop',
+        rows_received: 1,
+        products_created: 0,
+        products_updated: 0,
+        product_images_created: 0,
+        product_images_updated: 0,
+        product_images_skipped: 1,
+        image_assets_touched: 0,
+        ignored_columns: [],
+        errors: [{
+          row: 2,
+          field: 'code',
+          code: 'archived_product_code',
+          message: 'Mã này thuộc một sản phẩm đã lưu trữ và đang được giữ chỗ. Hãy khôi phục sản phẩm đó từ danh mục, hoặc dùng mã khác.',
+          suggested_fix: 'Khôi phục sản phẩm đã lưu trữ từ danh mục, hoặc dùng mã khác.'
+        }],
+        validate_only: true,
+        create_count: 0,
+        update_count: 0,
+        archived_conflict_count: 1,
+        duplicate_count: 0,
+        error_count: 0,
+        blocking_error_count: 1,
+        blocking: true,
+        preview_rows: [{
+          row: 2,
+          status: 'archived_conflict',
+          code: 'M20',
+          name: 'Archived Product',
+          product_status: 'active',
+          sort_order: 0,
+          has_image_url: false,
+          metadata_keys: [],
+          message: 'Mã này thuộc một sản phẩm đã lưu trữ và đang được giữ chỗ. Hãy khôi phục sản phẩm đó từ danh mục, hoặc dùng mã khác.'
+        }]
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: productImports,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { validate_only: 'true', csv: 'code,name\nM20,Archived Product' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('CSV preview found blocking rows. No products were written.');
+    expect(res.body).toContain('Trùng mã đã lưu trữ');
+    expect(res.body).toContain('archived_product_code');
+    expect(res.body.includes('data-product-import-confirm')).toBeFalse();
+    expect(res.body.includes('Nhập chính thức')).toBeFalse();
   });
 
   it('product update API succeeds and keeps write scoped to route shop/product', async () => {

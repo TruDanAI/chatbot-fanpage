@@ -11,6 +11,24 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
+function escapePreviewHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&(?!(?:amp|lt|gt|quot|#39);)/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function jsString(value = '') {
+  return JSON.stringify(String(value ?? ''))
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 function limitText(value = '', max = 240) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (text.length <= max) return text;
@@ -38,6 +56,10 @@ function maskSensitiveText(value = '', max = 240) {
 
 function encodeRoutePart(value = '') {
   return encodeURIComponent(String(value || ''));
+}
+
+function productImportStorageKey(shopId = '') {
+  return `product-import-csv:${String(shopId || '').trim().slice(0, 160)}`;
 }
 
 function formatDate(value = '') {
@@ -214,6 +236,12 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .import-preview h4 { margin: 0 0 6px; font-size: 13px; color: #334155; }
     .import-preview-scroll { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: #ffffff; }
     .import-preview-scroll table { border: 0; border-radius: 0; }
+    .import-summary-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; margin: 12px 0; }
+    .import-summary-item { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 10px; }
+    .import-summary-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .import-summary-item strong { display: block; margin-top: 2px; font-size: 20px; }
+    .import-confirm-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .import-confirm-form button:disabled { cursor: not-allowed; opacity: .55; }
     .secondary-button { border-color: var(--border) !important; background: #ffffff !important; color: #334155 !important; }
     .settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 14px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .settings-form label { display: grid; gap: 5px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
@@ -1026,11 +1054,12 @@ function renderProductAddForm(shopId = '') {
 
 function renderProductBulkImportForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/import`;
+  const storageKey = productImportStorageKey(shopId);
   const sample = [
     'code,name,price_text,description,image_url,category,tags,metadata_json,status,sort_order',
     'M7,Demo Product M7,150k,Demo product,https://example.com/m7.png,demo,"hot,new","{""size"":""M""}",active,1'
   ].join('\n');
-  return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}">
+  return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}" data-product-import-form data-product-import-storage-key="${escapeHtml(storageKey)}">
     <h3>Bulk import products</h3>
     <div class="import-help">
       <p><strong>Required columns:</strong> <code>code</code>, <code>name</code></p>
@@ -1046,9 +1075,8 @@ function renderProductBulkImportForm(shopId = '') {
       <div class="import-preview-scroll" data-product-import-preview-table></div>
     </div>
     <div class="form-actions">
-      <button type="submit" name="validate_only" value="true" class="secondary-button">Validate only</button>
-      <button type="submit">Import products</button>
-      <span class="meta">Upserts by product code. Optional image_url creates or updates product_image assets.</span>
+      <button type="submit" name="validate_only" value="true" class="secondary-button" data-product-import-server-preview>Xem trước CSV</button>
+      <span class="meta">Bản xem trước server phân loại tạo mới, cập nhật, mã đã lưu trữ, trùng trong tệp và lỗi. Nhập chính thức chỉ mở sau khi không có lỗi chặn.</span>
     </div>
   </form>`;
 }
@@ -1071,24 +1099,116 @@ function renderProductImportErrorsTable(errors = []) {
   });
 }
 
+function renderProductImportPreviewStatus(value = '') {
+  const status = String(value || '').trim().toLowerCase();
+  const label = {
+    create: 'Tạo mới',
+    update: 'Cập nhật',
+    archived_conflict: 'Trùng mã đã lưu trữ',
+    duplicate_in_csv: 'Trùng trong tệp',
+    error: 'Lỗi'
+  }[status] || 'Lỗi';
+  const css = {
+    create: 'status status-success',
+    update: 'status status-neutral',
+    archived_conflict: 'status status-danger',
+    duplicate_in_csv: 'status status-warning',
+    error: 'status status-danger'
+  }[status] || 'status status-danger';
+  return `<span class="${css}">${escapeHtml(label)}</span>`;
+}
+
+function renderProductImportSummaryBand(result = {}) {
+  const ignoredColumns = Array.isArray(result?.ignored_columns) ? result.ignored_columns : [];
+  const items = [{
+    label: 'Sẽ tạo',
+    value: Number(result?.create_count || 0)
+  }, {
+    label: 'Sẽ cập nhật',
+    value: Number(result?.update_count || 0)
+  }, {
+    label: 'Trùng mã đã lưu trữ',
+    value: Number(result?.archived_conflict_count || 0)
+  }, {
+    label: 'Trùng trong tệp',
+    value: Number(result?.duplicate_count || 0)
+  }, {
+    label: 'Lỗi',
+    value: Number(result?.error_count || 0)
+  }, {
+    label: 'Cột bị bỏ qua',
+    value: ignoredColumns.length,
+    title: ignoredColumns.join(', ')
+  }];
+  return `<div class="import-summary-band">
+    ${items.map(item => `<div class="import-summary-item"${item.title ? ` title="${escapeHtml(item.title)}"` : ''}><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
+  </div>`;
+}
+
 function renderProductImportPreviewTable(rows = []) {
   const previewRows = Array.isArray(rows) ? rows : [];
   if (!previewRows.length) return '<div class="empty">No preview rows were returned.</div>';
-  return renderTable(['row', 'code', 'name', 'status', 'sort_order', 'image', 'metadata keys'], previewRows, row => `
+  return renderTable(['row', 'status', 'code', 'name', 'product status', 'sort_order', 'image', 'message'], previewRows, row => `
     <tr>
       <td>${escapeHtml(row.row || 0)}</td>
-      <td><code>${escapeHtml(row.code || '')}</code></td>
-      <td>${escapeHtml(row.name || '')}</td>
-      <td>${renderStatus(row.status || '')}</td>
+      <td>${renderProductImportPreviewStatus(row.status || '')}</td>
+      <td><code>${escapePreviewHtml(row.code || '')}</code></td>
+      <td>${escapePreviewHtml(row.name || '')}</td>
+      <td>${row.product_status ? renderStatus(row.product_status) : '<span class="meta">not shown</span>'}</td>
       <td>${escapeHtml(row.sort_order || 0)}</td>
       <td>${escapeHtml(row.has_image_url ? 'yes' : 'no')}</td>
-      <td>${escapeHtml(Array.isArray(row.metadata_keys) ? row.metadata_keys.join(', ') : '')}</td>
+      <td>${escapePreviewHtml(row.message || '')}</td>
     </tr>
   `);
 }
 
+function renderProductImportConfirmForm(shopId = '', result = {}) {
+  const hasBlocking = Boolean(result?.blocking || result?.blocking_error_count > 0);
+  if (!result?.validate_only || hasBlocking) return '';
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/products/import`;
+  const storageKey = productImportStorageKey(shopId);
+  return `
+    <form class="import-confirm-form" method="post" action="${escapeHtml(action)}" data-product-import-confirm data-product-import-storage-key="${escapeHtml(storageKey)}">
+      <textarea name="csv" hidden aria-hidden="true"></textarea>
+      <button type="submit" disabled>Nhập chính thức</button>
+      <span class="meta">Import sẽ được kiểm tra lại ở server và vẫn là all-or-nothing.</span>
+      <span class="meta" data-product-import-confirm-missing hidden>Không tìm thấy CSV đã xem trước trong trình duyệt này. Quay lại form nhập CSV để xem trước lại.</span>
+    </form>
+    <script>
+      (() => {
+        const form = document.querySelector('[data-product-import-confirm]');
+        if (!form) return;
+        const field = form.querySelector('textarea[name="csv"]');
+        const button = form.querySelector('button[type="submit"]');
+        const missing = form.querySelector('[data-product-import-confirm-missing]');
+        const key = ${jsString(storageKey)};
+        let csv = '';
+        try {
+          csv = window.sessionStorage.getItem(key) || '';
+        } catch (_) {}
+        if (csv && field) {
+          field.value = csv;
+          if (button) button.disabled = false;
+          if (missing) missing.hidden = true;
+        } else {
+          if (button) button.disabled = true;
+          if (missing) missing.hidden = false;
+        }
+        form.addEventListener('submit', (event) => {
+          if (!field || !field.value) {
+            event.preventDefault();
+            if (button) button.disabled = true;
+            if (missing) missing.hidden = false;
+          }
+        });
+      })();
+    </script>
+  `;
+}
+
 function renderProductImportResultHtml({ shopId = '', result = null, error = null } = {}) {
   const backHref = `/admin/shops/${encodeRoutePart(shopId)}#products`;
+  const resultHasBlocking = Boolean(result?.blocking || result?.blocking_error_count > 0);
   const body = error
     ? `
       <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
@@ -1098,12 +1218,15 @@ function renderProductImportResultHtml({ shopId = '', result = null, error = nul
     `
     : `
       <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
-      <div class="banner banner-success" role="status">${escapeHtml(result?.validate_only ? 'Validation passed. No products were written.' : 'Product import completed.')}</div>
+      <div class="banner ${resultHasBlocking ? 'banner-warning' : 'banner-success'}" role="status">${escapeHtml(result?.validate_only ? (resultHasBlocking ? 'CSV preview found blocking rows. No products were written.' : 'CSV preview passed. No products were written.') : 'Product import completed.')}</div>
       <p class="meta">Rows received: ${escapeHtml(result?.rows_received || 0)} | products created: ${escapeHtml(result?.products_created || 0)} | products updated: ${escapeHtml(result?.products_updated || 0)} | image assets touched: ${escapeHtml(result?.image_assets_touched || 0)}</p>
+      ${renderProductImportSummaryBand(result || {})}
       ${Array.isArray(result?.ignored_columns) && result.ignored_columns.length ? `<p class="meta">Ignored columns: ${escapeHtml(result.ignored_columns.join(', '))}</p>` : ''}
       <h2>Server Preview</h2>
-      <p class="meta">Preview is sanitized and limited to the first 10 rows.</p>
+      <p class="meta">Preview is read-only, sanitized, and capped at the CSV import row limit. Final import revalidates server-side.</p>
       ${renderProductImportPreviewTable(result?.preview_rows || [])}
+      ${resultHasBlocking ? renderProductImportErrorsTable(result?.errors || []) : ''}
+      ${renderProductImportConfirmForm(shopId, result || {})}
     `;
   return renderLayout('Product Import', body);
 }
@@ -2699,6 +2822,18 @@ function renderShopDetailHtml(model = {}) {
           if (importTextarea) {
             importTextarea.addEventListener('input', renderImportPreview);
             renderImportPreview();
+          }
+          const importForm = document.querySelector('[data-product-import-form]');
+          if (importForm && importTextarea) {
+            importForm.addEventListener('submit', (event) => {
+              const submitter = event.submitter || document.activeElement;
+              if (!submitter || submitter.getAttribute('name') !== 'validate_only') return;
+              const key = importForm.getAttribute('data-product-import-storage-key') || '';
+              if (!key) return;
+              try {
+                window.sessionStorage.setItem(key, importTextarea.value || '');
+              } catch (_) {}
+            });
           }
 
           // Product Archive Confirmation Modal (replaces bare confirm())
