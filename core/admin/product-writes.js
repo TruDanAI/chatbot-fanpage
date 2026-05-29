@@ -218,17 +218,24 @@ function createProductWriteRepository() {
   }
 
   async function assertUniqueCode(client, { shopId, code, excludeProductId = '' } = {}) {
+    // Product codes are historical markers. A code stays reserved within the shop
+    // across active, hidden, and archived products so old order/chat history keeps
+    // its meaning. Archived rows are intentionally NOT excluded here.
     const result = await client.query(`
-      SELECT id
+      SELECT id, status
       FROM shop_products
       WHERE shop_id = $1
         AND lower(code) = lower($2)
         AND ($3 = '' OR id <> $3)
-        AND status <> 'archived'
+      ORDER BY CASE WHEN status = 'archived' THEN 1 ELSE 0 END, id ASC
       LIMIT 1
     `, [shopId, code, excludeProductId]);
-    if (result.rows[0]?.id) {
-      throw createProductWriteError('duplicate_product_code', 'Product code already exists in this shop.', 409);
+    const conflict = result.rows[0] || null;
+    if (conflict?.id) {
+      const message = String(conflict.status || '').toLowerCase() === 'archived'
+        ? 'Product code is reserved by an archived product in this shop. Restore that product instead of reusing the code.'
+        : 'Product code already exists in this shop.';
+      throw createProductWriteError('duplicate_product_code', message, 409);
     }
   }
 

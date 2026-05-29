@@ -546,6 +546,19 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     body:not(.js-enabled) .js-edit-product-btn {
       display: none;
     }
+    .duplicate-code-hint {
+      display: none;
+      color: var(--danger);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: none;
+      line-height: 1.4;
+    }
+    .duplicate-code-hint.visible {
+      display: block;
+    }
+    .js-cancel-drawer { display: none; }
+    body.js-enabled .drawer-body .js-cancel-drawer { display: inline-flex; }
     @media (max-width: 640px) {
       .product-section table { display: none !important; }
       .product-mobile-list { display: flex !important; flex-direction: column; gap: 12px; }
@@ -994,6 +1007,8 @@ function renderProductAddForm(shopId = '') {
     <label>Product code <span class="required">required</span>
       <input name="code" maxlength="80" required aria-required="true" autocomplete="off">
       <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+      <span class="help">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
+      <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
     </label>
     <label>Name / title <span class="required">required</span><input name="name" maxlength="180" required aria-required="true"></label>
     <label>Price text<input name="price_text" maxlength="120" placeholder="150k"></label>
@@ -1005,7 +1020,7 @@ function renderProductAddForm(shopId = '') {
     <label>Category<input name="category" maxlength="80"></label>
     <label>Tags<input name="tags" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000"></textarea></label>
-    <div class="form-actions"><button type="submit">Tạo sản phẩm (Lưu mới)</button><span class="meta">Required fields: code and name/title.</span></div>
+    <div class="form-actions"><button type="submit" class="js-product-save-btn">Tạo sản phẩm (Lưu mới)</button><button type="button" class="js-cancel-drawer secondary-button">Hủy bỏ</button><span class="meta">Required fields: code and name/title.</span></div>
   </form>`;
 }
 
@@ -1613,10 +1628,12 @@ function renderControlPlaneForm(shop = {}, model = {}) {
 
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
-  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
+  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}" data-current-code="${escapeHtml(product.code || '')}">
     <label>Code <span class="required">required</span>
       <input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true">
       <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+      <span class="help">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
+      <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
     </label>
     <label>Name/title <span class="required">required</span><input name="name" value="${escapeHtml(product.name)}" maxlength="180" required aria-required="true"></label>
     <label>Price text<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
@@ -1624,24 +1641,38 @@ function renderProductEditForm(shopId = '', product = {}) {
     <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
     <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea></label>
-    <div class="form-actions"><button type="submit">Lưu thay đổi (Cập nhật)</button></div>
+    <div class="form-actions"><button type="submit" class="js-product-save-btn">Lưu thay đổi (Cập nhật)</button><button type="button" class="js-cancel-drawer secondary-button">Hủy bỏ</button></div>
   </form>`;
 }
 
 function renderProductStatusActions(shopId = '', product = {}) {
-  const nextEnabled = String(product.status || '').toLowerCase() === 'active' ? 'false' : 'true';
-  const label = nextEnabled === 'true' ? 'Enable' : 'Disable';
+  const status = String(product.status || '').toLowerCase();
   const statusAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/status`;
   const archiveAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/archive`;
+
+  if (status === 'archived') {
+    // Restore returns the product to "Tạm ẩn" (hidden), never straight to live, so an
+    // operator can review it before re-enabling for customers. enabled=false maps to hidden.
+    return `
+      <form class="inline-action" method="post" action="${escapeHtml(statusAction)}" data-product-restore="true">
+        <input type="hidden" name="enabled" value="false">
+        <button type="submit">Khôi phục</button>
+      </form>
+      <span class="meta">Khôi phục về Tạm ẩn để bạn kiểm tra trước khi bật lại cho khách.</span>
+    `;
+  }
+
+  const nextEnabled = status === 'active' ? 'false' : 'true';
+  const label = nextEnabled === 'true' ? 'Enable' : 'Disable';
   return `
     <form class="inline-action" method="post" action="${escapeHtml(statusAction)}">
       <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
       <button type="submit">${escapeHtml(label)}</button>
     </form>
-    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-confirm="Archive product">
-      <button type="submit" onclick="return confirm('Archive this product? It will be hidden from active use, not deleted.');">Archive product</button>
+    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-product-archive="true" data-product-name="${escapeHtml(product.name || '')}" data-product-code="${escapeHtml(product.code || '')}">
+      <button type="submit">Lưu trữ</button>
     </form>
-    <span class="meta">Archive is a soft archive, not a delete action.</span>
+    <span class="meta">Lưu trữ là thao tác mềm, giữ lịch sử đơn/chat, không xóa cứng.</span>
   `;
 }
 
@@ -2392,6 +2423,26 @@ function renderShopDetailHtml(model = {}) {
         </div>
       </div>
 
+      <!-- Product Archive Confirmation Modal (replaces bare confirm()) -->
+      <div id="product-archive-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="product-archive-title">
+        <div class="modal-container">
+          <div class="modal-header">
+            <span style="font-size: 20px;">🗄️</span>
+            <h3 id="product-archive-title">Lưu trữ sản phẩm</h3>
+          </div>
+          <div class="modal-body">
+            <p id="product-archive-message" class="modal-consequence"></p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="product-archive-cancel" class="modal-btn-cancel">Hủy</button>
+            <button type="button" id="product-archive-confirm" class="modal-btn-confirm">Lưu trữ</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registry of all rendered product codes (incl. archived) for client-side duplicate hints -->
+      <div id="product-codes-registry" hidden aria-hidden="true">${(model.products || []).map(product => `<span data-code="${escapeHtml(String(product.code || '').trim().toLowerCase())}"></span>`).join('')}</div>
+
       <!-- Reusable Product Add/Edit Drawer -->
       <div id="product-drawer" class="drawer-backdrop" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
         <div class="drawer-panel">
@@ -2654,6 +2705,81 @@ function renderShopDetailHtml(model = {}) {
             renderImportPreview();
           }
 
+          // Product Archive Confirmation Modal (replaces bare confirm())
+          const productArchiveModal = document.getElementById('product-archive-modal');
+          const productArchiveMessage = document.getElementById('product-archive-message');
+          const productArchiveCancel = document.getElementById('product-archive-cancel');
+          const productArchiveConfirm = document.getElementById('product-archive-confirm');
+          let pendingArchiveForm = null;
+
+          function closeArchiveModal() {
+            if (productArchiveModal) productArchiveModal.classList.remove('visible');
+            pendingArchiveForm = null;
+          }
+
+          if (productArchiveModal) {
+            document.addEventListener('submit', (e) => {
+              const form = e.target;
+              if (!form || form.dataset.productArchive !== 'true') return;
+              if (form.dataset.archiveConfirmed === 'true') return;
+              e.preventDefault();
+              pendingArchiveForm = form;
+              const name = form.dataset.productName || '';
+              const code = form.dataset.productCode || '';
+              productArchiveMessage.textContent = "Lưu trữ '" + name + ' (' + code + ")'? Bot sẽ ngừng tư vấn sản phẩm này. Lịch sử đơn/chat cũ vẫn giữ nguyên. Bạn có thể khôi phục sau.";
+              productArchiveModal.classList.add('visible');
+            });
+            productArchiveCancel.addEventListener('click', closeArchiveModal);
+            productArchiveModal.addEventListener('click', (e) => {
+              if (e.target === productArchiveModal) closeArchiveModal();
+            });
+            productArchiveConfirm.addEventListener('click', () => {
+              if (!pendingArchiveForm) return;
+              const formToSubmit = pendingArchiveForm;
+              formToSubmit.dataset.archiveConfirmed = 'true';
+              closeArchiveModal();
+              formToSubmit.submit();
+            });
+          }
+
+          // Client-side duplicate product code hint (best-effort; backend is source of truth).
+          // The registry includes archived codes so reusing a retired code is flagged early.
+          const productCodeRegistry = Array.prototype.slice
+            .call(document.querySelectorAll('#product-codes-registry [data-code]'))
+            .map(node => (node.getAttribute('data-code') || '').trim().toLowerCase())
+            .filter(Boolean);
+
+          function checkDuplicateCode(form) {
+            if (!form) return;
+            const codeInput = form.querySelector('input[name="code"]');
+            const hint = form.querySelector('.js-duplicate-code-hint');
+            const saveBtn = form.querySelector('.js-product-save-btn');
+            if (!codeInput || !hint) return;
+            const typed = String(codeInput.value || '').trim();
+            const value = typed.toLowerCase();
+            const currentCode = String(form.dataset.currentCode || '').trim().toLowerCase();
+            let matches = productCodeRegistry.filter(code => code === value).length;
+            // The product being edited is in the registry too; do not flag its own code.
+            if (currentCode && value === currentCode && matches > 0) matches -= 1;
+            const isDuplicate = Boolean(value) && matches > 0;
+            if (isDuplicate) {
+              hint.textContent = "⚠ Mã '" + typed + "' đã tồn tại trong shop này, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.";
+              hint.classList.add('visible');
+              if (saveBtn) saveBtn.disabled = true;
+            } else {
+              hint.textContent = '';
+              hint.classList.remove('visible');
+              if (saveBtn) saveBtn.disabled = false;
+            }
+          }
+
+          document.addEventListener('input', (e) => {
+            const target = e.target;
+            if (target && target.name === 'code' && target.closest('.product-form')) {
+              checkDuplicateCode(target.closest('.product-form'));
+            }
+          });
+
           // Progressive Enhancement Drawer Controller
           document.body.classList.add('js-enabled');
 
@@ -2664,6 +2790,22 @@ function renderShopDetailHtml(model = {}) {
 
           let activeDrawerFormParent = null;
           let activeDrawerForm = null;
+          let drawerInitialState = '';
+
+          function serializeDrawerForm(form) {
+            if (!form) return '';
+            const parts = [];
+            const elements = form.querySelectorAll('input, textarea, select');
+            Array.prototype.forEach.call(elements, el => {
+              if (!el.name) return;
+              if (el.type === 'checkbox' || el.type === 'radio') {
+                parts.push(el.name + '=' + (el.checked ? '1' : '0'));
+              } else {
+                parts.push(el.name + '=' + el.value);
+              }
+            });
+            return parts.join('&');
+          }
 
           function openDrawer(form, titleText) {
             if (activeDrawerForm && activeDrawerFormParent) {
@@ -2675,6 +2817,8 @@ function renderShopDetailHtml(model = {}) {
             drawerTitle.textContent = titleText;
             drawerBody.appendChild(form);
             drawerBackdrop.classList.add('visible');
+            drawerInitialState = serializeDrawerForm(form);
+            checkDuplicateCode(form);
           }
 
           function closeDrawer() {
@@ -2683,23 +2827,41 @@ function renderShopDetailHtml(model = {}) {
               activeDrawerForm = null;
               activeDrawerFormParent = null;
             }
+            drawerInitialState = '';
             drawerBackdrop.classList.remove('visible');
           }
 
+          function requestCloseDrawer() {
+            if (activeDrawerForm && serializeDrawerForm(activeDrawerForm) !== drawerInitialState) {
+              if (!window.confirm('Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi?')) {
+                return;
+              }
+            }
+            closeDrawer();
+          }
+
           if (drawerCloseBtn) {
-            drawerCloseBtn.addEventListener('click', closeDrawer);
+            drawerCloseBtn.addEventListener('click', requestCloseDrawer);
           }
           if (drawerBackdrop) {
             drawerBackdrop.addEventListener('click', (e) => {
               if (e.target === drawerBackdrop) {
-                closeDrawer();
+                requestCloseDrawer();
               }
             });
           }
 
           document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && drawerBackdrop && drawerBackdrop.classList.contains('visible')) {
-              closeDrawer();
+              requestCloseDrawer();
+            }
+          });
+
+          // Explicit "Hủy bỏ" button inside the drawer form
+          document.addEventListener('click', (e) => {
+            if (e.target && e.target.closest('.js-cancel-drawer')) {
+              e.preventDefault();
+              requestCloseDrawer();
             }
           });
 

@@ -3385,8 +3385,12 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('class="product-mobile-list"');
     expect(res.body).toContain('class="product-card-fallback"');
 
-    expect(res.body).toContain('data-confirm="Archive product"');
-    expect(res.body).toContain('Archive this product? It will be hidden from active use, not deleted.');
+    // Archive is now a styled modal (no bare confirm()) and archived rows offer Restore
+    expect(res.body).toContain('data-product-archive="true"');
+    expect(res.body).toContain('>Lưu trữ</button>');
+    expect(res.body.includes("onclick=\"return confirm('Archive this product?")).toBeFalse();
+    expect(res.body).toContain('>Khôi phục</button>');
+    expect(res.body).toContain('Khôi phục về Tạm ẩn để bạn kiểm tra trước khi bật lại cho khách.');
     expect(res.body).toContain('Add asset URL');
     expect(res.body).toContain('action="/admin/shops/adult-shop/assets"');
     expect(res.body).toContain('name="asset_type"');
@@ -7598,5 +7602,78 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body.includes('postgres://')).toBeFalse();
     expect(res.body.includes('postgresql://')).toBeFalse();
     expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
+  });
+});
+
+describe('Product archive/restore lifecycle UX', () => {
+  async function renderShopDetail() {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    return res;
+  }
+
+  it('renders a styled archive confirmation modal instead of a bare confirm()', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('id="product-archive-modal"');
+    expect(res.body).toContain('id="product-archive-message"');
+    expect(res.body).toContain('id="product-archive-confirm"');
+    expect(res.body).toContain('id="product-archive-cancel"');
+    // Archive copy template (static portion lives in the inline controller)
+    expect(res.body).toContain('Bot sẽ ngừng tư vấn sản phẩm này. Lịch sử đơn/chat cũ vẫn giữ nguyên. Bạn có thể khôi phục sau.');
+    // Buttons: Lưu trữ / Hủy
+    expect(res.body).toContain('>Lưu trữ</button>');
+    expect(res.body).toContain('>Hủy</button>');
+    // No one-click bare confirm() archive
+    expect(res.body.includes("confirm('Archive this product?")).toBeFalse();
+    // Active product carries the archive trigger; archived product does not
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/archive" data-product-archive="true"');
+    expect(res.body.includes('products/prod-3/archive')).toBeFalse();
+  });
+
+  it('renders Restore (Khôi phục) for archived products that submits hidden status, not active', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('>Khôi phục</button>');
+    expect(res.body).toContain('Khôi phục về Tạm ẩn để bạn kiểm tra trước khi bật lại cho khách.');
+    // Archived prod-3 restore posts enabled=false (=> hidden) and never enabled=true
+    expect(res.body).toMatch(/action="\/admin\/shops\/adult-shop\/products\/prod-3\/status" data-product-restore="true">\s*<input type="hidden" name="enabled" value="false">\s*<button type="submit">Khôi phục<\/button>/);
+    expect(/products\/prod-3\/status"[\s\S]{0,160}value="true"/.test(res.body)).toBeFalse();
+  });
+
+  it('exposes a duplicate-code hint that accounts for archived product codes', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    // Registry includes the archived product code (DB3 -> db3)
+    expect(res.body).toContain('id="product-codes-registry"');
+    expect(res.body).toContain('data-code="db3"');
+    // Hint element + warning copy template present
+    expect(res.body).toContain('class="js-duplicate-code-hint');
+    expect(res.body).toContain('đã tồn tại trong shop này, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.');
+    // Product code history helper under the code field
+    expect(res.body).toContain('Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.');
+  });
+
+  it('adds an explicit drawer cancel button with unsaved-change discard guard', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('class="js-cancel-drawer');
+    expect(res.body).toContain('>Hủy bỏ</button>');
+    expect(res.body).toContain('Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi?');
   });
 });

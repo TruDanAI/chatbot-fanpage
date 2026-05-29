@@ -448,6 +448,56 @@ describe('product bulk import persistence', () => {
     expect(state.products.length).toBe(1);
   });
 
+  it('fails safely when a CSV code is reserved by an archived product and writes nothing', async () => {
+    const state = createState();
+    state.products.push({
+      id: 'prod-archived',
+      shop_id: 'onboarding-shop',
+      code: 'M20',
+      name: 'Archived M20',
+      description: 'archived',
+      price: null,
+      currency: '',
+      status: 'archived',
+      sort_order: 20,
+      metadata_json: {},
+      updated_at: '2026-05-17T00:00:00.000Z'
+    });
+    const queries = [];
+    const service = createService(state, queries);
+    let err = null;
+
+    try {
+      await service.importProducts({
+        principal,
+        shopId: 'onboarding-shop',
+        body: {
+          csv: [
+            'code,name,price_text',
+            'M21,New Product,100k',
+            'm20,Try To Resurrect Archived,200k'
+          ].join('\n')
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('product_import_validation_failed');
+    expect(Array.isArray(err.errors)).toBeTrue();
+    const archivedError = (err.errors || []).find(error => error.code === 'archived_product_code');
+    expect(Boolean(archivedError)).toBeTrue();
+    expect(archivedError.field).toBe('code');
+    expect(archivedError.row).toBe(3);
+    expect(archivedError.suggested_fix).toContain('archived product');
+    // Nothing was created or updated; the archived product stays archived.
+    expect(state.products.some(product => product.code === 'M21')).toBeFalse();
+    expect(state.products.find(product => product.id === 'prod-archived').status).toBe('archived');
+    expect(state.audits.length).toBe(0);
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
   it('redacts unsafe short identifiers from duplicate code errors', async () => {
     for (const item of [{
       csv: 'code,name\npage_1,First\npage_1,Second',

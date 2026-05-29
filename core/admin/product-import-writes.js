@@ -183,6 +183,7 @@ function suggestedFixForImportError(code = '') {
     missing_required_column: 'Add the required column to the header row.',
     invalid_product_code: 'Use a short code starting with a letter or number; allowed punctuation is dot, underscore, colon, and hyphen.',
     duplicate_product_code_in_csv: 'Keep one row for each product code or merge the duplicated rows.',
+    archived_product_code: 'This code belongs to an archived product. Restore that product from the catalog instead of importing, or use a different code.',
     invalid_product_name: 'Add a product name.',
     invalid_product_status: 'Use active, hidden, archived, enabled, or disabled.',
     invalid_sort_order: 'Use a whole number between -100000 and 100000.',
@@ -738,6 +739,30 @@ function createPostgresProductImportService({
       for (const row of existingRows) {
         const key = String(row.code || '').toLowerCase();
         if (!existingByCode.has(key)) existingByCode.set(key, row);
+      }
+
+      // Archived product codes stay reserved within the shop. Until a dedicated CSV
+      // strategy handles archived restore/update intentionally, fail safely so an
+      // import can never silently overwrite or resurrect an archived product.
+      const archivedCodeErrors = [];
+      for (const row of input.rows) {
+        const existing = existingByCode.get(row.code.toLowerCase());
+        if (existing && String(existing.status || '').toLowerCase() === 'archived') {
+          archivedCodeErrors.push(safeRowError(
+            row.rowNumber,
+            'code',
+            'archived_product_code',
+            'Product code belongs to an archived product and is reserved.',
+            row.code
+          ));
+        }
+      }
+      if (archivedCodeErrors.length) {
+        throw createValidationError({
+          rowsReceived: input.rowsReceived,
+          ignoredColumns: input.ignoredColumns,
+          errors: archivedCodeErrors
+        });
       }
 
       const persistedByRow = [];
