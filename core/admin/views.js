@@ -449,6 +449,86 @@ function renderLayout(title, body, { showLogout = true } = {}) {
       border-color: #fca5a5;
       cursor: not-allowed;
     }
+
+    /* Reusable Drawer/Modal styling */
+    .drawer-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(2px);
+      z-index: 999;
+      justify-content: flex-end;
+    }
+    .drawer-backdrop.visible {
+      display: flex;
+    }
+    .drawer-panel {
+      background: #ffffff;
+      width: 100%;
+      max-width: 500px;
+      height: 100%;
+      box-shadow: -10px 0 25px -5px rgba(0, 0, 0, 0.1), -5px 0 10px -5px rgba(0, 0, 0, 0.04);
+      display: flex;
+      flex-direction: column;
+      animation: drawerSlideIn 0.25s ease-out;
+    }
+    @keyframes drawerSlideIn {
+      from { transform: translateX(100%); }
+      to { transform: translateX(0); }
+    }
+    .drawer-header {
+      background: var(--surface-muted);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .drawer-header h3 {
+      margin: 0;
+      color: var(--primary-dark);
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .drawer-close-btn {
+      background: transparent;
+      border: 0;
+      font-size: 28px;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 4px 8px;
+    }
+    .drawer-close-btn:hover {
+      color: var(--primary-dark);
+    }
+    .drawer-body {
+      padding: 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .drawer-body .product-form {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      margin: 0;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr;
+    }
+    body.js-enabled #add-product-section {
+      display: none;
+    }
+    body.js-enabled .js-fallback-form-container {
+      display: none;
+    }
+    body:not(.js-enabled) .js-edit-product-btn {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -889,15 +969,21 @@ function renderProductAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
     <h3>Add product</h3>
-    <label>Product code <span class="required">required</span><input name="code" maxlength="80" required aria-required="true" autocomplete="off"></label>
+    <label>Product code <span class="required">required</span>
+      <input name="code" maxlength="80" required aria-required="true" autocomplete="off">
+      <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+    </label>
     <label>Name / title <span class="required">required</span><input name="name" maxlength="180" required aria-required="true"></label>
     <label>Price text<input name="price_text" maxlength="120" placeholder="150k"></label>
     <label>Sort order<input name="sort_order" type="number" value="0"></label>
-    <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
+    <label>Status
+      <select name="status"><option value="active">active</option><option value="hidden">hidden</option></select>
+      <span class="help">Ở trạng thái active, bot có thể tự động trả lời thông tin sản phẩm này.</span>
+    </label>
     <label>Category<input name="category" maxlength="80"></label>
     <label>Tags<input name="tags" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000"></textarea></label>
-    <div class="form-actions"><button type="submit">Add product</button><span class="meta">Required fields: code and name/title.</span></div>
+    <div class="form-actions"><button type="submit">Tạo sản phẩm (Lưu mới)</button><span class="meta">Required fields: code and name/title.</span></div>
   </form>`;
 }
 
@@ -1506,14 +1592,17 @@ function renderControlPlaneForm(shop = {}, model = {}) {
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
-    <label>Code <span class="required">required</span><input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true"></label>
+    <label>Code <span class="required">required</span>
+      <input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true">
+      <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+    </label>
     <label>Name/title <span class="required">required</span><input name="name" value="${escapeHtml(product.name)}" maxlength="180" required aria-required="true"></label>
     <label>Price text<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
     <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
     <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
     <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea></label>
-    <div class="form-actions"><button type="submit">Save product</button></div>
+    <div class="form-actions"><button type="submit">Lưu thay đổi (Cập nhật)</button></div>
   </form>`;
 }
 
@@ -1953,7 +2042,12 @@ function renderShopDetailHtml(model = {}) {
           <td>${escapeHtml(product.sort_order || 0)}</td>
           <td>${escapeHtml(formatDate(product.updated_at))}</td>
           <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
-          <td>${renderProductEditForm(shop.id, product)}</td>
+          <td>
+            <button type="button" class="js-edit-product-btn button-link" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>
+            <div class="js-fallback-form-container">
+              ${renderProductEditForm(shop.id, product)}
+            </div>
+          </td>
         </tr>
       `);
 
@@ -2171,6 +2265,17 @@ function renderShopDetailHtml(model = {}) {
             <button type="button" id="modal-cancel-btn" class="modal-btn-cancel">Hủy bỏ</button>
             <button type="button" id="modal-submit-btn" class="modal-btn-confirm" disabled>Xác nhận (3s)</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Reusable Product Add/Edit Drawer -->
+      <div id="product-drawer" class="drawer-backdrop" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+        <div class="drawer-panel">
+          <div class="drawer-header">
+            <h3 id="drawer-title">Thêm sản phẩm</h3>
+            <button type="button" id="drawer-close-btn" class="drawer-close-btn" aria-label="Close">&times;</button>
+          </div>
+          <div class="drawer-body" id="drawer-body-container"></div>
         </div>
       </div>
 
@@ -2424,6 +2529,87 @@ function renderShopDetailHtml(model = {}) {
             importTextarea.addEventListener('input', renderImportPreview);
             renderImportPreview();
           }
+
+          // Progressive Enhancement Drawer Controller
+          document.body.classList.add('js-enabled');
+
+          const drawerBackdrop = document.getElementById('product-drawer');
+          const drawerTitle = document.getElementById('drawer-title');
+          const drawerBody = document.getElementById('drawer-body-container');
+          const drawerCloseBtn = document.getElementById('drawer-close-btn');
+
+          let activeFormParent = null;
+          let activeForm = null;
+
+          function openDrawer(form, titleText) {
+            if (activeForm && activeFormParent) {
+              activeFormParent.appendChild(activeForm);
+            }
+            activeForm = form;
+            activeFormParent = form.parentElement;
+
+            drawerTitle.textContent = titleText;
+            drawerBody.appendChild(form);
+            drawerBackdrop.classList.add('visible');
+          }
+
+          function closeDrawer() {
+            if (activeForm && activeFormParent) {
+              activeFormParent.appendChild(activeForm);
+              activeForm = null;
+              activeFormParent = null;
+            }
+            drawerBackdrop.classList.remove('visible');
+          }
+
+          if (drawerCloseBtn) {
+            drawerCloseBtn.addEventListener('click', closeDrawer);
+          }
+          if (drawerBackdrop) {
+            drawerBackdrop.addEventListener('click', (e) => {
+              if (e.target === drawerBackdrop) {
+                closeDrawer();
+              }
+            });
+          }
+
+          document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && drawerBackdrop && drawerBackdrop.classList.contains('visible')) {
+              closeDrawer();
+            }
+          });
+
+          // Intercept "+ Thêm sản phẩm"
+          const addProductBtn = document.querySelector('a[href="#add-product-section"]');
+          if (addProductBtn) {
+            addProductBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              const addSection = document.getElementById('add-product-section');
+              if (addSection) {
+                const form = addSection.querySelector('.product-form');
+                if (form) {
+                  openDrawer(form, 'Thêm sản phẩm');
+                }
+              }
+            });
+          }
+
+          // Intercept "Sửa" buttons in row
+          document.addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.js-edit-product-btn');
+            if (editBtn) {
+              e.preventDefault();
+              const parentTd = editBtn.closest('td');
+              if (parentTd) {
+                const form = parentTd.querySelector('.product-form');
+                const row = editBtn.closest('tr');
+                const productCode = row ? row.querySelector('td:first-child code').textContent : '';
+                if (form) {
+                  openDrawer(form, 'Sửa sản phẩm: ' + productCode);
+                }
+              }
+            }
+          });
         });
       </script>
     ` : ''}

@@ -7427,3 +7427,51 @@ describe('admin audit PostgreSQL writer', () => {
     expect(queries[0].params[12]).toBe(JSON.stringify({ filter: 'masked' }));
   });
 });
+
+describe('Product Add/Edit Drawer UI', () => {
+  it('shop detail HTML renders reusable drawer/modal markup and keeps form inputs unchanged', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    // 1. Verify drawer/modal container exists
+    expect(res.body).toContain('id="product-drawer"');
+    expect(res.body).toContain('class="drawer-backdrop"');
+    expect(res.body).toContain('class="drawer-panel"');
+    expect(res.body).toContain('id="drawer-title"');
+    expect(res.body).toContain('id="drawer-body-container"');
+
+    // 2. Verify drawer styling exists
+    expect(res.body).toContain('.drawer-backdrop');
+    expect(res.body).toContain('.drawer-panel');
+
+    // 3. Verify add product form action/method/input names remain unchanged
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products"');
+    expect(res.body).toContain('name="code"');
+    expect(res.body).toContain('name="name"');
+    expect(res.body).toContain('name="price_text"');
+    expect(res.body).toContain('name="sort_order"');
+    expect(res.body).toContain('name="status"');
+    expect(res.body).toContain('name="category"');
+    expect(res.body).toContain('name="tags"');
+    expect(res.body).toContain('name="description"');
+
+    // 4. Verify product edit form action/method/input names remain unchanged
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1"');
+
+    // 5. Verify no raw secrets/DB URLs in HTML
+    expect(res.body.includes('postgres://')).toBeFalse();
+  });
+});
