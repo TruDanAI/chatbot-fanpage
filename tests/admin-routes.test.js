@@ -4816,9 +4816,23 @@ describe('admin dashboard routes', () => {
     }
   });
 
-  it('product import HTML POST redirects after safe import', async () => {
+  it('product import HTML POST renders final result summary after safe import', async () => {
     const app = createApp();
-    const productImports = createProductImportServiceStub();
+    const productImports = createProductImportServiceStub({
+      result: {
+        shop_id: 'adult-shop',
+        rows_received: 4,
+        products_created: 2,
+        products_updated: 1,
+        product_images_created: 1,
+        product_images_updated: 0,
+        product_images_skipped: 2,
+        image_assets_touched: 1,
+        ignored_columns: [],
+        unchanged_count: 1,
+        errors: []
+      }
+    });
     registerAdminRoutes(app, {
       storage: createStorageStub(),
       adminExportToken: 'secret',
@@ -4835,9 +4849,53 @@ describe('admin dashboard routes', () => {
       body: { csv: 'code,name\nM7,Demo Product' }
     }), res);
 
-    expect(res.statusCode).toBe(303);
-    expect(res.headers.location).toBe('/admin/shops/adult-shop?productMessage=imported');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.headers.location).toBe(undefined);
+    expect(res.body).toContain('Nhập sản phẩm CSV đã hoàn tất');
+    expect(res.body).toContain('Import được áp dụng theo cơ chế all-or-nothing.');
+    expect(res.body).toMatch(/Đã tạo mới[\s\S]*<strong>2<\/strong>/);
+    expect(res.body).toMatch(/Đã cập nhật[\s\S]*<strong>1<\/strong>/);
+    expect(res.body).toMatch(/Bỏ qua \/ Không đổi[\s\S]*<strong>1<\/strong>/);
+    expect(res.body).toMatch(/Tổng dòng xử lý[\s\S]*<strong>4<\/strong>/);
+    expect(res.body).toContain('Quay lại Danh mục sản phẩm');
+    expect(res.body).toContain('Kiểm tra sản phẩm thiếu ảnh');
+    expect(res.body).toContain('Chạy kiểm tra hoàn tất nếu cần');
+    expect(res.body.includes('Server Preview')).toBeFalse();
+    expect(res.body.includes('Nhập chính thức')).toBeFalse();
     expect(productImports.calls[0].method).toBe('importProducts');
+  });
+
+  it('product import HTML failure says import was not applied without partial success', async () => {
+    const err = Object.assign(new Error('commit failed at postgres://secret'), {
+      code: 'product_import_commit_failed'
+    });
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: createProductImportServiceStub({ failWith: err }),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { csv: 'code,name\nM7,Demo Product' }
+    }), res);
+
+    expect(res.statusCode).toBe(500);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body).toContain('Product import could not be committed.');
+    expect(res.body).toContain('Import chưa được áp dụng. Không có sản phẩm nào được tạo mới hoặc cập nhật.');
+    expect(res.body.includes('Nhập sản phẩm CSV đã hoàn tất')).toBeFalse();
+    expect(res.body.includes('Đã tạo mới')).toBeFalse();
+    expect(res.body.includes('Đã cập nhật')).toBeFalse();
+    expect(res.body.includes('Tổng dòng xử lý')).toBeFalse();
+    expect(res.body.includes('postgres://secret')).toBeFalse();
   });
 
   it('product import HTML POST renders structured validation errors safely', async () => {
@@ -4886,6 +4944,7 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(400);
     expect(res.headers['content-type']).toBe('html');
     expect(res.body).toContain('Product import validation failed.');
+    expect(res.body).toContain('Import chưa được áp dụng. Không có sản phẩm nào được tạo mới hoặc cập nhật.');
     expect(res.body).toContain('<th>row</th>');
     expect(res.body).toContain('<code>code</code>');
     expect(res.body).toContain('<code>invalid_product_code</code>');
@@ -4897,6 +4956,8 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('token=abc')).toBeFalse();
     expect(res.body.includes('Raw Product')).toBeFalse();
     expect(res.body.includes('raw csv')).toBeFalse();
+    expect(res.body.includes('Đã tạo mới')).toBeFalse();
+    expect(res.body.includes('Đã cập nhật')).toBeFalse();
   });
 
   it('product import HTML validate-only returns preview without redirect', async () => {

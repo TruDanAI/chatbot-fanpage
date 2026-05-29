@@ -1145,6 +1145,42 @@ function renderProductImportSummaryBand(result = {}) {
   </div>`;
 }
 
+function safeCount(value = 0) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function renderProductImportFinalSummaryBand(result = {}) {
+  const createdCount = safeCount(result?.created_count ?? result?.create_count ?? result?.products_created);
+  const updatedCount = safeCount(result?.updated_count ?? result?.update_count ?? result?.products_updated);
+  const explicitSkipped = result?.unchanged_skipped_count
+    ?? result?.unchanged_or_skipped_count
+    ?? result?.unchanged_count
+    ?? result?.skipped_count
+    ?? result?.products_unchanged
+    ?? result?.products_skipped;
+  const totalProcessed = safeCount(result?.total_processed ?? result?.rows_processed ?? result?.rows_received);
+  const skippedCount = explicitSkipped == null
+    ? Math.max(0, totalProcessed - createdCount - updatedCount)
+    : safeCount(explicitSkipped);
+  const items = [{
+    label: 'Đã tạo mới',
+    value: createdCount
+  }, {
+    label: 'Đã cập nhật',
+    value: updatedCount
+  }, {
+    label: 'Bỏ qua / Không đổi',
+    value: skippedCount
+  }, {
+    label: 'Tổng dòng xử lý',
+    value: totalProcessed
+  }];
+  return `<div class="import-summary-band" aria-label="Product import result summary">
+    ${items.map(item => `<div class="import-summary-item"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
+  </div>`;
+}
+
 function renderProductImportPreviewTable(rows = []) {
   const previewRows = Array.isArray(rows) ? rows : [];
   if (!previewRows.length) return '<div class="empty">No preview rows were returned.</div>';
@@ -1206,18 +1242,44 @@ function renderProductImportConfirmForm(shopId = '', result = {}) {
   `;
 }
 
+function renderProductImportNextActions(shopId = '') {
+  const productHref = `/admin/shops/${encodeRoutePart(shopId)}#products`;
+  const assetHref = `/admin/shops/${encodeRoutePart(shopId)}#assets`;
+  const readinessAction = `/admin/shops/${encodeRoutePart(shopId)}/readiness-check`;
+  return `<section class="checklist-card" aria-label="Product import next actions">
+    <h2>Tiếp theo</h2>
+    <div class="import-confirm-form">
+      <a class="button-link" href="${escapeHtml(productHref)}">Quay lại Danh mục sản phẩm</a>
+      <a class="button-link secondary-button" href="${escapeHtml(assetHref)}">Kiểm tra sản phẩm thiếu ảnh</a>
+      <form method="post" action="${escapeHtml(readinessAction)}" style="margin: 0;">
+        <button type="submit" class="button-link secondary-button">Chạy kiểm tra hoàn tất nếu cần</button>
+      </form>
+    </div>
+  </section>`;
+}
+
 function renderProductImportResultHtml({ shopId = '', result = null, error = null } = {}) {
   const backHref = `/admin/shops/${encodeRoutePart(shopId)}#products`;
   const resultHasBlocking = Boolean(result?.blocking || result?.blocking_error_count > 0);
+  const resultIsPreview = Boolean(result?.validate_only);
   const body = error
     ? `
-      <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
-      <div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Product import validation failed.')}</div>
+      <p><a href="${escapeHtml(backHref)}">Quay lại Danh mục sản phẩm</a></p>
+      <div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Product import validation failed.')} Import chưa được áp dụng. Không có sản phẩm nào được tạo mới hoặc cập nhật.</div>
       <p class="meta">Rows received: ${escapeHtml(error.rows_received || 0)}${Array.isArray(error.ignored_columns) && error.ignored_columns.length ? ` | ignored columns: ${escapeHtml(error.ignored_columns.join(', '))}` : ''}</p>
       ${renderProductImportErrorsTable(error.errors || [])}
     `
+    : !resultIsPreview
+      ? `
+      <p><a href="${escapeHtml(backHref)}">Quay lại Danh mục sản phẩm</a></p>
+      <div class="banner banner-success" role="status">Nhập sản phẩm CSV đã hoàn tất. Import được áp dụng theo cơ chế all-or-nothing.</div>
+      ${renderProductImportFinalSummaryBand(result || {})}
+      <p class="meta">Ảnh đã tạo/cập nhật: ${escapeHtml(result?.image_assets_touched || 0)} | Dòng không có ảnh: ${escapeHtml(result?.product_images_skipped || 0)}</p>
+      ${Array.isArray(result?.ignored_columns) && result.ignored_columns.length ? `<p class="meta">Ignored columns: ${escapeHtml(result.ignored_columns.join(', '))}</p>` : ''}
+      ${renderProductImportNextActions(shopId)}
+    `
     : `
-      <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
+      <p><a href="${escapeHtml(backHref)}">Quay lại Danh mục sản phẩm</a></p>
       <div class="banner ${resultHasBlocking ? 'banner-warning' : 'banner-success'}" role="status">${escapeHtml(result?.validate_only ? (resultHasBlocking ? 'CSV preview found blocking rows. No products were written.' : 'CSV preview passed. No products were written.') : 'Product import completed.')}</div>
       <p class="meta">Rows received: ${escapeHtml(result?.rows_received || 0)} | products created: ${escapeHtml(result?.products_created || 0)} | products updated: ${escapeHtml(result?.products_updated || 0)} | image assets touched: ${escapeHtml(result?.image_assets_touched || 0)}</p>
       ${renderProductImportSummaryBand(result || {})}

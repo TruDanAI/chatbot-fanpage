@@ -2452,7 +2452,10 @@ function registerAdminRoutes(app, {
           result: presentProductImportApi(result)
         }));
       }
-      return res.redirect(303, shopProductRedirect(shopId, 'imported'));
+      return res.status(200).type('html').send(renderProductImportResultHtml({
+        shopId,
+        result: presentProductImportApi(result)
+      }));
     } catch (err) {
       const response = presentProductImportError(err);
       return res.status(response.statusCode).type('html').send(renderProductImportResultHtml({

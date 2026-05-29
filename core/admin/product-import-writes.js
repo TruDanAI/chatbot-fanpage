@@ -751,6 +751,8 @@ function presentImportPreviewRows(rows = []) {
 function presentImportSummary(summary = {}) {
   const createCount = Number(summary.create_count ?? summary.products_created ?? 0);
   const updateCount = Number(summary.update_count ?? summary.products_updated ?? 0);
+  const unchangedCount = Number(summary.unchanged_count ?? summary.products_unchanged ?? 0);
+  const skippedCount = Number(summary.skipped_count ?? summary.products_skipped ?? 0);
   const archivedConflictCount = Number(summary.archived_conflict_count || 0);
   const duplicateCount = Number(summary.duplicate_count || 0);
   const errorCount = Number(summary.error_count || 0);
@@ -772,6 +774,10 @@ function presentImportSummary(summary = {}) {
       : Number(summary.ignored_columns_count || 0),
     create_count: createCount,
     update_count: updateCount,
+    unchanged_count: unchangedCount,
+    skipped_count: skippedCount,
+    unchanged_or_skipped_count: Number(summary.unchanged_or_skipped_count ?? summary.unchanged_skipped_count ?? (unchangedCount + skippedCount)),
+    total_processed: Number(summary.total_processed ?? summary.rows_processed ?? summary.rows_received ?? 0),
     archived_conflict_count: archivedConflictCount,
     duplicate_count: duplicateCount,
     error_count: errorCount,
