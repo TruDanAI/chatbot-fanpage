@@ -7287,6 +7287,86 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
   });
+
+  it('POST /admin/shops/:shopId/delete-draft successfully deletes eligible draft shop and renders success HTML', async () => {
+    const app = createApp();
+    const mockResult = { success: true, shopId: 'draft-shop', slug: 'draft-shop-slug' };
+    const deleteWrites = {
+      calls: [],
+      async deleteDraftShop(input) {
+        this.calls.push(input);
+        return mockResult;
+      }
+    };
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopDeleteWriteService: deleteWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/delete-draft'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'draft-shop' },
+      body: { confirmation_text: 'DELETE DRAFT', shop_slug: 'draft-shop-slug' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body.includes('Xóa cửa hàng thành công')).toBeTrue();
+    expect(res.body.includes('draft-shop-slug')).toBeTrue();
+    expect(deleteWrites.calls.length).toBe(1);
+    expect(deleteWrites.calls[0].shopId).toBe('draft-shop');
+    expect(deleteWrites.calls[0].body.confirmation_text).toBe('DELETE DRAFT');
+  });
+
+  it('POST /admin/shops/:shopId/delete-draft blocks deletion when ineligible and renders detailed reasons HTML', async () => {
+    const app = createApp();
+    const errorDetails = {
+      code: 'shop_deletion_blocked',
+      details: {
+        reasons: [
+          'Shop này nằm trong danh sách bảo vệ hệ thống',
+          'Shop có dữ liệu đơn hàng (orders) trong hệ thống'
+        ]
+      }
+    };
+    const err = new Error('Shop deletion blocked');
+    err.code = errorDetails.code;
+    err.details = errorDetails.details;
+
+    const deleteWrites = {
+      calls: [],
+      async deleteDraftShop(input) {
+        this.calls.push(input);
+        throw err;
+      }
+    };
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopDeleteWriteService: deleteWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/delete-draft'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'draft-shop' },
+      body: { confirmation_text: 'DELETE DRAFT', shop_slug: 'draft-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body.includes('Thao tác bị chặn')).toBeTrue();
+    expect(res.body.includes('Shop này nằm trong danh sách bảo vệ hệ thống')).toBeTrue();
+    expect(res.body.includes('Shop có dữ liệu đơn hàng (orders) trong hệ thống')).toBeTrue();
+  });
 });
 
 describe('admin audit PostgreSQL writer', () => {

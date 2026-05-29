@@ -37,6 +37,7 @@ require('./asset-writes.test');
 require('./asset-uploads.test');
 require('./shop-control-writes.test');
 require('./shop-readiness-check.test');
+require('./shop-delete-writes.test');
 require('./admin-routes.test');
 require('./wizard-ui.test');
 require('./wizard-routes.test');

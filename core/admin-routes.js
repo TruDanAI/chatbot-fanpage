@@ -74,6 +74,9 @@ const {
   createPostgresShopWriteService,
   isMissingShopWriteSchemaError
 } = require('./admin/shop-writes');
+const {
+  createPostgresShopDeleteService
+} = require('./admin/shop-delete-writes');
 const { createAdminLegacyHandlers } = require('./admin/legacy-routes');
 const {
   assertReadOnlySql,
@@ -1074,6 +1077,7 @@ function registerAdminRoutes(app, {
   shopReadinessCheckService,
   shopSettingsWriteService,
   shopWriteService,
+  shopDeleteWriteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
   tenantId = process.env.TENANT_ID || 'default',
   pageId = process.env.PAGE_ID || '',
@@ -1142,6 +1146,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl
   });
   const shopWrites = shopWriteService || createPostgresShopWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const shopDeleteWrites = shopDeleteWriteService || createPostgresShopDeleteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const sessionManager = adminSessionManager || createAdminSessionManager({
@@ -1630,23 +1637,105 @@ function registerAdminRoutes(app, {
     }
   }
 
-  async function deleteDraftShopPlaceholderHtml(req, res) {
+  async function deleteDraftShopHtml(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
       permission: PERMISSIONS.PRODUCT_WRITE,
       bearerOnly: true,
-      action: 'admin.shop.delete_draft_placeholder',
+      action: 'admin.shop.delete_draft',
       resourceType: 'shop',
       resourceId: shopId
     });
     if (!principal) return;
 
-    const confirmationText = String((req.body || {}).confirmation_text || '').trim();
-    if (confirmationText !== 'DELETE DRAFT') {
-      return res.status(400).type('text').send('Lỗi xác nhận: Vui lòng nhập chính xác DELETE DRAFT.');
-    }
+    try {
+      const result = await shopDeleteWrites.deleteDraftShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
 
-    return res.status(200).type('text').send('Mock delete draft shop handler: database delete is not implemented in P1.2d3.');
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Xóa cửa hàng thành công</title>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+            .card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px; max-width: 480px; width: 100%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); text-align: center; }
+            .icon { font-size: 48px; margin-bottom: 16px; }
+            h1 { font-size: 20px; color: #1e3a8a; margin: 0 0 12px; }
+            p { font-size: 14px; color: #64748b; line-height: 1.5; margin: 0 0 24px; }
+            .btn { display: inline-block; background: #2563eb; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500; transition: background 0.2s; }
+            .btn:hover { background: #1d4ed8; }
+          </style>
+          <meta http-equiv="refresh" content="3;url=/admin/shops">
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">✅</div>
+            <h1>Xóa cửa hàng thành công</h1>
+            <p>Cửa hàng <strong>${result.slug}</strong> đã được xóa hoàn toàn và vĩnh viễn khỏi hệ thống.</p>
+            <p style="font-size: 12px; color: #94a3b8;">Đang tự động chuyển hướng về danh sách cửa hàng sau 3 giây...</p>
+            <a href="/admin/shops" class="btn">Quay lại danh sách cửa hàng</a>
+          </div>
+        </body>
+        </html>
+      `;
+      return res.status(200).type('html').send(html);
+    } catch (err) {
+      if (err.code === 'shop_deletion_blocked') {
+        const reasonsLi = (err.details?.reasons || []).map(r => `<li>${r}</li>`).join('');
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Thao tác bị chặn</title>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff5f5; color: #1e293b; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+              .card { background: white; border: 1px solid #fee2e2; border-radius: 12px; padding: 32px; max-width: 580px; width: 100%; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+              .header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; border-bottom: 1px solid #fee2e2; padding-bottom: 16px; }
+              .icon { font-size: 32px; }
+              h1 { font-size: 20px; color: #991b1b; margin: 0; }
+              p { font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0 0 16px; }
+              ul { margin: 0 0 24px; padding-left: 20px; font-size: 14px; color: #b91c1c; line-height: 1.6; }
+              li { margin-bottom: 8px; }
+              .actions { display: flex; gap: 12px; }
+              .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500; text-align: center; }
+              .btn-primary { background: #dc2626; color: white; }
+              .btn-primary:hover { background: #b91c1c; }
+              .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+              .btn-secondary:hover { background: #e5e7eb; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="header">
+                <span class="icon">🛑</span>
+                <h1>Thao tác bị chặn</h1>
+              </div>
+              <p>Yêu cầu xóa cửa hàng nháp đã bị hệ thống chặn vì lý do an toàn tuyệt đối. Cửa hàng không đủ điều kiện để thực hiện thao tác xóa cứng do phát hiện các lỗi sau:</p>
+              <ul>
+                ${reasonsLi}
+              </ul>
+              <p><strong>Khuyến nghị:</strong> Đối với các cửa hàng đã từng phát sinh dữ liệu, đã kết nối Fanpage hoặc cấu hình Page Token, bạn <strong>chỉ có thể Lưu trữ (Archive)</strong> cửa hàng này để ngắt kết nối an toàn, không thể xóa vĩnh viễn.</p>
+              <div class="actions">
+                <a href="/admin/shops/${encodeURIComponent(shopId)}" class="btn btn-secondary">Quay lại chi tiết cửa hàng</a>
+                <a href="/admin/shops" class="btn btn-secondary">Quay lại danh sách</a>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+        return res.status(409).type('html').send(html);
+      }
+
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
   }
 
   function shopProductRedirect(shopId = '', message = '') {
@@ -2691,7 +2780,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/resume', resumeShopHtml);
   app.post('/admin/shops/:shopId/dry-run/enable', enableShopDryRunHtml);
   app.post('/admin/shops/:shopId/dry-run/disable', disableShopDryRunHtml);
-  app.post('/admin/shops/:shopId/delete-draft', deleteDraftShopPlaceholderHtml);
+  app.post('/admin/shops/:shopId/delete-draft', deleteDraftShopHtml);
   app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
   app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
   app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);
