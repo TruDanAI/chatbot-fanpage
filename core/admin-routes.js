@@ -348,9 +348,10 @@ function presentProductWriteError(err) {
     invalid_product_code: ['invalid_product_input', 'Product code is required.', 400],
     invalid_product_name: ['invalid_product_input', 'Product name is required.', 400],
     invalid_product_status: ['invalid_product_input', 'Product status is invalid.', 400],
-    duplicate_product_code: ['duplicate_product_code', 'Product code already exists in this shop.', 409],
+    duplicate_product_code: ['duplicate_product_code', 'Mã sản phẩm này đã tồn tại trong shop, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.', 409],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     product_not_found: ['product_not_found', 'Product was not found.', 404],
+    product_not_archived: ['product_not_archived', 'Only archived products can be restored.', 409],
     permission_denied: ['permission_denied', 'Product write permission is required.', 403],
     database_url_required: ['product_write_unavailable', 'Product writes are unavailable.', 503],
     product_commit_failed: ['product_commit_failed', 'Product write could not be committed.', 500]
@@ -2197,6 +2198,31 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function restoreProductApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.restore',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      const result = await productWrites.restoreProduct({
+        principal,
+        shopId,
+        productId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentProductWriteApi(result));
+    } catch (err) {
+      const response = presentProductWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function updateShopSettingsApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -2514,6 +2540,31 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function restoreProductHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.restore',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      await productWrites.restoreProduct({
+        principal,
+        shopId,
+        productId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopProductRedirect(shopId, 'restored'));
+    } catch (err) {
+      const response = presentProductWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   function shopAssetRedirect(shopId = '', message = '') {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
@@ -2747,6 +2798,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/products/import', importProductsApi);
+  app.post('/admin/api/shops/:shopId/products/:productId/restore', restoreProductApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
   app.post('/admin/api/shops/:shopId/assets/uploads', createAssetUploadApi);
   app.post('/admin/api/shops/:shopId/assets/menu-images/import', importMenuImagesApi);
@@ -2793,6 +2845,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
   app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
   app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
+  app.post('/admin/shops/:shopId/products/:productId/restore', restoreProductHtml);
   app.post('/admin/shops/:shopId/assets', createAssetHtml);
   app.post('/admin/shops/:shopId/assets/uploads', createAssetUploadHtml);
   app.post('/admin/shops/:shopId/assets/menu-images/import', importMenuImagesHtml);

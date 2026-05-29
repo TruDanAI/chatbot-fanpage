@@ -11,10 +11,12 @@ const PRODUCT_WRITE_ACTIONS = Object.freeze({
   CREATE: 'admin.product.create',
   UPDATE: 'admin.product.update',
   STATUS: 'admin.product.status',
-  ARCHIVE: 'admin.product.archive'
+  ARCHIVE: 'admin.product.archive',
+  RESTORE: 'admin.product.restore'
 });
 
 const PRODUCT_STATUSES = Object.freeze(new Set(['active', 'hidden', 'archived']));
+const DUPLICATE_PRODUCT_CODE_MESSAGE = 'Mã sản phẩm này đã tồn tại trong shop, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.';
 
 function loadPgClient() {
   try {
@@ -232,10 +234,7 @@ function createProductWriteRepository() {
     `, [shopId, code, excludeProductId]);
     const conflict = result.rows[0] || null;
     if (conflict?.id) {
-      const message = String(conflict.status || '').toLowerCase() === 'archived'
-        ? 'Product code is reserved by an archived product in this shop. Restore that product instead of reusing the code.'
-        : 'Product code already exists in this shop.';
-      throw createProductWriteError('duplicate_product_code', message, 409);
+      throw createProductWriteError('duplicate_product_code', DUPLICATE_PRODUCT_CODE_MESSAGE, 409);
     }
   }
 
@@ -302,6 +301,18 @@ function createProductWriteRepository() {
     return result.rows[0] || null;
   }
 
+  async function restoreArchivedProduct(client, { shopId, productId } = {}) {
+    const result = await client.query(`
+      UPDATE shop_products
+      SET status = 'hidden',
+          updated_at = now()
+      WHERE shop_id = $1 AND id = $2 AND status = 'archived'
+      RETURNING id, shop_id, code, name, description, price, currency, status,
+                sort_order, metadata_json, updated_at
+    `, [shopId, productId]);
+    return result.rows[0] || null;
+  }
+
   async function insertAudit(client, {
     principal,
     action,
@@ -331,6 +342,7 @@ function createProductWriteRepository() {
     getProductForShop,
     insertAudit,
     insertProduct,
+    restoreArchivedProduct,
     resolveShop,
     updateProduct
   };
@@ -492,9 +504,39 @@ function createPostgresProductWriteService({
     });
   }
 
+  async function restoreProduct({ principal, shopId, productId, requestContext = {} } = {}) {
+    assertWritePermission(principal);
+    const normalizedProductId = normalizeProductId(productId);
+    if (!normalizedProductId) throw createProductWriteError('product_not_found', 'Product was not found.', 404);
+    return withTransaction(async client => {
+      const shop = await repository.resolveShop(client, shopId);
+      const existing = await repository.getProductForShop(client, shop.id, normalizedProductId);
+      if (!existing) throw createProductWriteError('product_not_found', 'Product was not found.', 404);
+      if (String(existing.status || '').toLowerCase() !== 'archived') {
+        throw createProductWriteError('product_not_archived', 'Only archived products can be restored.', 409);
+      }
+      const row = await repository.restoreArchivedProduct(client, { shopId: shop.id, productId: normalizedProductId });
+      if (!row) throw createProductWriteError('product_not_found', 'Product was not found.', 404);
+      await repository.insertAudit(client, {
+        principal,
+        action: PRODUCT_WRITE_ACTIONS.RESTORE,
+        resourceId: normalizedProductId,
+        metadata: {
+          shop_id: shop.id,
+          product_id: normalizedProductId,
+          code: existing.code,
+          status: 'hidden'
+        },
+        requestContext
+      });
+      return { shopId: shop.id, product: presentProduct(row) };
+    });
+  }
+
   return {
     archiveProduct,
     createProduct,
+    restoreProduct,
     setProductEnabled,
     updateProduct
   };

@@ -690,7 +690,7 @@ function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, cre
   };
 }
 
-function createProductWriteServiceStub({ failWith, createdProduct, updatedProduct, statusProduct, archivedProduct } = {}) {
+function createProductWriteServiceStub({ failWith, createdProduct, updatedProduct, statusProduct, archivedProduct, restoredProduct } = {}) {
   const calls = [];
   const baseProduct = {
     id: 'prod-1',
@@ -743,6 +743,14 @@ function createProductWriteServiceStub({ failWith, createdProduct, updatedProduc
       return {
         shopId: input.shopId,
         product: archivedProduct || { ...baseProduct, status: 'archived', enabled: false }
+      };
+    },
+    async restoreProduct(input = {}) {
+      calls.push({ method: 'restoreProduct', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        product: restoredProduct || { ...baseProduct, status: 'hidden', enabled: false }
       };
     }
   };
@@ -5016,6 +5024,49 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(body.product.status).toBe('archived');
     expect(productWrites.calls[0].method).toBe('archiveProduct');
+  });
+
+  it('product restore API restores archived product to hidden (never active)', async () => {
+    const app = createApp();
+    const productWrites = createProductWriteServiceStub({
+      restoredProduct: {
+        id: 'prod-1',
+        shop_id: 'adult-shop',
+        code: 'DB1',
+        name: 'Restored Product',
+        description: 'safe product',
+        price_text: '150k',
+        status: 'hidden',
+        enabled: false,
+        sort_order: 1,
+        tags: [],
+        category: 'demo',
+        metadata_json: {},
+        updated_at: '2026-05-12T04:00:00.000Z'
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productWriteService: productWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/products/:productId/restore'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', productId: 'prod-1' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.product.status).toBe('hidden');
+    expect(body.product.enabled).toBeFalse();
+    expect(productWrites.calls[0].method).toBe('restoreProduct');
+    expect(productWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(productWrites.calls[0].input.productId).toBe('prod-1');
   });
 
   it('asset create/update/status/archive API uses URL-only write service', async () => {
