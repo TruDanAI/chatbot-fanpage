@@ -3385,12 +3385,12 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('class="product-mobile-list"');
     expect(res.body).toContain('class="product-card-fallback"');
 
-    // Archive is now a styled modal (no bare confirm()) and archived rows offer Restore
+    // Archive is now a styled modal (no bare confirm()) and archived rows show lifecycle placeholders
     expect(res.body).toContain('data-product-archive="true"');
     expect(res.body).toContain('>Lưu trữ</button>');
     expect(res.body.includes("onclick=\"return confirm('Archive this product?")).toBeFalse();
     expect(res.body).toContain('>Khôi phục</button>');
-    expect(res.body).toContain('Khôi phục về Tạm ẩn để bạn kiểm tra trước khi bật lại cho khách.');
+    expect(res.body).toContain('Sẽ khả dụng ở bước khôi phục sản phẩm.');
     expect(res.body).toContain('Add asset URL');
     expect(res.body).toContain('action="/admin/shops/adult-shop/assets"');
     expect(res.body).toContain('name="asset_type"');
@@ -7643,15 +7643,53 @@ describe('Product archive/restore lifecycle UX', () => {
     expect(res.body.includes('products/prod-3/archive')).toBeFalse();
   });
 
-  it('renders Restore (Khôi phục) for archived products that submits hidden status, not active', async () => {
+  // P1.2e3b1: archived row renders disabled Khôi phục + Xóa nháp placeholders; no functional form.
+  it('archived row renders disabled Khôi phục and Xóa nháp placeholders, no functional restore form', async () => {
     const res = await renderShopDetail();
 
     expect(res.statusCode).toBe(200);
+    // Both disabled placeholder buttons present
     expect(res.body).toContain('>Khôi phục</button>');
-    expect(res.body).toContain('Khôi phục về Tạm ẩn để bạn kiểm tra trước khi bật lại cho khách.');
-    // Archived prod-3 restore posts enabled=false (=> hidden) and never enabled=true
-    expect(res.body).toMatch(/action="\/admin\/shops\/adult-shop\/products\/prod-3\/status" data-product-restore="true">\s*<input type="hidden" name="enabled" value="false">\s*<button type="submit">Khôi phục<\/button>/);
-    expect(/products\/prod-3\/status"[\s\S]{0,160}value="true"/.test(res.body)).toBeFalse();
+    expect(res.body).toContain('>Xóa nháp</button>');
+    // Tooltips communicate deferred intent
+    expect(res.body).toContain('Sẽ khả dụng ở bước khôi phục sản phẩm.');
+    expect(res.body).toContain('Chỉ khả dụng cho sản phẩm nháp chưa có lịch sử, sẽ làm ở bước riêng.');
+    // No functional restore form for archived prod-3 (buttons are type=button disabled, not submit)
+    expect(res.body.includes('products/prod-3/status')).toBeFalse();
+    // No Sửa edit button for the archived row
+    expect(res.body.includes('data-product-id="prod-3"')).toBeFalse();
+  });
+
+  // P1.2e3b1: active row shows Tạm ẩn / Lưu trữ / Sửa.
+  it('active row renders Tạm ẩn, Lưu trữ, and Sửa; no English Disable label', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('>Tạm ẩn</button>');
+    expect(res.body).toContain('>Lưu trữ</button>');
+    // Product status toggle form uses Vietnamese Tạm ẩn, not the old English Disable
+    expect(res.body).toMatch(/action="\/admin\/shops\/adult-shop\/products\/prod-1\/status"[\s\S]{0,120}>Tạm ẩn<\/button>/);
+    // Sửa button present for active product (prod-1)
+    expect(res.body).toContain('data-product-id="prod-1"');
+    // Existing status toggle endpoint preserved for active product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/status"');
+    // Existing archive endpoint preserved for active product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/archive" data-product-archive="true"');
+  });
+
+  // P1.2e3b1: hidden row shows Hiện lại / Lưu trữ / Sửa.
+  it('hidden row renders Hiện lại, Lưu trữ, and Sửa; no English Enable label', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('>Hiện lại</button>');
+    expect(res.body.includes('>Enable</button>')).toBeFalse();
+    // Sửa button present for hidden product (prod-2)
+    expect(res.body).toContain('data-product-id="prod-2"');
+    // Existing status toggle endpoint preserved for hidden product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-2/status"');
+    // Existing archive endpoint preserved for hidden product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-2/archive" data-product-archive="true"');
   });
 
   it('exposes a duplicate-code hint that accounts for archived product codes', async () => {

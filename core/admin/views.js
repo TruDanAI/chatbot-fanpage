@@ -1651,23 +1651,19 @@ function renderProductStatusActions(shopId = '', product = {}) {
   const archiveAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/archive`;
 
   if (status === 'archived') {
-    // Restore returns the product to "Tạm ẩn" (hidden), never straight to live, so an
-    // operator can review it before re-enabling for customers. enabled=false maps to hidden.
+    // Disabled placeholders — full restore and draft-delete flows land in P1.2e3b2+.
     return `
-      <form class="inline-action" method="post" action="${escapeHtml(statusAction)}" data-product-restore="true">
-        <input type="hidden" name="enabled" value="false">
-        <button type="submit">Khôi phục</button>
-      </form>
-      <span class="meta">Khôi phục về Tạm ẩn để bạn kiểm tra trước khi bật lại cho khách.</span>
+      <button type="button" class="inline-action" disabled title="Sẽ khả dụng ở bước khôi phục sản phẩm.">Khôi phục</button>
+      <button type="button" class="inline-action" disabled title="Chỉ khả dụng cho sản phẩm nháp chưa có lịch sử, sẽ làm ở bước riêng.">Xóa nháp</button>
     `;
   }
 
   const nextEnabled = status === 'active' ? 'false' : 'true';
-  const label = nextEnabled === 'true' ? 'Enable' : 'Disable';
+  const toggleLabel = status === 'active' ? 'Tạm ẩn' : 'Hiện lại';
   return `
     <form class="inline-action" method="post" action="${escapeHtml(statusAction)}">
       <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
-      <button type="submit">${escapeHtml(label)}</button>
+      <button type="submit">${escapeHtml(toggleLabel)}</button>
     </form>
     <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-product-archive="true" data-product-name="${escapeHtml(product.name || '')}" data-product-code="${escapeHtml(product.code || '')}">
       <button type="submit">Lưu trữ</button>
@@ -2134,7 +2130,7 @@ function renderShopDetailHtml(model = {}) {
                 <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                   <span class="meta" style="font-size: 11px;">Thứ tự: ${escapeHtml(product.sort_order || 0)}</span>
                   <div style="display: flex; gap: 6px;">
-                    <button type="button" class="js-edit-product-btn button-link" style="padding: 4px 8px; font-size: 12px; font-weight: bold; background: var(--primary);">Sửa</button>
+                    ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 4px 8px; font-size: 12px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
                     ${renderProductStatusActions(shop.id, product)}
                   </div>
                 </div>
@@ -2197,7 +2193,7 @@ function renderShopDetailHtml(model = {}) {
             <td>${escapeHtml(formatDate(product.updated_at))}</td>
             <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
             <td>
-              <button type="button" class="js-edit-product-btn button-link" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>
+              ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
               <div class="js-fallback-form-container">
                 ${renderProductEditForm(shop.id, product)}
               </div>
