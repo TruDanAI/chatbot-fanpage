@@ -1,6 +1,6 @@
 const { normalizeRuleToggles } = require('../rule-toggles');
 const { pageRef } = require('../utils/log-refs');
-const { renderEmptyState, renderGuidanceCard, renderRequirementList } = require('./wizard-ui');
+const { renderEmptyState, renderGuidanceCard } = require('./wizard-ui');
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -564,8 +564,9 @@ function renderCounts(counts = {}) {
 }
 
 function renderTable(headers, rows, renderRow) {
-  if (!rows.length) return '<div class="empty">Không có dữ liệu.</div>';
-  return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table>`;
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return '<div class="empty">Không có dữ liệu.</div>';
+  return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${safeRows.map(renderRow).join('')}</tbody></table>`;
 }
 
 function limitNoteBody(value = '', max = 800) {
@@ -637,10 +638,10 @@ function renderPagination(page = {}, filters = {}, queryString = dashboardQueryS
   const currentPage = Math.max(1, Number(page.page || filters.page || 1));
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const previous = page.hasPrevious
-    ? `<a href="${queryString(filters, { [pageParam]: page.previousPage })}">Previous</a>`
+    ? `<a href="${escapeHtml(queryString(filters, { [pageParam]: page.previousPage }))}">Previous</a>`
     : '<span>Previous</span>';
   const next = page.hasNext
-    ? `<a href="${queryString(filters, { [pageParam]: page.nextPage })}">Next</a>`
+    ? `<a href="${escapeHtml(queryString(filters, { [pageParam]: page.nextPage }))}">Next</a>`
     : '<span>Next</span>';
   return `<nav class="pagination" aria-label="Pagination">${previous}<span>Page ${escapeHtml(currentPage)} of ${escapeHtml(totalPages)}</span><span>${escapeHtml(total)} rows</span>${next}</nav>`;
 }
@@ -685,7 +686,7 @@ function renderOperations(operations = {}, filters = {}) {
           <tr>
             <td>${escapeHtml(formatLabel(row.reason))}</td>
             <td>${escapeHtml(formatDate(row.updated_at))}</td>
-            <td><a href="/admin/dashboard/users/${encodeRoutePart(row.sender_id)}${dashboardQueryString(filters)}">${escapeHtml(row.sender_id)}</a></td>
+            <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(row.sender_id)}${dashboardQueryString(filters)}`)}">${escapeHtml(row.sender_id)}</a></td>
             <td>${renderStatus(row.status)}</td>
             <td>${escapeHtml(row.product_code)}</td>
             <td>${escapeHtml(row.detail)}</td>
@@ -778,7 +779,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['updated', 'sender', 'status', 'product', 'name', 'phone', 'address', 'items'], model.orders, order => `
       <tr>
         <td>${escapeHtml(formatDate(order.updated_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(order.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(order.sender_id)}</a></td>
+        <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(order.sender_id)}${dashboardQueryString(model.filters)}`)}">${escapeHtml(order.sender_id)}</a></td>
         <td>${renderStatus(order.status)}</td>
         <td>${escapeHtml(order.product_code)}</td>
         <td>${escapeHtml(limitText(order.customer_name, 80))}</td>
@@ -793,7 +794,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['updated', 'sender', 'state', 'last product', 'last user at'], model.conversations, item => `
       <tr>
         <td>${escapeHtml(formatDate(item.updated_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(item.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(item.sender_id)}</a></td>
+        <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(item.sender_id)}${dashboardQueryString(model.filters)}`)}">${escapeHtml(item.sender_id)}</a></td>
         <td>${escapeHtml(item.session_state)}</td>
         <td>${escapeHtml(item.last_product_code)}</td>
         <td>${escapeHtml(formatDate(item.last_user_at))}</td>
@@ -805,7 +806,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['time', 'sender', 'type', 'source', 'product', 'text'], model.events, event => `
       <tr>
         <td>${escapeHtml(formatDate(event.event_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(event.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(event.sender_id)}</a></td>
+        <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(event.sender_id)}${dashboardQueryString(model.filters)}`)}">${escapeHtml(event.sender_id)}</a></td>
         <td>${escapeHtml(event.type)}</td>
         <td>${escapeHtml(event.source)}</td>
         <td>${escapeHtml(event.product_code)}</td>
@@ -2178,11 +2179,11 @@ function renderShopDetailHtml(model = {}) {
               <div class="counts" style="margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
                 <div class="count" style="border-left: 4px solid var(--success); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
                   <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm hoạt động</span>
-                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #111827;">${activeProducts.length}</strong>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #111827;">${escapeHtml(activeProducts.length)}</strong>
                 </div>
                 <div class="count" style="border-left: 4px solid ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'}; padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
                   <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm thiếu ảnh</span>
-                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'};">${missingImagesCount}</strong>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'};">${escapeHtml(missingImagesCount)}</strong>
                   ${missingImagesCount > 0
                     ? '<span class="meta" style="color: var(--warning); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">⚠ Hãy bổ sung ảnh ở tab "Hình ảnh" để tư vấn tốt hơn</span>'
                     : '<span class="meta" style="color: var(--success); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">✓ Tất cả sản phẩm đều có ảnh minh họa</span>'
@@ -2190,7 +2191,7 @@ function renderShopDetailHtml(model = {}) {
                 </div>
                 <div class="count" style="border-left: 4px solid var(--neutral); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
                   <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm ẩn/lưu trữ</span>
-                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #4b5563;">${inactiveProducts.length}</strong>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #4b5563;">${escapeHtml(inactiveProducts.length)}</strong>
                 </div>
               </div>
             `;
@@ -2538,15 +2539,15 @@ function renderShopDetailHtml(model = {}) {
           const drawerBody = document.getElementById('drawer-body-container');
           const drawerCloseBtn = document.getElementById('drawer-close-btn');
 
-          let activeFormParent = null;
-          let activeForm = null;
+          let activeDrawerFormParent = null;
+          let activeDrawerForm = null;
 
           function openDrawer(form, titleText) {
-            if (activeForm && activeFormParent) {
-              activeFormParent.appendChild(activeForm);
+            if (activeDrawerForm && activeDrawerFormParent) {
+              activeDrawerFormParent.appendChild(activeDrawerForm);
             }
-            activeForm = form;
-            activeFormParent = form.parentElement;
+            activeDrawerForm = form;
+            activeDrawerFormParent = form.parentElement;
 
             drawerTitle.textContent = titleText;
             drawerBody.appendChild(form);
@@ -2554,10 +2555,10 @@ function renderShopDetailHtml(model = {}) {
           }
 
           function closeDrawer() {
-            if (activeForm && activeFormParent) {
-              activeFormParent.appendChild(activeForm);
-              activeForm = null;
-              activeFormParent = null;
+            if (activeDrawerForm && activeDrawerFormParent) {
+              activeDrawerFormParent.appendChild(activeDrawerForm);
+              activeDrawerForm = null;
+              activeDrawerFormParent = null;
             }
             drawerBackdrop.classList.remove('visible');
           }
@@ -2627,7 +2628,7 @@ function renderUserDetailHtml(model) {
   const profile = model.profile || {};
   const conversation = model.conversation || {};
   const body = `
-    <p><a href="/admin/dashboard${dashboardQueryString(model.filters || {})}">Back to dashboard</a></p>
+    <p><a href="${escapeHtml(`/admin/dashboard${dashboardQueryString(model.filters || {})}`)}">Back to dashboard</a></p>
     <p class="meta">Sender <code>${escapeHtml(model.senderId)}</code> | detail limits: ${escapeHtml(model.limits.detailOrders)} orders, ${escapeHtml(model.limits.detailMessages)} messages, ${escapeHtml(model.limits.detailEvents)} events.</p>
 
     <h2>Profile</h2>

@@ -7458,7 +7458,7 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('.drawer-panel');
 
     // 3. Verify add product form action/method/input names remain unchanged
-    expect(res.body).toContain('action="/admin/shops/adult-shop/products"');
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products"');
     expect(res.body).toContain('name="code"');
     expect(res.body).toContain('name="name"');
     expect(res.body).toContain('name="price_text"');
@@ -7469,9 +7469,16 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('name="description"');
 
     // 4. Verify product edit form action/method/input names remain unchanged
-    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1"');
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/prod-1"');
 
-    // 5. Verify no raw secrets/DB URLs in HTML
+    // 5. Verify progressive-enhancement markup: edit trigger + inline fallback form
+    expect(res.body).toContain('class="js-edit-product-btn');
+    expect(res.body).toContain('class="js-fallback-form-container"');
+    expect(res.body).toContain('body.js-enabled #add-product-section');
+
+    // 6. Verify no raw secrets/DB URLs/tokens/Page IDs in HTML
     expect(res.body.includes('postgres://')).toBeFalse();
+    expect(res.body.includes('postgresql://')).toBeFalse();
+    expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
   });
 });
