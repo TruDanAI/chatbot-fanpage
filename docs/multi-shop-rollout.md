@@ -995,6 +995,23 @@ This checkpoint records the successful E2E staging implementation, testing, depl
   - **System Isolation**: `adult-shop`, `demo-shop`, `nem-bui-xa`, and `wizard-smoke-shop` are completely untouched and unchanged.
 - **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, token health checks, or production data writes were executed.
 
+## Product Image, Status Polish and Lifecycle Safety Checkpoint (P1.2e3) - 2026-05-29
+
+This checkpoint records the successful E2E staging implementation, testing, deployment, and verification of the P1.2e3 update suite. This update covers catalog image previews, localized product statuses, visual row action controls, and robust transaction-level product code history safety rules.
+
+- **Status**: Completed and E2E Verified
+- **Staging Verification URL**: `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Key Deliverables Completed**:
+  - **P1.2e3a Product Image & Status Visual Polish**: Deployed an active "Ảnh" preview column, warning flags (`⚠ Thiếu ảnh` inside `#fffbeb` panels for active products), localized status badges (`Hoạt động`, `Tạm ẩn`, `Đã lưu trữ`), and card-based mobile fallback displays in commit `2dbd193` on staging (deployment `72d569f2-19d7-4592-a662-176924952831`).
+  - **P1.2e3b1 Product Lifecycle Row Actions**: Integrated `Tạm ẩn`/`Lưu trữ` quick actions for active rows, `Hiện lại`/`Lưu trữ` for hidden rows, disabled action placeholders for archived rows, and an intercepting modal window (`#product-archive-modal`) in commit `94b0915` on staging (deployment `aaa77674-c28f-4a23-a7f3-786b61e0b37b`).
+  - **P1.2e3b2 Product Code History Safety**: Enforced complete reservation of product codes (active, hidden, and archived) within the shop, safe restore-to-hidden redirection, block on duplicate codes returning localized errors, and CSV import safety blocking archived code conflicts in commit `d545b4a` on staging (deployment `3a1b47c3-20df-4521-98c3-7f976c74abfb`). No hard-delete product exists in this slice.
+- **Staging Verification**:
+  - **E2E Smoke Verification**: Executed E2E smoke tests on the disposable `wizard-smoke-shop` using unique timestamped codes (`archived-code-smoke-${timestamp}`). Checked product creation, archived the product, confirmed duplicate creation is blocked with a 409 response, restored the archived product strictly to hidden status, and re-archived it for database cleanup.
+  - **Duplicate Prevention Verification**: Verified that zero redundant rows are created when a duplicate code is blocked; the original archived row remains isolated and intact.
+  - **State Machine Verification**: Verified that restoring a non-archived product is correctly blocked with a 409 `product_not_archived` status.
+  - **System Isolation**: `adult-shop`, `demo-shop`, and `nem-bui-xa` remained completely unaffected and safe.
+- **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, token health checks, or production data writes were executed. Detailed checkpoint results and visual transitions are recorded in [product-lifecycle-checkpoint.md](file:///c:/Users/Pc/Desktop/New%20folder/chatbot-fanpage/docs/product-lifecycle-checkpoint.md).
+
 ## Open TODOs
 
 - Asset upload and media direct integration enhancements.
