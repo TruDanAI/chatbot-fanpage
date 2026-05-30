@@ -3644,6 +3644,70 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('do-not-return')).toBeFalse();
   });
 
+  it('shop detail credential replacement flow renders hardened confirmation markup without leaking secrets', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-active',
+          page_id: 'raw-secret-page-id-999',
+          page_ref: 'p:safe-active',
+          page_name: 'Active Page',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'v1:encrypted-secret',
+          access_token: 'EAAB-render-secret-token'
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const tokenInput = (res.body.match(/<input name="token" type="password"[^>]*>/) || [''])[0];
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('data-credential-replacement="true"');
+    expect(res.body).toContain('data-danger-confirm-scope="credential-replacement"');
+    expect(res.body).toContain('data-countdown-seconds="3"');
+    expect(res.body).toContain('id="danger-confirm-modal"');
+    expect(res.body).toContain('id="modal-checkbox"');
+    expect(res.body).toContain('id="modal-slug-input"');
+    expect(res.body).toContain('name="operator_ack"');
+    expect(res.body).toContain('name="shop_slug_confirmation"');
+    expect(res.body).toContain('pattern="new-shop"');
+    expect(res.body).toContain('Không dán token staging vào production.');
+    expect(res.body).toContain('Token sẽ được mã hóa bằng khóa của môi trường hiện tại.');
+    expect(res.body).toContain('Token không hiển thị lại sau khi lưu.');
+    expect(res.body).toContain('Sau khi thay token, hãy chạy lại kiểm tra hoàn tất.');
+    expect(res.body).toContain('Không tự động gọi Meta Graph API hoặc chạy kiểm tra sức khỏe token khi lưu.');
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pages/page-active/credentials"');
+    expect(res.body).toContain('name="credential_type" value="fb_page_token"');
+    expect(res.body).toContain('name="rotate" value="true"');
+    expect(res.body).toContain('name="confirmation_text"');
+    expect(tokenInput).toContain('name="token" type="password"');
+    expect(tokenInput).toContain('autocomplete="new-password"');
+    expect(tokenInput.includes('value=')).toBeFalse();
+    expect(res.body.includes('raw-secret-page-id-999')).toBeFalse();
+    expect(res.body.includes('EAAB-render-secret-token')).toBeFalse();
+    expect(res.body.includes('v1:encrypted-secret')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('page-token-health')).toBeFalse();
+    expect(res.body.includes('check-page-token-health')).toBeFalse();
+    expect(res.body.includes('debug_token')).toBeFalse();
+    expect(res.body.includes('graph.facebook.com')).toBeFalse();
+  });
+
   it('shop detail HTML renders image manager groups, large lazy thumbnails, badges, and replace URL forms', async () => {
     const app = createApp();
     const reader = createShopDetailReader(createOnboardingShopDetailModel({

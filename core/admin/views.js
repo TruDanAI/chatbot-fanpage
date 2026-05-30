@@ -11,6 +11,10 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
+function escapeHtmlPattern(value = '') {
+  return String(value ?? '').replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
 function escapePreviewHtml(value = '') {
   return String(value ?? '')
     .replace(/&(?!(?:amp|lt|gt|quot|#39);)/g, '&amp;')
@@ -320,6 +324,16 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .connection-notes { margin: 0; padding-left: 18px; color: #334155; font-size: 13px; line-height: 1.5; }
     .connection-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .connection-action-disabled { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--muted); background: #f8fafc; font: inherit; font-size: 14px; font-weight: 700; cursor: not-allowed; }
+    .credential-replace-panel { border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; padding: 12px; display: grid; gap: 10px; min-width: 260px; }
+    .credential-replace-panel h4 { margin: 0; color: #991b1b; font-size: 14px; }
+    .credential-replace-panel p { margin: 0; color: #7f1d1d; font-size: 13px; line-height: 1.45; }
+    .credential-safety-list { margin: 0; padding-left: 18px; color: #334155; font-size: 12px; line-height: 1.45; }
+    .credential-safety-list li + li { margin-top: 3px; }
+    .credential-confirm-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .credential-confirm-grid label { margin: 0; }
+    .credential-no-js-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    body.js-enabled .credential-js-fallback-control,
+    body.js-enabled .credential-no-js-note { display: none; }
     .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; padding-bottom: 1px; }
     .tabs a { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
     .tabs a:hover { color: #17202a; }
@@ -1351,25 +1365,56 @@ function renderPageMappingAddForm(shopId = '') {
   </form>`;
 }
 
+function renderCredentialReplacementSafetyList() {
+  const items = [
+    'Không dán token staging vào production.',
+    'Token sẽ được mã hóa bằng khóa của môi trường hiện tại.',
+    'Token không hiển thị lại sau khi lưu.',
+    'Thay token có thể ảnh hưởng khả năng bot trả lời nếu token sai môi trường, hết quyền, hoặc không thuộc Page này.',
+    'Không tự động gọi Meta Graph API hoặc chạy kiểm tra sức khỏe token khi lưu.',
+    'Sau khi thay token, hãy chạy lại kiểm tra hoàn tất.'
+  ];
+  return `<ul class="credential-safety-list">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+}
+
 function renderPageCredentialForm(shopId = '', page = {}, shop = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/credentials`;
   const isReplacing = Number(page.active_credential_count || 0) > 0;
+  const expectedShopSlug = String(shop.slug || shop.id || shopId || '').trim();
+  const credentialSafetyList = renderCredentialReplacementSafetyList();
 
   if (isReplacing) {
-    return `<form class="product-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Thay thế Quyền gửi tin (Token)" data-warning-text="Bạn đang chuẩn bị thay thế mã Token cũ đang hoạt động của Fanpage." data-consequence-text="Mã Token cũ sẽ bị thu hồi và lưu trữ vĩnh viễn. Đảm bảo mã Token mới hoạt động bình thường để tránh gián đoạn bot." data-submit-label="Thay thế mã Token" data-expected-confirm-text="ROTATE" data-shop-slug="${escapeHtml(shop.slug || '')}">
+    const warningText = 'Bạn đang chuẩn bị thay thế mã Token đang hoạt động của Fanpage. Không dán token staging vào production.';
+    const consequenceText = 'Token sẽ được mã hóa bằng khóa của môi trường hiện tại. Token không hiển thị lại sau khi lưu. Không có Meta/token health check tự động; bot có thể mất khả năng trả lời nếu token không đúng. Sau khi thay token, hãy chạy lại kiểm tra hoàn tất.';
+    return `<div class="credential-replace-panel" data-credential-replacement="true">
+      <h4>Thay thế Quyền gửi tin (Token)</h4>
+      <p>Đây là thay đổi nhạy cảm với môi trường. Token mới chỉ được lưu mã hóa và không được hiển thị lại.</p>
+      ${credentialSafetyList}
+      <form class="product-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-danger-confirm-scope="credential-replacement" data-action-title="Thay thế Quyền gửi tin (Token)" data-warning-text="${escapeHtml(warningText)}" data-consequence-text="${escapeHtml(consequenceText)}" data-checkbox-text="Tôi hiểu thay token có thể ảnh hưởng khả năng bot trả lời và hệ thống không chạy kiểm tra Meta tự động." data-countdown-seconds="3" data-submit-label="Thay thế mã Token" data-expected-confirm-text="ROTATE" data-shop-slug="${escapeHtml(expectedShopSlug)}">
       <input type="hidden" name="credential_type" value="fb_page_token">
       <input type="hidden" name="rotate" value="true">
-      <label>Mã Token mới <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
-      <label>Xác nhận bằng chữ ROTATE <span class="required">bắt buộc</span>
-        <input name="confirmation_text" placeholder="ROTATE" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
-      </label>
-      <div class="form-actions"><button type="submit">Lưu mã Token mới</button></div>
-    </form>`;
+      <div class="credential-confirm-grid">
+        <label>Mã Token mới <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="new-password"></label>
+        <label class="credential-js-fallback-control">Nhập mã cửa hàng <code>${escapeHtml(expectedShopSlug)}</code> <span class="required">bắt buộc</span>
+          <input name="shop_slug_confirmation" maxlength="160" required aria-required="true" autocomplete="off" pattern="${escapeHtml(escapeHtmlPattern(expectedShopSlug))}" title="Nhập đúng shop slug để xác nhận." data-js-confirm-fallback="true">
+        </label>
+        <label>Xác nhận bằng chữ ROTATE <span class="required">bắt buộc</span>
+          <input name="confirmation_text" placeholder="ROTATE" maxlength="20" required aria-required="true" autocomplete="off" pattern="ROTATE" data-confirm-text-input="true">
+        </label>
+        <label class="checkbox-label credential-js-fallback-control">
+          <input type="checkbox" name="operator_ack" value="credential-replace-risk" required aria-required="true" data-js-confirm-fallback="true">
+          Tôi hiểu token phải nhập đúng môi trường và việc thay token có thể làm bot không trả lời được.
+        </label>
+      </div>
+      <p class="credential-no-js-note">Khi bật JavaScript, bước cuối sẽ mở hộp xác nhận yêu cầu checkbox, nhập shop slug và chờ 3 giây trước khi gửi. Không có kiểm tra Meta tự động trong thao tác này.</p>
+      <div class="form-actions"><button type="submit">Thay thế mã Token</button></div>
+    </form>
+    </div>`;
   }
 
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
     <input type="hidden" name="credential_type" value="fb_page_token">
-    <label>Mã Token kết nối <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
+    <label>Mã Token kết nối <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="new-password"></label>
     <label class="checkbox-label">
       <input type="checkbox" name="rotate" value="true">
       Thay thế (Rotate) mã Token cũ đang hoạt động
@@ -2750,7 +2795,7 @@ function renderShopDetailHtml(model = {}) {
 
             <label class="modal-checkbox-label">
               <input type="checkbox" id="modal-checkbox">
-              <span>Tôi hiểu rõ đây là hành động có thể ảnh hưởng trực tiếp đến hoạt động của bot và hoàn toàn chịu trách nhiệm.</span>
+              <span id="modal-checkbox-copy">Tôi hiểu rõ đây là hành động có thể ảnh hưởng trực tiếp đến hoạt động của bot và hoàn toàn chịu trách nhiệm.</span>
             </label>
           </div>
           <div class="modal-footer">
@@ -2822,12 +2867,20 @@ function renderShopDetailHtml(model = {}) {
           const modalExpectedSlug = document.getElementById('modal-expected-slug');
           const modalSlugInput = document.getElementById('modal-slug-input');
           const modalCheckbox = document.getElementById('modal-checkbox');
+          const modalCheckboxCopy = document.getElementById('modal-checkbox-copy');
           const modalCancelBtn = document.getElementById('modal-cancel-btn');
           const modalSubmitBtn = document.getElementById('modal-submit-btn');
+          const defaultModalCheckboxCopy = modalCheckboxCopy ? modalCheckboxCopy.textContent : '';
 
           let activeForm = null;
           let countdownInterval = null;
           let countdownSeconds = 0;
+
+          document.querySelectorAll('[data-js-confirm-fallback="true"]').forEach(input => {
+            input.disabled = true;
+            input.required = false;
+            input.setAttribute('aria-required', 'false');
+          });
 
           function updateSubmitButtonState() {
             const expectedSlug = modalExpectedSlug.textContent.trim().toLowerCase();
@@ -2878,6 +2931,9 @@ function renderShopDetailHtml(model = {}) {
               modalWarning.textContent = form.dataset.warningText || 'Hành động này có độ rủi ro cao.';
               modalConsequence.textContent = form.dataset.consequenceText || '';
               modalExpectedSlug.textContent = form.dataset.shopSlug || '';
+              if (modalCheckboxCopy) {
+                modalCheckboxCopy.textContent = form.dataset.checkboxText || defaultModalCheckboxCopy;
+              }
 
               modalSlugInput.value = '';
               modalCheckbox.checked = false;
