@@ -15,6 +15,9 @@ const SHOP_WRITE_ACTIONS = Object.freeze({
 const SHOP_STATUSES = Object.freeze(new Set(['active', 'paused', 'archived']));
 const DEFAULT_SHOP_CREATE_INPUT = Object.freeze({
   status: 'active',
+  package: 'basic',
+  lifecycle: 'draft',
+  liveEnabled: false,
   botMode: 'menu_code_handoff',
   locale: 'vi-VN',
   timezone: 'Asia/Ho_Chi_Minh'
@@ -51,6 +54,8 @@ function normalizeCreateShopInput(body = {}) {
   const shopId = normalizeShopSlug(body.shop_id ?? body.shopId ?? body.slug);
   const name = normalizeText(body.name ?? body.display_name ?? body.displayName, 180);
   const status = normalizeText(body.status || DEFAULT_SHOP_CREATE_INPUT.status, 40).toLowerCase();
+  const packageName = normalizeText(body.package ?? body.shop_package ?? DEFAULT_SHOP_CREATE_INPUT.package, 80).toLowerCase();
+  const lifecycle = normalizeText(body.lifecycle ?? DEFAULT_SHOP_CREATE_INPUT.lifecycle, 80).toLowerCase();
   const botMode = normalizeText(body.bot_mode ?? body.botMode ?? DEFAULT_SHOP_CREATE_INPUT.botMode, 80).toLowerCase();
   const locale = normalizeText(body.default_locale ?? body.locale ?? DEFAULT_SHOP_CREATE_INPUT.locale, 40);
   const timezone = normalizeText(body.timezone ?? DEFAULT_SHOP_CREATE_INPUT.timezone, 80);
@@ -60,6 +65,9 @@ function normalizeCreateShopInput(body = {}) {
     slug: shopId,
     name,
     status,
+    package: packageName,
+    lifecycle,
+    liveEnabled: DEFAULT_SHOP_CREATE_INPUT.liveEnabled,
     botMode,
     locale,
     timezone,
@@ -80,6 +88,12 @@ function validateCreateShopInput(input = {}) {
   if (!SHOP_STATUSES.has(input.status)) {
     throw createShopWriteError('invalid_shop_status', 'Shop status is invalid.', 400);
   }
+  if (!['basic', 'sales_flow', 'self_closing_addons'].includes(input.package)) {
+    throw createShopWriteError('invalid_shop_package', 'Shop package is invalid.', 400);
+  }
+  if (!['draft', 'configuring', 'ready', 'live', 'paused', 'archived'].includes(input.lifecycle)) {
+    throw createShopWriteError('invalid_shop_lifecycle', 'Shop lifecycle is invalid.', 400);
+  }
   if (!BOT_MODES.has(input.botMode)) {
     throw createShopWriteError('invalid_bot_mode', 'Bot mode is invalid.', 400);
   }
@@ -97,6 +111,14 @@ function presentShop(row = {}) {
     slug: row.slug || '',
     name: row.name || '',
     status: row.status || '',
+    package: row.package || 'basic',
+    lifecycle: row.lifecycle || '',
+    live_enabled: Boolean(row.live_enabled),
+    last_readiness_status: row.last_readiness_status || 'unknown',
+    last_readiness_checked_at: row.last_readiness_checked_at || '',
+    last_manual_test_status: row.last_manual_test_status || 'unknown',
+    last_manual_test_at: row.last_manual_test_at || '',
+    last_ready_by: row.last_ready_by || '',
     default_locale: row.default_locale || '',
     timezone: row.timezone || '',
     created_at: row.created_at || '',
@@ -120,15 +142,22 @@ function createShopWriteRepository() {
   async function insertShop(client, input = {}) {
     const result = await client.query(`
       INSERT INTO shops (
-        id, slug, name, status, default_locale, timezone
+        id, slug, name, status, package, lifecycle, live_enabled,
+        default_locale, timezone
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, slug, name, status, default_locale, timezone, created_at, updated_at
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id, slug, name, status, package, lifecycle, live_enabled,
+                last_readiness_status, last_readiness_checked_at,
+                last_manual_test_status, last_manual_test_at, last_ready_by,
+                default_locale, timezone, created_at, updated_at
     `, [
       input.id,
       input.slug,
       input.name,
       input.status,
+      input.package,
+      input.lifecycle,
+      input.liveEnabled,
       input.locale,
       input.timezone
     ]);
@@ -251,6 +280,9 @@ function createPostgresShopWriteService({
           shop_id: shop.id,
           slug: shop.slug,
           status: shop.status,
+          package: shop.package,
+          lifecycle: shop.lifecycle,
+          live_enabled: shop.live_enabled,
           bot_mode: input.botMode,
           default_locale: input.locale,
           timezone: input.timezone,

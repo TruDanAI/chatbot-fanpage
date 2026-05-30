@@ -27,10 +27,37 @@ function boolValue(value, fallback = false) {
 }
 
 const BOT_MODES = new Set(['menu_code_handoff', 'menu_only', 'handoff_only', 'disabled']);
+const CONTROL_PLANE_MISSING_COLUMN_CODES = new Set(['42703']);
+
+function isMissingColumnError(err) {
+  return CONTROL_PLANE_MISSING_COLUMN_CODES.has(String(err?.code || ''));
+}
+
+function isMissingDryRunColumnError(err) {
+  return isMissingColumnError(err)
+    && /dry_run/i.test(String(err?.column || err?.message || ''));
+}
 
 function botModeValue(value, fallback = 'disabled') {
   const normalized = trimText(value).toLowerCase();
   return BOT_MODES.has(normalized) ? normalized : fallback;
+}
+
+function normalizeLifecycle(value = '', fallback = 'draft') {
+  const normalized = trimText(value).toLowerCase();
+  return normalized || fallback;
+}
+
+function normalizePackage(value = '', fallback = 'basic') {
+  const normalized = trimText(value).toLowerCase();
+  return normalized || fallback;
+}
+
+function defaultLifecycleForStatus(status = '') {
+  const normalized = trimText(status).toLowerCase();
+  if (normalized === 'active') return 'live';
+  if (normalized === 'archived') return 'archived';
+  return 'paused';
 }
 
 function numberValue(value) {
@@ -175,8 +202,13 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
       tenantId: trimText(tenantId),
       shopId: trimText(shop.id),
       shopSlug: trimText(shop.slug),
+      package: normalizePackage(shop.package),
+      lifecycle: normalizeLifecycle(shop.lifecycle, defaultLifecycleForStatus(shop.status)),
+      liveEnabled: boolValue(shop.live_enabled, trimText(shop.status).toLowerCase() === 'active'),
       pageId: trimText(page.page_id),
-      pageName: trimText(page.page_name)
+      pageName: trimText(page.page_name),
+      dryRun: shop.dry_run == null ? null : boolValue(shop.dry_run, true),
+      dryRunColumnAvailable: shop.dryRunColumnAvailable !== false
     },
     __assets: groupedAssets,
     __products: products
@@ -191,12 +223,29 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
     throw new Error('resolveShopConfigForPage requires a db/client with query().');
   }
 
-  const mapping = await queryable.query(
-    `
+  async function queryMapping({ includeControlPlane = true, includeDryRun = true } = {}) {
+    const controlColumns = includeControlPlane ? `
+        s.package AS shop_package,
+        s.lifecycle AS shop_lifecycle,
+        s.live_enabled,
+        s.last_readiness_status,
+        s.last_readiness_checked_at,
+        s.last_manual_test_status,
+        s.last_manual_test_at,
+        s.last_ready_by,
+    ` : '';
+    const dryRunColumn = includeDryRun ? `
+        s.dry_run AS shop_dry_run,
+    ` : '';
+    return queryable.query(
+      `
       SELECT
         s.id AS shop_id,
         s.slug AS shop_slug,
         s.name AS shop_name,
+        s.status AS shop_status,
+        ${controlColumns}
+        ${dryRunColumn}
         s.default_locale,
         s.timezone,
         sp.id AS page_mapping_id,
@@ -217,8 +266,31 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
       ORDER BY sp.updated_at DESC, sp.id
       LIMIT 2
     `,
-    [page]
-  );
+      [page]
+    );
+  }
+
+  let mapping;
+  let controlPlaneColumnsAvailable = true;
+  let dryRunColumnAvailable = true;
+  try {
+    mapping = await queryMapping({ includeControlPlane: true, includeDryRun: true });
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    dryRunColumnAvailable = false;
+    if (isMissingDryRunColumnError(err)) {
+      try {
+        mapping = await queryMapping({ includeControlPlane: true, includeDryRun: false });
+      } catch (retryErr) {
+        if (!isMissingColumnError(retryErr)) throw retryErr;
+        controlPlaneColumnsAvailable = false;
+        mapping = await queryMapping({ includeControlPlane: false, includeDryRun: false });
+      }
+    } else {
+      controlPlaneColumnsAvailable = false;
+      mapping = await queryMapping({ includeControlPlane: false, includeDryRun: false });
+    }
+  }
 
   if (!mapping.rows.length) return { found: false, reason: 'page_not_found' };
   if (mapping.rows.length > 1) return { found: false, reason: 'ambiguous_page_mapping' };
@@ -228,8 +300,20 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
     id: row.shop_id,
     slug: row.shop_slug,
     name: row.shop_name,
+    status: row.shop_status || 'active',
+    package: normalizePackage(row.shop_package),
+    lifecycle: normalizeLifecycle(row.shop_lifecycle, defaultLifecycleForStatus(row.shop_status || 'active')),
+    live_enabled: row.live_enabled == null ? trimText(row.shop_status || 'active').toLowerCase() === 'active' : boolValue(row.live_enabled, false),
+    last_readiness_status: trimText(row.last_readiness_status || 'unknown'),
+    last_readiness_checked_at: row.last_readiness_checked_at || null,
+    last_manual_test_status: trimText(row.last_manual_test_status || 'unknown'),
+    last_manual_test_at: row.last_manual_test_at || null,
+    last_ready_by: trimText(row.last_ready_by),
+    dry_run: dryRunColumnAvailable ? boolValue(row.shop_dry_run, true) : null,
+    dryRunColumnAvailable,
     defaultLocale: row.default_locale,
-    timezone: row.timezone
+    timezone: row.timezone,
+    controlPlaneColumnsAvailable
   };
   const pageRow = {
     id: row.page_mapping_id,

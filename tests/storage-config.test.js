@@ -58,6 +58,22 @@ describe('storage config guard', () => {
     })).toBeTrue();
   });
 
+  it('refuses file adapter when DB multi-shop config is enabled', () => {
+    let message = '';
+    try {
+      assertStorageAdapterAllowed('file', {
+        MULTI_SHOP_DB_CONFIG_ENABLED: 'true'
+      });
+    } catch (err) {
+      message = err.message;
+    }
+
+    expect(message).toContain('Refusing STORAGE_ADAPTER=file');
+    expect(assertStorageAdapterAllowed('file', {
+      MULTI_SHOP_DB_CONFIG_ENABLED: 'false'
+    })).toBe('file');
+  });
+
   it('refuses Messenger dry-run in production', () => {
     expect(assertMessengerDryRunAllowed(true, { NODE_ENV: 'staging' })).toBeTrue();
     expect(assertMessengerDryRunAllowed(false, { NODE_ENV: 'production' })).toBeFalse();

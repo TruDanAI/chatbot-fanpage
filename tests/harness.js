@@ -82,7 +82,7 @@ async function run() {
         restoreConsole();
         fail += 1;
         failures.push({ group: group.name, case: c.name, err });
-        runnerConsole.log(`    ✗ ${c.name}\n        ${err.message}`);
+        runnerConsole.log(`    ✗ ${c.name}\n        ${err.stack || err.message}`);
       }
     }
   }

@@ -9,14 +9,31 @@ class FakeShopConfigClient {
       assets: seed.assets || []
     };
     this.calls = [];
+    this.failControlPlaneOnce = Boolean(seed.failControlPlaneOnce);
+    this.failDryRunOnce = Boolean(seed.failDryRunOnce);
   }
 
   async query(sql, values = []) {
     this.calls.push({ sql, values });
     const normalized = String(sql).replace(/\s+/g, ' ').trim();
     if (normalized.includes('FROM shop_pages sp')) {
+      if (this.failDryRunOnce && normalized.includes('shop_dry_run')) {
+        this.failDryRunOnce = false;
+        const err = new Error('column s.dry_run does not exist');
+        err.code = '42703';
+        throw err;
+      }
+      if (this.failControlPlaneOnce && normalized.includes('shop_package')) {
+        this.failControlPlaneOnce = false;
+        const err = new Error('column s.package does not exist');
+        err.code = '42703';
+        throw err;
+      }
       const pageId = values[0];
-      const rows = this.seed.mappings.filter(row => row.page_id === pageId);
+      const rows = this.seed.mappings
+        .filter(row => row.page_id === pageId)
+        .filter(row => !normalized.includes("sp.status = 'active'") || String(row.status || 'active') === 'active')
+        .filter(row => !normalized.includes("s.status = 'active'") || String(row.shop_status || 'active') === 'active');
       return { rows };
     }
     if (normalized.includes('FROM shop_products')) {
@@ -37,6 +54,13 @@ function makeSeed() {
       shop_id: 'adult-shop',
       shop_slug: 'adult-shop',
       shop_name: 'Adult Shop',
+      shop_status: 'active',
+      shop_package: 'basic',
+      shop_lifecycle: 'live',
+      live_enabled: true,
+      shop_dry_run: false,
+      last_readiness_status: 'passed',
+      last_manual_test_status: 'passed',
       default_locale: 'vi-VN',
       timezone: 'Asia/Bangkok',
       page_mapping_id: 'page-map-1',
@@ -150,6 +174,13 @@ describe('db shop config resolver', () => {
     expect(result.shop.id).toBe('adult-shop');
     expect(result.page.page_id).toBe('page_adult');
     expect(result.config.shopName).toBe('Adult Shop');
+    expect(result.shop.status).toBe('active');
+    expect(result.shop.package).toBe('basic');
+    expect(result.shop.lifecycle).toBe('live');
+    expect(result.shop.live_enabled).toBeTrue();
+    expect(result.shop.dry_run).toBeFalse();
+    expect(result.shop.dryRunColumnAvailable).toBeTrue();
+    expect(result.config.__dbShop.dryRun).toBeFalse();
     expect(result.config.botMode.name).toBe('menu_code_handoff');
     expect(result.config.botMode.handoffEnabled).toBeTrue();
     expect(result.config.botMode.handoffMessage).toBe('DB handoff message');
@@ -183,6 +214,46 @@ describe('db shop config resolver', () => {
     expect(JSON.stringify(result.config).includes('hidden.png')).toBeFalse();
   });
 
+  it('falls back to legacy mapping query when control-plane columns are missing', async () => {
+    const client = new FakeShopConfigClient({
+      ...makeSeed(),
+      failControlPlaneOnce: true
+    });
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeTrue();
+    expect(result.shop.controlPlaneColumnsAvailable).toBeFalse();
+    expect(result.shop.package).toBe('basic');
+    expect(result.shop.lifecycle).toBe('live');
+    expect(result.shop.live_enabled).toBeTrue();
+    expect(client.calls.filter(call => String(call.sql).includes('FROM shop_pages sp')).length).toBe(2);
+  });
+
+  it('preserves old behavior when only the dry_run column is missing', async () => {
+    const client = new FakeShopConfigClient({
+      ...makeSeed(),
+      failDryRunOnce: true
+    });
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeTrue();
+    expect(result.shop.controlPlaneColumnsAvailable).toBeTrue();
+    expect(result.shop.dryRunColumnAvailable).toBeFalse();
+    expect(result.shop.dry_run).toBe(null);
+    expect(result.config.__dbShop.dryRun).toBe(null);
+    expect(result.config.__dbShop.dryRunColumnAvailable).toBeFalse();
+    expect(result.shop.lifecycle).toBe('live');
+    expect(client.calls.filter(call => String(call.sql).includes('FROM shop_pages sp')).length).toBe(2);
+  });
+
   it('returns missing without leaking another shop when page is not mapped', async () => {
     const client = new FakeShopConfigClient(makeSeed());
     const result = await resolveShopConfigForPage({
@@ -193,6 +264,47 @@ describe('db shop config resolver', () => {
 
     expect(result.found).toBeFalse();
     expect(result.reason).toBe('page_not_found');
+  });
+
+  it('does not route archived page mappings', async () => {
+    const seed = makeSeed();
+    seed.mappings[0] = {
+      ...seed.mappings[0],
+      status: 'archived'
+    };
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeFalse();
+    expect(result.reason).toBe('page_not_found');
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_products'))).toBeFalse();
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_assets'))).toBeFalse();
+  });
+
+  it('fails closed for paused shops before loading runtime products or assets', async () => {
+    const seed = makeSeed();
+    seed.mappings[0] = {
+      ...seed.mappings[0],
+      shop_status: 'paused',
+      shop_lifecycle: 'paused',
+      live_enabled: false,
+      shop_dry_run: true
+    };
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    expect(result.found).toBeFalse();
+    expect(result.reason).toBe('page_not_found');
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_products'))).toBeFalse();
+    expect(client.calls.some(call => String(call.sql).includes('FROM shop_assets'))).toBeFalse();
   });
 
   it('normalizes missing or invalid chat behavior settings to safe fallbacks', async () => {

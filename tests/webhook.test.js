@@ -107,6 +107,39 @@ function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`, pa
   };
 }
 
+function makeTimestampedEvent(text, timestamp, senderId = 'sender_1', mid = `mid_${Math.random()}`, pageId = '') {
+  return {
+    ...makeEvent(text, senderId, mid, pageId),
+    timestamp
+  };
+}
+
+function makeFacebookSendError(code, subcode, message) {
+  const err = new Error(message || 'Facebook send failed');
+  err.response = {
+    status: 400,
+    data: {
+      error: {
+        message,
+        type: 'OAuthException',
+        code,
+        error_subcode: subcode,
+        fbtrace_id: 'trace-test'
+      }
+    }
+  };
+  return err;
+}
+
+function failSendOnce(err) {
+  let failed = false;
+  return () => {
+    if (failed) return null;
+    failed = true;
+    return err;
+  };
+}
+
 function makeReferralEvent(senderId = 'sender_1', source = 'ADS', pageId = '') {
   return {
     sender: { id: senderId },
@@ -158,6 +191,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   let fallbackAttentionCalls = 0;
   let conversationTurnCalls = 0;
   let eventCalls = 0;
+  let showTypingCalls = 0;
 
   const webhook = createWebhook({
     storage,
@@ -202,10 +236,24 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     getGeminiErrorInfo: err => ({ message: err.message }),
     shouldUseFallbackReply: () => false,
     isProbablyIncompleteReply: () => false,
-    sendMessage: async (senderId, text) => sent.push({ type: 'text', senderId, text }),
-    sendQuickReplies: async (senderId, text, quickReplies) => sent.push({ type: 'quick_replies', senderId, text, quickReplies }),
-    sendImage: async (senderId, url) => sent.push({ type: 'image', senderId, url }),
-    showTyping: () => {},
+    sendMessage: async (senderId, text) => {
+      const sendError = typeof options.sendMessageError === 'function'
+        ? options.sendMessageError({ senderId, text })
+        : options.sendMessageError;
+      if (sendError) throw sendError;
+      sent.push({ type: 'text', senderId, text });
+    },
+    sendQuickReplies: async (senderId, text, quickReplies) => {
+      if (options.sendQuickRepliesError) throw options.sendQuickRepliesError;
+      sent.push({ type: 'quick_replies', senderId, text, quickReplies });
+    },
+    sendImage: async (senderId, url) => {
+      if (options.sendImageError) throw options.sendImageError;
+      sent.push({ type: 'image', senderId, url });
+    },
+    showTyping: () => {
+      showTypingCalls += 1;
+    },
     sendHotCarousel: async () => false,
     isGreetingText: text => /^(?:chào|chao|hi|hello|alo|shop)/i.test(String(text || '').trim()),
     isHotProductsText: () => false,
@@ -239,6 +287,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     maybeResetTimedOutSession: () => {},
     redactSensitiveText: text => text,
     resolveRuntimeForPage: options.resolveRuntimeForPage,
+    fileConfigPageIds: options.fileConfigPageIds,
     webhookQueue: options.webhookQueue,
     webhookQueueEnabled: options.webhookQueueEnabled
   });
@@ -246,9 +295,10 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   return {
     handleText: (text, senderId = 'sender_1', mid, pageId = '') => webhook.handleEvent(makeEvent(text, senderId, mid, pageId), 'https://example.test'),
     handleReferral: (senderId = 'sender_1', source = 'ADS', pageId = '') => webhook.handleEvent(makeReferralEvent(senderId, source, pageId), 'https://example.test'),
-    handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid) =>
-      webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid), 'https://example.test'),
+    handleTextWithReferral: (text, senderId = 'sender_1', source = 'ADS', mid, pageId = '') =>
+      webhook.handleEvent(makeMessageWithReferral(text, senderId, source, mid, pageId), 'https://example.test'),
     handleRawEvent: (event, options = {}) => webhook.handleEvent(event, 'https://example.test', options),
+    processQueuedWebhookJob: webhook.processQueuedWebhookJob,
     registerWebhookRoutes: webhook.registerWebhookRoutes,
     sent,
     storage,
@@ -261,7 +311,8 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
     getTelegramOperationalAlertCalls: () => telegramOperationalAlertCalls,
     getFallbackAttentionCalls: () => fallbackAttentionCalls,
     getConversationTurnCalls: () => conversationTurnCalls,
-    getEventCalls: () => eventCalls
+    getEventCalls: () => eventCalls,
+    getShowTypingCalls: () => showTypingCalls
   };
 }
 
@@ -293,10 +344,11 @@ function buildDbRuntimeForWebhook(fallbackRuntime, overrides = {}) {
   const dbRules = createRuleEngine({
     products: dbProducts,
     config: dbConfig,
-    contextStore: fallbackRuntime.storage
+    contextStore: overrides.storage || fallbackRuntime.storage
   });
 
   return {
+    storage: overrides.storage || fallbackRuntime.storage,
     shopConfig: dbConfig,
     useGemini: false,
     buildDeterministicReply: dbRules.buildDeterministicReply,
@@ -317,8 +369,28 @@ function buildDbRuntimeForWebhook(fallbackRuntime, overrides = {}) {
   };
 }
 
+function expectNoRuntimeFallback(h, senderId) {
+  expect(h.sent.length).toBe(0);
+  expect(h.storage.inHandoff(senderId)).toBeFalse();
+  expect(h.storage._handoff.size).toBe(0);
+  expect(h.storage._midMarks.length).toBe(0);
+  expect(h.storage._customers.length).toBe(0);
+  expect(h.storage._events.length).toBe(0);
+  expect(h.getGeminiCalls()).toBe(0);
+  expect(h.getLeadParserCalls()).toBe(0);
+  expect(h.getHandoffCaptureCalls()).toBe(0);
+  expect(h.getNotifyReadyOrderCalls()).toBe(0);
+  expect(h.getPushedLeadCalls()).toBe(0);
+  expect(h.getTelegramAlertCalls()).toBe(0);
+  expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  expect(h.getFallbackAttentionCalls()).toBe(0);
+  expect(h.getConversationTurnCalls()).toBe(0);
+  expect(h.getEventCalls()).toBe(0);
+  expect(h.getShowTypingCalls()).toBe(0);
+}
+
 describe('webhook: menu_code_handoff mode', () => {
-  it('uses file config path unchanged when no runtime resolver is provided', async () => {
+  it('static mode uses file config path unchanged when no runtime resolver is provided', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleText('chào shop', 'flag_off_file_path', 'm_flag_off', 'page_file');
@@ -373,6 +445,194 @@ describe('webhook: menu_code_handoff mode', () => {
     }
   });
 
+  it('skips stale webhook events before sending automated replies', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const staleTimestamp = Date.now() - (24 * 60 * 60 * 1000);
+
+    await h.handleRawEvent(makeTimestampedEvent(
+      'chào shop',
+      staleTimestamp,
+      'stale_event_user',
+      'm_stale_event',
+      'page_stale'
+    ));
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].mid).toBe('m_stale_event');
+  });
+
+  it('does not skip fresh timestamped customer messages', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    await h.handleRawEvent(makeTimestampedEvent(
+      'chào shop',
+      Date.now(),
+      'fresh_event_user',
+      'm_fresh_event',
+      'page_fresh'
+    ));
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].mid).toBe('m_fresh_event');
+  });
+
+  it('does not retry or escalate non-retryable Messenger send blocks', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(
+        10,
+        2018278,
+        '(#10) This message is sent outside of allowed window.'
+      )
+    });
+
+    await h.handleText('chào shop', 'outside_window_user', 'm_outside_window', 'page_window');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('logs non-retryable send blocks without raw identifiers or customer text', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(
+        10,
+        2018278,
+        '(#10) This message is sent outside of allowed window.'
+      )
+    });
+
+    console.warn = message => warnings.push(String(message));
+    try {
+      await h.handleText('private customer body', 'sender_private_block', 'm_private_block', 'page_private_block');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const warningText = warnings.join('\n');
+    expect(warningText).toContain('[messenger-send] blocked');
+    expect(warningText).toContain('reason=outside_allowed_window');
+    expect(warningText.includes('page_private_block')).toBeFalse();
+    expect(warningText.includes('sender_private_block')).toBeFalse();
+    expect(warningText.includes('private customer body')).toBeFalse();
+  });
+
+  it('blocked menu text send #551 does not leave active menu cooldown', async () => {
+    const logs = [];
+    const warnings = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const senderId = 'blocked_menu_551_sender';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: failSendOnce(makeFacebookSendError(
+        551,
+        1545041,
+        '(#551) This person is not available right now.'
+      ))
+    });
+
+    console.log = message => logs.push(String(message));
+    console.warn = message => warnings.push(String(message));
+    try {
+      await h.handleText('chào shop', senderId, 'm_blocked_menu_551_1', 'page_blocked_menu_551');
+      await h.handleText('Giá Sản Phẩm Từ Bao Nhiêu', senderId, 'm_blocked_menu_551_2', 'page_blocked_menu_551');
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
+
+    const logText = logs.join('\n');
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(logText.includes('skipped duplicate menu within cooldown')).toBeFalse();
+    expect(warnings.join('\n')).toContain('reason=recipient_unavailable');
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('blocked menu text send #10 does not leave active menu cooldown', async () => {
+    const logs = [];
+    const warnings = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const senderId = 'blocked_menu_10_sender';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: failSendOnce(makeFacebookSendError(
+        10,
+        2018278,
+        '(#10) This message is sent outside of allowed window.'
+      ))
+    });
+
+    console.log = message => logs.push(String(message));
+    console.warn = message => warnings.push(String(message));
+    try {
+      await h.handleText('chào shop', senderId, 'm_blocked_menu_10_1', 'page_blocked_menu_10');
+      await h.handleText('Cho tôi xem danh sách sản phẩm', senderId, 'm_blocked_menu_10_2', 'page_blocked_menu_10');
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
+
+    const logText = logs.join('\n');
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(logText.includes('skipped duplicate menu within cooldown')).toBeFalse();
+    expect(warnings.join('\n')).toContain('reason=outside_allowed_window');
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('handles queued recipient-unavailable send blocks without retrying or alerting', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(
+        551,
+        1545041,
+        '(#551) This person is not available right now.'
+      )
+    });
+
+    await h.processQueuedWebhookJob({
+      payloadJson: {
+        pageId: 'page_queue_blocked',
+        baseUrl: 'https://example.test'
+      },
+      eventJson: makeEvent('chào shop', 'queue_blocked_user', 'm_queue_blocked', 'page_queue_blocked')
+    });
+
+    expect(h.sent.length).toBe(0);
+    expect(h.getTelegramOperationalAlertCalls()).toBe(0);
+  });
+
+  it('still surfaces retryable queued send errors', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      sendMessageError: makeFacebookSendError(2, null, 'Temporary send failure')
+    });
+    let thrown = null;
+
+    try {
+      await h.processQueuedWebhookJob({
+        payloadJson: {
+          pageId: 'page_queue_retryable',
+          baseUrl: 'https://example.test'
+        },
+        eventJson: makeEvent('chào shop', 'queue_retryable_user', 'm_queue_retryable', 'page_queue_retryable')
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(Boolean(thrown)).toBeTrue();
+    expect(thrown.message).toBe('Temporary send failure');
+  });
+
   it('uses DB runtime config when resolver returns a page config', async () => {
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
@@ -391,15 +651,177 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(JSON.stringify(h.sent).includes('680k')).toBeFalse();
   });
 
-  it('fails closed on unresolved DB page without sending file shop content', async () => {
+  it('DB runtime numeric product codes use exact code for product image lookup', async () => {
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
-      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'page_not_found' })
+      resolveRuntimeForPage: async ({ fallbackRuntime }) => {
+        const runtime = buildDbRuntimeForWebhook(fallbackRuntime, {
+          products: [{
+            code: '11',
+            price: '100k',
+            description: 'Numeric DB product',
+            size: '',
+            weight: '',
+            gift: '',
+            preorder: false,
+            imageFile: ''
+          }]
+        });
+        runtime.buildRequestedImageUrls = text => {
+          const codes = runtime.extractRequestedProductCodes(text);
+          return codes.includes('11')
+            ? [{ file: 'db-11.png', url: 'https://cdn.example.test/db-11.png' }]
+            : [];
+        };
+        return runtime;
+      }
     });
 
-    await h.handleText('chào shop', 'db_missing_page', 'm_db_missing', 'unknown_page');
+    await h.handleText('11', 'db_numeric_code_user', 'm_db_numeric_code', 'page_db_numeric');
 
-    expect(h.sent.length).toBe(0);
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('db-11.png'))).toBeTrue();
+    expect(textMessages[0]).toContain('100k');
+    expect(textMessages[1]).toBe('DB handoff message');
+    expect(h.storage.getLastProductCode('db_numeric_code_user')).toBe('11');
+    expect(h.storage.inHandoff('db_numeric_code_user')).toBeTrue();
+  });
+
+  it('uses resolved runtime storage instead of the singleton storage', async () => {
+    const senderId = 'same_sender_db_runtime';
+    const pageStorage = {
+      page_a: makeStorage(),
+      page_b: makeStorage()
+    };
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async ({ pageId, fallbackRuntime }) =>
+        buildDbRuntimeForWebhook(fallbackRuntime, { storage: pageStorage[pageId] })
+    });
+
+    await h.handleText('cho xem MÃ99', senderId, 'm_db_runtime_a', 'page_a');
+
+    expect(pageStorage.page_a.inHandoff(senderId)).toBeTrue();
+    expect(pageStorage.page_a.getLastProductCode(senderId)).toBe('MÃ99');
+    expect(pageStorage.page_b.inHandoff(senderId)).toBeFalse();
+    expect(pageStorage.page_b.getLastProductCode(senderId)).toBe('');
+    expect(h.storage.inHandoff(senderId)).toBeFalse();
+
+    await h.handleText('cho xem MÃ99', senderId, 'm_db_runtime_b', 'page_b');
+
+    expect(pageStorage.page_b.inHandoff(senderId)).toBeTrue();
+    expect(pageStorage.page_b.getLastProductCode(senderId)).toBe('MÃ99');
+  });
+
+  it('DB multi-shop mode fails closed on unknown page without adult-shop fallback', async () => {
+    const senderId = 'db_unknown_page';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async () => ({ reason: 'page_not_found' })
+    });
+
+    await h.handleText('cho xem MÃ8', senderId, 'm_db_unknown', 'unknown_page');
+
+    expectNoRuntimeFallback(h, senderId);
+  });
+
+  it('DB multi-shop mode fails closed for paused shops before webhook side effects', async () => {
+    const senderId = 'db_paused_shop';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'shop_status_not_active' })
+    });
+
+    await h.handleText('chào shop', senderId, 'm_db_paused', 'page_db_paused');
+
+    expectNoRuntimeFallback(h, senderId);
+  });
+
+  it('registered webhook route returns 200 for unmapped DB pages without processing', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const senderId = 'route_unmapped_db_page';
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'page_not_found' })
+      });
+
+      let postHandler = null;
+      const app = {
+        get() {},
+        post(_path, limiter, handler) {
+          postHandler = (req, res) => limiter(req, res, () => handler(req, res));
+        }
+      };
+      h.registerWebhookRoutes(app);
+
+      let responseStatus = 0;
+      await postHandler({
+        body: {
+          object: 'page',
+          entry: [{
+            id: 'page-secret-raw',
+            messaging: [makeEvent('chào shop', senderId, 'm_route_unmapped_db')]
+          }]
+        },
+        protocol: 'https',
+        get(name) {
+          const headers = { host: 'example.test' };
+          return headers[String(name || '').toLowerCase()] || '';
+        }
+      }, {
+        sendStatus(code) {
+          responseStatus = code;
+        }
+      });
+
+      expect(responseStatus).toBe(200);
+      await waitFor(() => warnings.length > 0, 'unmapped page warning was not logged');
+      expectNoRuntimeFallback(h, senderId);
+      expect(warnings.join('\n')).toContain('page_ref=p:');
+      expect(warnings.join('\n').includes('page-secret-raw')).toBeFalse();
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it('file-config runtime accepts an intentionally configured page id', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      fileConfigPageIds: ['page_file_config']
+    });
+
+    await h.handleText('chào shop', 'file_config_mapped', 'm_file_config_mapped', 'page_file_config');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].pageId).toBe('page_file_config');
+  });
+
+  it('file-config runtime fails closed for unconfigured pages without PAGE_ID fallback', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      const senderId = 'file_config_unmapped';
+      const h = createWebhookHarness(undefined, {
+        throwOnLeadParse: true,
+        fileConfigPageIds: ['page_file_config']
+      });
+
+      await h.handleText('chào shop', senderId, 'm_file_config_unmapped', 'page-secret-raw');
+
+      expectNoRuntimeFallback(h, senderId);
+      const joined = warnings.join('\n');
+      expect(joined).toContain('page_not_configured');
+      expect(joined).toContain('page_ref=p:');
+      expect(joined.includes('page-secret-raw')).toBeFalse();
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it('fail-closed runtime logs use page_ref instead of raw page_id', async () => {
@@ -425,11 +847,12 @@ describe('webhook: menu_code_handoff mode', () => {
     }
   });
 
-  it('credential fail-closed logs do not include raw token or raw page_id', async () => {
+  it('DB multi-shop mode fails closed on missing credential without adult-shop fallback', async () => {
     const warnings = [];
     const originalWarn = console.warn;
     console.warn = message => warnings.push(String(message));
     try {
+      const senderId = 'db_missing_credential';
       const h = createWebhookHarness(undefined, {
         throwOnLeadParse: true,
         resolveRuntimeForPage: async () => ({
@@ -439,24 +862,37 @@ describe('webhook: menu_code_handoff mode', () => {
         })
       });
 
-      await h.handleText('chào shop', 'db_missing_credential', 'm_missing_credential', 'page-secret-raw');
+      await h.handleText('cho xem MÃ8', senderId, 'm_missing_credential', 'page-secret-raw');
 
       const joined = warnings.join('\n');
       expect(joined).toContain('credential_not_found');
       expect(joined).toContain('page_ref=p:');
       expect(joined.includes('EAAB-raw-page-token')).toBeFalse();
       expect(joined.includes('page-secret-raw')).toBeFalse();
-      expect(h.sent.length).toBe(0);
+      expectNoRuntimeFallback(h, senderId);
     } finally {
       console.warn = originalWarn;
     }
   });
 
-  it('falls back safely on DB resolver errors without logging secrets', async () => {
+  it('DB multi-shop mode fails closed on ambiguous mapping without adult-shop fallback', async () => {
+    const senderId = 'db_ambiguous_mapping';
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      resolveRuntimeForPage: async () => ({ failClosed: true, reason: 'ambiguous_page_mapping' })
+    });
+
+    await h.handleText('cho xem MÃ8', senderId, 'm_db_ambiguous', 'ambiguous_page');
+
+    expectNoRuntimeFallback(h, senderId);
+  });
+
+  it('DB multi-shop mode fails closed on resolver errors without adult-shop fallback or secret logs', async () => {
     const warnings = [];
     const originalWarn = console.warn;
     console.warn = message => warnings.push(String(message));
     try {
+      const senderId = 'db_error_fail_closed';
       const h = createWebhookHarness(undefined, {
         throwOnLeadParse: true,
         resolveRuntimeForPage: async () => {
@@ -464,11 +900,15 @@ describe('webhook: menu_code_handoff mode', () => {
         }
       });
 
-      await h.handleText('chào shop', 'db_error_fallback', 'm_db_error', 'page_file');
+      await h.handleText('cho xem MÃ8', senderId, 'm_db_error', 'page-secret-raw');
 
-      expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
-      expect(warnings.join('\n').includes('secret')).toBeFalse();
-      expect(warnings.join('\n')).toContain('resolver_error');
+      const joined = warnings.join('\n');
+      expect(joined).toContain('fail-closed');
+      expect(joined).toContain('resolver_error');
+      expect(joined).toContain('page_ref=p:');
+      expect(joined.includes('secret')).toBeFalse();
+      expect(joined.includes('page-secret-raw')).toBeFalse();
+      expectNoRuntimeFallback(h, senderId);
     } finally {
       console.warn = originalWarn;
     }
@@ -542,6 +982,22 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.storage.inHandoff('minimal_product_list')).toBeFalse();
   });
 
+  it('explicit menu request from returning customer still sends menu images', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'minimal_menu_still_works', 1);
+
+    await h.handleText('menu', 'minimal_menu_still_works', 'm_menu_still_works');
+
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+    expect(h.storage.inHandoff('minimal_menu_still_works')).toBeFalse();
+  });
+
   it('"Giá" sends price/menu reply and menu images without handoff', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
@@ -579,6 +1035,44 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getTelegramOperationalAlertCalls()).toBe(0);
     expect(h.getFallbackAttentionCalls()).toBe(0);
     expect(h.getConversationTurnCalls()).toBe(0);
+  });
+
+  it('product-code wording for product 11 sends the product image', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => (
+        String(text || '').includes('11')
+          ? [{ file: 'ma11.jpg', url: `${base}/media/ma11.jpg` }]
+          : []
+      )
+    });
+
+    await h.handleText('mã số 11', 'minimal_code_11_wording', 'm_code_11_wording');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma11.jpg'))).toBeTrue();
+    expect(h.storage.getLastProductCode('minimal_code_11_wording')).toBe('MÃ11');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('minimal_code_11_wording')).toBeTrue();
+  });
+
+  it('bare product 11 code sends the product image', async () => {
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => (
+        String(text || '').includes('11')
+          ? [{ file: 'ma11.jpg', url: `${base}/media/ma11.jpg` }]
+          : []
+      )
+    });
+
+    await h.handleText('11', 'minimal_code_11_bare', 'm_code_11_bare');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma11.jpg'))).toBeTrue();
+    expect(h.storage.getLastProductCode('minimal_code_11_bare')).toBe('MÃ11');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('minimal_code_11_bare')).toBeTrue();
   });
 
   it('product-code message with sibling ads referral does not also send menu or fallback', async () => {
@@ -802,15 +1296,22 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.length).toBe(3);
   });
 
-  it('pure ads referral event without message text logs only and sends no reply', async () => {
+  it('pure ads referral event without message text sends price/menu reply and menu images', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
     await h.handleReferral('ads_referral_only', 'ADS');
 
-    expect(h.sent.length).toBe(0);
+    expect(h.sent[0].type).toBe('text');
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent[1].type).toBe('image');
+    expect(h.sent[1].url).toContain('menu1.png');
+    expect(h.sent[2].type).toBe('image');
+    expect(h.sent[2].url).toContain('menu2.png');
+    expect(h.sent.length).toBe(3);
+    expect(h.storage.inHandoff('ads_referral_only')).toBeFalse();
   });
 
-  it('SHORTLINK referral (m.me link) logs only and sends no reply', async () => {
+  it('SHORTLINK referral (m.me link) does not auto-send menu without a message', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     markReturningCustomer(h.storage, 'shortlink_returning', 5);
 
@@ -819,7 +1320,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.length).toBe(0);
   });
 
-  it('ads referral followed by a real message sends one menu reply', async () => {
+  it('ads referral-only followed by a real menu message sends one menu reply', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
     const senderId = 'ads_then_real_message';
 
@@ -831,6 +1332,18 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
+  it('referral-only skips menu when one was recently sent to the same page and sender', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'ads_referral_recent_menu';
+
+    await h.handleText('chào shop', senderId, 'm_recent_menu_first', 'page_recent_menu');
+    await h.handleReferral(senderId, 'ADS', 'page_recent_menu');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
   it('dedupes same sender and normalized text across webhook calls within TTL', async () => {
     const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
 
@@ -839,6 +1352,22 @@ describe('webhook: menu_code_handoff mode', () => {
 
     expect(h.sent.length).toBe(3);
     expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+  });
+
+  it('duplicate customer message events in one request do not duplicate menu images', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'duplicate_message_event_sender';
+    const requestOptions = {
+      requestMessageSenders: new Set([senderId]),
+      requestImageDedupe: new Set()
+    };
+
+    await h.handleRawEvent(makeEvent('chào shop', senderId, 'm_duplicate_event_1', 'page_duplicate_event'), requestOptions);
+    await h.handleRawEvent(makeEvent('chào shop', senderId, 'm_duplicate_event_2', 'page_duplicate_event'), requestOptions);
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
   it('allows same sender and same menu text again after duplicate TTL and menu cooldown', async () => {
@@ -859,7 +1388,7 @@ describe('webhook: menu_code_handoff mode', () => {
     }
   });
 
-  it('suppresses different menu-trigger text from the same sender within menu cooldown', async () => {
+  it('successful menu send sets cooldown and duplicate attempt is skipped', async () => {
     const logs = [];
     const originalLog = console.log;
     console.log = message => logs.push(String(message));
@@ -872,10 +1401,36 @@ describe('webhook: menu_code_handoff mode', () => {
       expect(h.sent.length).toBe(3);
       expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
       expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+      expect(logs.join('\n')).toContain('[menu] text sent');
       expect(logs.join('\n')).toContain('skipped duplicate menu within cooldown');
     } finally {
       console.log = originalLog;
     }
+  });
+
+  it('successful menu logs include hashed sender_ref and exclude raw message text', async () => {
+    const logs = [];
+    const originalLog = console.log;
+    const rawSenderId = 'raw_sender_success_log';
+    const rawPageId = 'raw_page_success_log';
+    const rawText = 'chào shop private customer body';
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+
+    console.log = message => logs.push(String(message));
+    try {
+      await h.handleText(rawText, rawSenderId, 'm_success_safe_log', rawPageId);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const logText = logs.join('\n');
+    expect(logText).toContain('[menu] text sent');
+    expect(logText).toContain('[menu] image sent');
+    expect(logText).toMatch(/sender_ref=p:[a-f0-9]{10}/);
+    expect(logText.includes(rawSenderId)).toBeFalse();
+    expect(logText.includes(rawPageId)).toBeFalse();
+    expect(logText.includes(rawText)).toBeFalse();
+    expect(logText.includes(MENU_CODE_MENU_PRICE_REPLY)).toBeFalse();
   });
 
   it('allows same sender to receive menu again after menu cooldown', async () => {
@@ -957,7 +1512,7 @@ describe('webhook: menu_code_handoff mode', () => {
     const resolverOrder = [];
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
-      resolveRuntimeForPage: async ({ event }) => {
+      resolveRuntimeForPage: async ({ event, fallbackRuntime }) => {
         const label = event.message?.text || 'referral';
         activeResolvers += 1;
         maxActiveResolvers = Math.max(maxActiveResolvers, activeResolvers);
@@ -965,7 +1520,7 @@ describe('webhook: menu_code_handoff mode', () => {
         await delay(10);
         resolverOrder.push(`end:${label}`);
         activeResolvers -= 1;
-        return null;
+        return fallbackRuntime;
       }
     });
     const senderId = 'route_ads_sibling_returning';
@@ -1022,6 +1577,49 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
   });
 
+  it('queued referral plus customer message from one request does not double-send menu', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const senderId = 'queue_referral_message_sender';
+    const payloadJson = {
+      pageId: 'page_queue_referral_message',
+      baseUrl: 'https://example.test',
+      requestMessageSenderIds: [senderId],
+      requestAdsReferralSenderIds: [senderId]
+    };
+
+    await h.processQueuedWebhookJob({
+      payloadJson,
+      eventJson: makeReferralEvent(senderId, 'ADS', 'page_queue_referral_message')
+    });
+    await h.processQueuedWebhookJob({
+      payloadJson,
+      eventJson: makeEvent('bên kia rẻ hơn shop', senderId, 'm_queue_referral_message', 'page_queue_referral_message')
+    });
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(1);
+    expect(h.sent.filter(item => item.type === 'image').length).toBe(2);
+  });
+
+  it('uses queued entryTime to skip stale auto-replies', async () => {
+    const h = createWebhookHarness(undefined, { throwOnLeadParse: true });
+    const staleEntryTimeSeconds = Math.floor((Date.now() - (24 * 60 * 60 * 1000)) / 1000);
+
+    await h.processQueuedWebhookJob({
+      payloadJson: {
+        pageId: 'page_queue_stale',
+        baseUrl: 'https://example.test',
+        entryTime: staleEntryTimeSeconds
+      },
+      eventJson: makeEvent('chào shop', 'queue_stale_user', 'm_queue_stale', 'page_queue_stale')
+    });
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage._midMarks.length).toBe(1);
+    expect(h.storage._midMarks[0].mid).toBe('m_queue_stale');
+  });
+
   it('queue disabled keeps current webhook path', async () => {
     let enqueueCalls = 0;
     const h = createWebhookHarness(undefined, {
@@ -1076,6 +1674,7 @@ describe('webhook: menu_code_handoff mode', () => {
 
   it('queue enabled enqueues request events instead of inline processing', async () => {
     const enqueued = [];
+    const entryTime = Math.floor(Date.now() / 1000);
     const h = createWebhookHarness(undefined, {
       throwOnLeadParse: true,
       webhookQueueEnabled: true,
@@ -1102,6 +1701,7 @@ describe('webhook: menu_code_handoff mode', () => {
         object: 'page',
         entry: [{
           id: 'page_queue',
+          time: entryTime,
           messaging: [makeEvent('chào shop', 'queue_enabled_sender', 'm_queue_enabled')]
         }]
       },
@@ -1126,6 +1726,7 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(enqueued[0].pageId).toBe('page_queue');
     expect(enqueued[0].event.message.mid).toBe('m_queue_enabled');
     expect(enqueued[0].payload.baseUrl).toBe('https://example.test');
+    expect(enqueued[0].payload.entryTime).toBe(entryTime);
     expect(enqueued[0].payload.requestMessageSenderIds).toEqual(['queue_enabled_sender']);
   });
 

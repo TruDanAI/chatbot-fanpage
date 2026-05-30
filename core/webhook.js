@@ -10,10 +10,17 @@ const {
   isProductCodeLookupEnabled
 } = require('./bot-mode');
 const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
+const {
+  getMessengerSendBlockReason,
+  getMessengerSendError,
+  isNonRetryableMessengerSendError
+} = require('./messenger-send-errors');
 const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
 const { pageRef } = require('./utils/log-refs');
 
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
+const STALE_AUTO_REPLY_EVENT_MS = 23 * 60 * 60 * 1000;
+const FUTURE_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const MESSAGE_TEXT_DEDUPE_TTL_MS = 5 * 1000;
 const MESSAGE_TEXT_DEDUPE_MAX_KEYS = 2000;
 const MENU_SEND_COOLDOWN_MS = 15 * 1000;
@@ -67,11 +74,17 @@ function createWebhook({
   maybeResetTimedOutSession,
   redactSensitiveText,
   resolveRuntimeForPage,
+  fileConfigPageIds = [],
   webhookQueue,
   webhookQueueEnabled = false
 }) {
   const recentMessageTextKeys = new Map();
   const recentMenuSendKeys = new Map();
+  const fileConfigPageIdSet = new Set(
+    (Array.isArray(fileConfigPageIds) ? fileConfigPageIds : [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  );
   const queueEnabled = Boolean(webhookQueueEnabled);
 
   if (queueEnabled && (!webhookQueue || typeof webhookQueue.enqueueEvent !== 'function')) {
@@ -134,13 +147,80 @@ function createWebhook({
     ]);
     const expiresAt = recentMenuSendKeys.get(key);
     if (expiresAt && expiresAt > nowMs) {
-      console.log(`skipped duplicate menu within cooldown: page_ref=${pageRef(pageId)} sender=${senderId}`);
+      console.log(`skipped duplicate menu within cooldown: page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)}`);
       return true;
     }
 
     recentMenuSendKeys.set(key, nowMs + MENU_SEND_COOLDOWN_MS);
     pruneExpiringMap(recentMenuSendKeys, MENU_SEND_COOLDOWN_MAX_KEYS, nowMs);
     return false;
+  }
+
+  function clearRecentMenuSend({ pageId, senderId }) {
+    if (!senderId) return;
+
+    const key = JSON.stringify([
+      String(pageId || ''),
+      String(senderId || '')
+    ]);
+    recentMenuSendKeys.delete(key);
+  }
+
+  function parseEventTimestampMs(value) {
+    if (value == null || value === '') return null;
+    if (value instanceof Date) {
+      const ms = value.getTime();
+      return Number.isFinite(ms) ? ms : null;
+    }
+
+    const number = Number(value);
+    if (Number.isFinite(number)) {
+      return number > 0 && number < 100000000000 ? number * 1000 : number;
+    }
+
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function getEventTimestampMs(event = {}, options = {}) {
+    return parseEventTimestampMs(
+      event.timestamp
+      ?? event.message?.timestamp
+      ?? event.postback?.timestamp
+      ?? options.entryTime
+      ?? event.entry_time
+    );
+  }
+
+  function getStaleEventAgeMs(event = {}, options = {}) {
+    const timestampMs = getEventTimestampMs(event, options);
+    if (!Number.isFinite(timestampMs)) return null;
+
+    const ageMs = Date.now() - timestampMs;
+    if (ageMs < -FUTURE_EVENT_CLOCK_SKEW_MS) return null;
+    return ageMs > STALE_AUTO_REPLY_EVENT_MS ? ageMs : null;
+  }
+
+  function logStaleWebhookEvent({ pageId, senderId, ageMs }) {
+    const ageMinutes = Math.round(Number(ageMs || 0) / 60000);
+    console.warn(
+      `[webhook] skip stale auto-reply page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)} age_min=${ageMinutes}`
+    );
+  }
+
+  function logMessengerSendBlock({ pageId, senderId, phase = '' }, err) {
+    const error = getMessengerSendError(err) || {};
+    const reason = getMessengerSendBlockReason(err);
+    const parts = [
+      `[messenger-send] blocked reason=${reason}`,
+      `page_ref=${pageRef(pageId)}`,
+      `sender_ref=${pageRef(senderId)}`
+    ];
+    if (phase) parts.push(`phase=${safeLogReason(phase)}`);
+    if (error.code != null) parts.push(`code=${error.code}`);
+    if (error.subcode != null) parts.push(`subcode=${error.subcode}`);
+    if (error.fbtraceId) parts.push(`fbtrace_id=${safeLogReason(error.fbtraceId)}`);
+    console.warn(parts.join(' '));
   }
 
   function verifySignature(req) {
@@ -274,8 +354,8 @@ function createWebhook({
       isGreetingText: runtime.isGreetingText,
       getMenuImageUrls: runtime.getMenuImageUrls,
       buildRequestedImageUrls: runtime.buildRequestedImageUrls,
-      redactSensitiveText: runtime.redactSensitiveText,
-      shouldSkipRecentMenuSend
+      shouldSkipRecentMenuSend,
+      clearRecentMenuSend
     });
   }
 
@@ -326,7 +406,13 @@ function createWebhook({
 
   async function resolveEventRuntime(event, options = {}) {
     const pageId = getEventPageId(event, options);
-    if (typeof resolveRuntimeForPage !== 'function') return staticRuntime;
+    if (typeof resolveRuntimeForPage !== 'function') {
+      if (fileConfigPageIdSet.size && !fileConfigPageIdSet.has(pageId)) {
+        console.warn(`[webhook] file config fail-closed reason=page_not_configured page_ref=${pageRef(pageId)}`);
+        return { failClosed: true };
+      }
+      return staticRuntime;
+    }
 
     try {
       const resolved = await resolveRuntimeForPage({
@@ -334,20 +420,24 @@ function createWebhook({
         event,
         fallbackRuntime: staticRuntime
       });
-      if (!resolved) return staticRuntime;
+      if (!resolved) {
+        console.warn(`[multi-shop] DB config fail-closed reason=runtime_not_resolved page_ref=${pageRef(pageId)}`);
+        return { failClosed: true };
+      }
       if (resolved.failClosed) {
         console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
         return { failClosed: true };
       }
       if (resolved.shopConfig) return materializeRuntime(resolved);
       if (resolved.reason) {
-        console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
+        console.warn(`[multi-shop] DB config fail-closed reason=${safeLogReason(resolved.reason)} page_ref=${pageRef(pageId)}`);
+        return { failClosed: true };
       }
-      return staticRuntime;
+      console.warn(`[multi-shop] DB config fail-closed reason=invalid_runtime page_ref=${pageRef(pageId)}`);
+      return { failClosed: true };
     } catch (err) {
-      const reason = err && (err.code || err.reason) ? (err.code || err.reason) : 'resolver_error';
-      console.warn(`[multi-shop] DB config fallback reason=${safeLogReason(reason)} page_ref=${pageRef(pageId)}`);
-      return staticRuntime;
+      console.warn(`[multi-shop] DB config fail-closed reason=resolver_error page_ref=${pageRef(pageId)}`);
+      return { failClosed: true };
     }
   }
 
@@ -382,7 +472,7 @@ function createWebhook({
 
       for (const entry of body.entry || []) {
         for (const event of entry.messaging || []) {
-          requestEvents.push({ event, pageId: entry.id });
+          requestEvents.push({ event, pageId: entry.id, entryTime: entry.time });
           if (hasMessagePayload(event) && event.sender?.id) {
             requestMessageSenders.add(event.sender.id);
           }
@@ -417,13 +507,14 @@ function createWebhook({
   }
 
   async function enqueueWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions = {}) {
-    for (const { event, pageId } of requestEvents) {
+    for (const { event, pageId, entryTime } of requestEvents) {
       await webhookQueue.enqueueEvent({
         pageId: getEventPageId(event, { pageId }),
         event,
         payload: {
           pageId,
           baseUrl: inferredBaseUrl || '',
+          entryTime: entryTime || '',
           requestMessageSenderIds: requestSetToArray(requestOptions.requestMessageSenders),
           requestAdsReferralSenderIds: requestSetToArray(requestOptions.requestAdsReferralSenders)
         }
@@ -432,13 +523,22 @@ function createWebhook({
   }
 
   async function processWebhookRequestEvents(requestEvents, inferredBaseUrl, requestOptions) {
-    for (const { event, pageId } of requestEvents) {
+    for (const { event, pageId, entryTime } of requestEvents) {
       try {
         await handleEvent(event, inferredBaseUrl, {
           ...requestOptions,
-          pageId
+          pageId,
+          entryTime
         });
       } catch (err) {
+        if (isNonRetryableMessengerSendError(err)) {
+          logMessengerSendBlock({
+            pageId,
+            senderId: event?.sender?.id,
+            phase: 'request'
+          }, err);
+          continue;
+        }
         console.error('❌ handleEvent:', err.response?.data || err.message);
       }
     }
@@ -448,50 +548,71 @@ function createWebhook({
     const payload = job.payloadJson || job.payload_json || {};
     const event = job.eventJson || job.event_json || {};
     const pageId = String(payload.pageId || job.pageId || job.page_id || getEventPageId(event)).trim();
-    await handleEvent(event, payload.baseUrl || '', {
-      pageId,
-      requestMessageSenders: new Set(queuedArray(payload.requestMessageSenderIds)),
-      requestAdsReferralSenders: new Set(queuedArray(payload.requestAdsReferralSenderIds)),
-      requestImageDedupe: new Set()
-    });
+    try {
+      await handleEvent(event, payload.baseUrl || '', {
+        pageId,
+        entryTime: payload.entryTime || '',
+        requestMessageSenders: new Set(queuedArray(payload.requestMessageSenderIds)),
+        requestAdsReferralSenders: new Set(queuedArray(payload.requestAdsReferralSenderIds)),
+        requestImageDedupe: new Set()
+      });
+    } catch (err) {
+      if (isNonRetryableMessengerSendError(err)) {
+        logMessengerSendBlock({
+          pageId,
+          senderId: event?.sender?.id,
+          phase: 'queue'
+        }, err);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function handleEvent(event, baseUrlOverride = '', options = {}) {
     const senderId = event.sender?.id;
     if (!senderId) return;
 
-    // Echo: tin bot tự gửi thì bỏ qua; tin page/người trực gửi tay thì tạm dừng đúng khách.
-    if (event.message?.is_echo) {
-      if (!isBotEcho(event)) {
-        const customerId = getEchoCustomerId(event);
-        if (customerId) {
-          storage.setHandoff(customerId, Date.now() + handoffMs);
-          console.log(`⏸️  Bật handoff do người trực trả lời: ${customerId}`);
-        }
-      }
-      return;
-    }
+    const mid = event.message?.mid;
+    const pageId = getEventPageId(event, options);
+
+    const runtime = await resolveEventRuntime(event, options);
+    if (runtime.failClosed) return;
+    const runtimeStorage = runtime.storage || storage;
 
     // Dedup theo message id (Meta có thể retry)
-    const mid = event.message?.mid;
     if (mid) {
-      const pageId = getEventPageId(event, options);
       try {
-        if (typeof storage.tryMarkMid !== 'function') {
+        if (typeof runtimeStorage.tryMarkMid !== 'function') {
           throw new Error('storage_tryMarkMid_unavailable');
         }
-        const marked = await storage.tryMarkMid(mid, { senderId, pageId });
+        const marked = await runtimeStorage.tryMarkMid(mid, { senderId, pageId });
         if (!marked) return;
       } catch (err) {
         console.error(
-          `[webhook] MID idempotency fail-closed page_ref=${pageRef(pageId)} sender=${senderId}: ${err.message}`
+          `[webhook] MID idempotency fail-closed page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)}: ${err.message}`
         );
         return;
       }
     }
 
-    const runtime = await resolveEventRuntime(event, options);
-    if (runtime.failClosed) return;
+    const staleAgeMs = getStaleEventAgeMs(event, options);
+    if (Number.isFinite(staleAgeMs)) {
+      logStaleWebhookEvent({ pageId, senderId, ageMs: staleAgeMs });
+      return;
+    }
+
+    // Echo: tin bot tự gửi thì bỏ qua; tin page/người trực gửi tay thì tạm dừng đúng khách.
+    if (event.message?.is_echo) {
+      if (!isBotEcho(event)) {
+        const customerId = getEchoCustomerId(event);
+        if (customerId) {
+          runtimeStorage.setHandoff(customerId, Date.now() + handoffMs);
+          console.log(`⏸️  Bật handoff do người trực trả lời: customer_ref=${pageRef(customerId)}`);
+        }
+      }
+      return;
+    }
 
     const {
       shopConfig,
@@ -542,6 +663,7 @@ function createWebhook({
     } = runtime;
 
     const adsReferralEvent = menuCodeHandoffHandler?.isAdsReferralEvent(event) === true;
+    const referralOnlyAutoMenuEvent = menuCodeHandoffHandler?.isReferralOnlyAutoMenuEvent(event) === true;
     const requestAdsReferralEvent = options.requestAdsReferralSenders?.has?.(senderId) === true;
     const effectiveAdsReferralEvent = adsReferralEvent || requestAdsReferralEvent;
     const requestImageDedupe = options.requestImageDedupe || new Set();
@@ -557,30 +679,41 @@ function createWebhook({
 
     if (!userText) {
       const siblingMessageInRequest = options.requestMessageSenders?.has?.(senderId) === true;
-      if (menuCodeHandoffMode && effectiveAdsReferralEvent && !siblingMessageInRequest) {
-        console.log(`📣 [${senderId}]: referral từ quảng cáo (không kèm tin nhắn)`);
+      if (menuCodeHandoffMode && referralOnlyAutoMenuEvent && !siblingMessageInRequest) {
+        await menuCodeHandoffHandler.handleReferralOnly(senderId, baseUrlOverride, {
+          pageId,
+          requestImageDedupe
+        });
       }
       return;
     }
 
-    const pageId = getEventPageId(event, options);
     if (shouldSkipDuplicateMessageText({
       pageId,
       senderId,
       userText,
       normalize: normalizeText
     })) {
-      console.log(`🔁 Bỏ qua tin trùng trong TTL: page_ref=${pageRef(pageId)} sender=${senderId}`);
+      console.log(`🔁 Bỏ qua tin trùng trong TTL: page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)}`);
       return;
     }
 
     console.log(`📩 customer_message page_ref=${pageRef(pageId)} text_len=${String(userText || '').length}`);
     if (menuCodeHandoffHandler) {
-      const handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
-        adsReferral: effectiveAdsReferralEvent,
-        pageId,
-        requestImageDedupe
-      });
+      let handled = false;
+      try {
+        handled = await menuCodeHandoffHandler.handleEvent(senderId, userText, baseUrlOverride, {
+          adsReferral: effectiveAdsReferralEvent,
+          pageId,
+          requestImageDedupe
+        });
+      } catch (err) {
+        if (isNonRetryableMessengerSendError(err)) {
+          logMessengerSendBlock({ pageId, senderId, phase: 'menu_code_handoff' }, err);
+          return;
+        }
+        throw err;
+      }
       if (handled) return;
       return;
     }
@@ -592,17 +725,17 @@ function createWebhook({
 
     // Đang trong khoảng human handoff → bot không trả lời, nhưng vẫn ghi nhận cập nhật đơn
     // nếu shop còn bật order flow.
-    if (storage.inHandoff(senderId)) {
+    if (runtimeStorage.inHandoff(senderId)) {
       const captured = orderFlowEnabled
         ? captureHandoffOrderUpdate(senderId, userText, { messageId: mid || '' })
         : false;
-      console.log(`⏸️  Bỏ qua tin (handoff): ${senderId}${captured ? ' — đã ghi nhận cập nhật đơn' : ''}`);
+      console.log(`⏸️  Bỏ qua tin (handoff): sender_ref=${pageRef(senderId)}${captured ? ' — đã ghi nhận cập nhật đơn' : ''}`);
       return;
     }
 
     maybeResetTimedOutSession(senderId, userText);
-    if (typeof storage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload, extractRequestedProductCodes)) {
-      storage.setEngagedFollowUp(senderId, {
+    if (typeof runtimeStorage.setEngagedFollowUp === 'function' && shouldTrackEngagedFollowUp(userText, quickReplyPayload, extractRequestedProductCodes)) {
+      runtimeStorage.setEngagedFollowUp(senderId, {
         at: new Date().toISOString(),
         note: userText
       });
@@ -610,9 +743,9 @@ function createWebhook({
 
     // Khách yêu cầu gặp nhân viên → tạm dừng bot, ghi log
     if (wantsHuman(userText)) {
-      storage.setHandoff(senderId, Date.now() + handoffMs);
+      runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
       trackEvent(senderId, 'handoff_started', userText, { reason: 'wants_human' });
-      storage.appendCustomer({
+      runtimeStorage.appendCustomer({
         type: 'handoff_request',
         senderId,
         phone: '',
@@ -632,9 +765,9 @@ function createWebhook({
     }
 
     if (wantsUrgentHumanAttention(userText)) {
-      storage.setHandoff(senderId, Date.now() + handoffMs);
+      runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
       trackEvent(senderId, 'handoff_started', userText, { reason: 'urgent_attention' });
-      storage.appendCustomer({
+      runtimeStorage.appendCustomer({
         type: 'handoff_attention',
         senderId,
         phone: '',
@@ -657,12 +790,12 @@ function createWebhook({
       // Nhận diện sđt → ghi lead vào customers.csv để nhân viên xem lại.
       // Phần storage tự xếp hàng ghi file để nhiều khách nhắn cùng lúc không làm lẫn dòng CSV.
       const leadDetails = buildLeadDetails(userText, senderId);
-      const prevOrderDraft = storage.getOrderDraft(senderId);
+      const prevOrderDraft = runtimeStorage.getOrderDraft(senderId);
       const hasOrderDetail = Boolean(
         leadDetails.productCode || leadDetails.phone || leadDetails.name || leadDetails.address
       );
       const mergedOrderDraft = hasOrderDetail
-        ? storage.mergeOrderDraft(senderId, leadDetails)
+        ? runtimeStorage.mergeOrderDraft(senderId, leadDetails)
         : {};
       const currentLead = Object.keys(mergedOrderDraft).length ? mergedOrderDraft : leadDetails;
 
@@ -674,21 +807,21 @@ function createWebhook({
       );
       if (
         orderFlowEnabled &&
-        storage.getSessionState(senderId) === STATES.CONFIRMED &&
+        runtimeStorage.getSessionState(senderId) === STATES.CONFIRMED &&
         (substantiveLead || productChanged)
       ) {
-        storage.setSessionState(senderId, '');
+        runtimeStorage.setSessionState(senderId, '');
       }
 
       if (leadCaptureEnabled && looksLikePhone(userText)) {
         trackEvent(senderId, 'lead_info_received', userText, { fields: ['phone'] });
-        storage.appendCustomer({
+        runtimeStorage.appendCustomer({
           type: 'lead',
           senderId,
           ...currentLead,
           phone: currentLead.phone || leadDetails.phone,
           text: userText,
-          history: storage.getHistory(senderId).slice(-10),
+          history: runtimeStorage.getHistory(senderId).slice(-10),
           at: new Date().toISOString()
         });
       } else if (
@@ -701,12 +834,12 @@ function createWebhook({
         trackEvent(senderId, 'lead_info_received', userText, {
           fields: ['name', 'address'].filter(field => Boolean(leadDetails[field]))
         });
-        storage.appendCustomer({
+        runtimeStorage.appendCustomer({
           type: 'lead_update',
           senderId,
           ...currentLead,
           text: userText,
-          history: storage.getHistory(senderId).slice(-10),
+          history: runtimeStorage.getHistory(senderId).slice(-10),
           at: new Date().toISOString()
         });
       }
@@ -714,12 +847,12 @@ function createWebhook({
       if (orderFlowEnabled) {
         await notifyStaffForReadyOrder(senderId, userText, { messageId: mid || '' });
 
-        const sessionBeforeConfirm = storage.getSessionState(senderId);
+        const sessionBeforeConfirm = runtimeStorage.getSessionState(senderId);
         if (shouldSilenceAfterCompleteOrder(userText, senderId)) {
-          const nowConfirmed = storage.getSessionState(senderId) === STATES.CONFIRMED;
+          const nowConfirmed = runtimeStorage.getSessionState(senderId) === STATES.CONFIRMED;
           const justConfirmed = nowConfirmed && sessionBeforeConfirm !== STATES.CONFIRMED;
           if (justConfirmed) {
-            console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (${senderId}).`);
+            console.log(`📤 Đơn vừa CONFIRMED — gửi lead lên Google Sheet (sender_ref=${pageRef(senderId)}).`);
             const confirmedLead = buildConfirmedSheetLead(senderId, { messageId: mid || '', userText });
             trackEvent(senderId, 'order_confirmed', userText, {
               productCode: confirmedLead.productCode || '',
@@ -730,9 +863,9 @@ function createWebhook({
               ...confirmedLead,
               text: 'ĐƠN ĐÃ ĐƯỢC KHÁCH XÁC NHẬN'
             });
-            storage.setHandoff(senderId, Date.now() + handoffMs);
+            runtimeStorage.setHandoff(senderId, Date.now() + handoffMs);
           }
-          console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: ${senderId}`);
+          console.log(`⏸️  Bỏ qua tin xác nhận ngắn sau khi đã đủ thông tin đơn: sender_ref=${pageRef(senderId)}`);
           return;
         }
       }
@@ -754,7 +887,7 @@ function createWebhook({
         if (shouldSendHotCarousel) {
           try {
             const sent = await sendHotCarousel(senderId, baseUrlOverride);
-            if (sent) console.log(`🖼️  Gửi hot carousel cho ${senderId}`);
+            if (sent) console.log(`🖼️  Gửi hot carousel cho sender_ref=${pageRef(senderId)}`);
           } catch (e) {
             const msg = e.response?.data?.error?.message || e.message;
             console.error(`❌ Gửi hot carousel fail: ${msg}`);
@@ -825,8 +958,8 @@ function createWebhook({
         isGreeting,
         replyText: reply,
         fallbackUsed: usedFallbackReply,
-        lastProductCode: storage.getLastProductCode(senderId),
-        orderDraft: storage.getOrderDraft(senderId)
+        lastProductCode: runtimeStorage.getLastProductCode(senderId),
+        orderDraft: runtimeStorage.getOrderDraft(senderId)
       }, shopConfig);
       console.log(`🤖 reply: ${redactSensitiveText(reply).slice(0, 120).replace(/\n/g, ' ')}`);
       await imagePromise; // đợi ảnh xong rồi mới gửi text để text xuất hiện sau ảnh
@@ -839,8 +972,15 @@ function createWebhook({
         await sendMessage(senderId, reply);
       }
       recordConversationTurn(senderId, userText, reply);
-      console.log(`✉️  Đã gửi tin tới ${senderId}`);
+      console.log(`✉️  Đã gửi tin tới sender_ref=${pageRef(senderId)}`);
     } catch (err) {
+      if (isNonRetryableMessengerSendError(err)) {
+        logMessengerSendBlock({ pageId, senderId, phase: 'reply' }, err);
+        trackEvent(senderId, 'messenger_send_blocked', '', {
+          reason: getMessengerSendBlockReason(err)
+        });
+        return;
+      }
       const geminiInfo = getGeminiErrorInfo(err);
       console.error('❌ Lỗi xử lý tin:', err.response?.data || err.message || geminiInfo);
       void sendTelegramOperationalAlert({

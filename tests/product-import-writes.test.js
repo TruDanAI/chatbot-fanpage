@@ -1,6 +1,9 @@
 const { describe, it, expect } = require('./harness');
 const { presentShopDetailApi } = require('../core/admin/api-presenter');
-const { createPostgresProductImportService } = require('../core/admin/product-import-writes');
+const {
+  createPostgresProductImportService,
+  safePreviewProductName
+} = require('../core/admin/product-import-writes');
 
 const principal = Object.freeze({
   id: 'maintainer-1',
@@ -448,6 +451,56 @@ describe('product bulk import persistence', () => {
     expect(state.products.length).toBe(1);
   });
 
+  it('fails safely when a CSV code is reserved by an archived product and writes nothing', async () => {
+    const state = createState();
+    state.products.push({
+      id: 'prod-archived',
+      shop_id: 'onboarding-shop',
+      code: 'M20',
+      name: 'Archived M20',
+      description: 'archived',
+      price: null,
+      currency: '',
+      status: 'archived',
+      sort_order: 20,
+      metadata_json: {},
+      updated_at: '2026-05-17T00:00:00.000Z'
+    });
+    const queries = [];
+    const service = createService(state, queries);
+    let err = null;
+
+    try {
+      await service.importProducts({
+        principal,
+        shopId: 'onboarding-shop',
+        body: {
+          csv: [
+            'code,name,price_text',
+            'M21,New Product,100k',
+            'm20,Try To Resurrect Archived,200k'
+          ].join('\n')
+        }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('product_import_validation_failed');
+    expect(Array.isArray(err.errors)).toBeTrue();
+    const archivedError = (err.errors || []).find(error => error.code === 'archived_product_code');
+    expect(Boolean(archivedError)).toBeTrue();
+    expect(archivedError.field).toBe('code');
+    expect(archivedError.row).toBe(3);
+    expect(archivedError.suggested_fix).toContain('archived product');
+    // Nothing was created or updated; the archived product stays archived.
+    expect(state.products.some(product => product.code === 'M21')).toBeFalse();
+    expect(state.products.find(product => product.id === 'prod-archived').status).toBe('archived');
+    expect(state.audits.length).toBe(0);
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
+  });
+
   it('redacts unsafe short identifiers from duplicate code errors', async () => {
     for (const item of [{
       csv: 'code,name\npage_1,First\npage_1,Second',
@@ -588,8 +641,21 @@ describe('product bulk import persistence', () => {
     expect(state.audits.length).toBe(0);
   });
 
-  it('validate_only validates and previews without database writes or audit', async () => {
+  it('validate_only previews create and update classifications without database writes or audit', async () => {
     const state = createState();
+    state.products.push({
+      id: 'prod-hidden',
+      shop_id: 'onboarding-shop',
+      code: 'M15',
+      name: 'Hidden M15',
+      description: 'hidden',
+      price: null,
+      currency: '',
+      status: 'hidden',
+      sort_order: 15,
+      metadata_json: {},
+      updated_at: '2026-05-17T00:00:00.000Z'
+    });
     const queries = [];
     const service = createService(state, queries);
 
@@ -600,30 +666,183 @@ describe('product bulk import persistence', () => {
         validate_only: 'true',
         csv: [
           'code,name,price_text,description,image_url,category,tags,metadata_json,status,sort_order',
-          'M14,Preview Product,300k,Preview,https://cdn.example.test/m14.png,demo,"new","{""size"":""small""}",active,14'
+          'M14,Preview Product,300k,Preview,https://cdn.example.test/m14.png,demo,"new","{""size"":""small""}",active,14',
+          'M7,Active Update,310k,Preview,,,,,hidden,7',
+          'M15,Hidden Update,320k,Preview,,,,,active,15'
         ].join('\n')
       }
     });
 
     expect(result.validate_only).toBeTrue();
-    expect(result.rows_received).toBe(1);
+    expect(result.rows_received).toBe(3);
+    expect(result.create_count).toBe(1);
+    expect(result.update_count).toBe(2);
+    expect(result.archived_conflict_count).toBe(0);
+    expect(result.duplicate_count).toBe(0);
+    expect(result.error_count).toBe(0);
+    expect(result.blocking).toBeFalse();
     expect(result.products_created).toBe(0);
     expect(result.products_updated).toBe(0);
     expect(result.image_assets_touched).toBe(0);
-    expect(result.preview_rows.length).toBe(1);
+    expect(result.preview_rows.length).toBe(3);
     expect(result.preview_rows[0]).toEqual({
       row: 2,
+      status: 'create',
+      status_label: 'Tạo mới',
+      blocking: false,
       code: 'M14',
-      name: '',
-      status: 'active',
+      name: 'Preview Product',
+      product_status: 'active',
       sort_order: 14,
       has_image_url: true,
-      metadata_keys: ['category', 'priceText', 'size', 'tags']
+      metadata_keys: ['category', 'priceText', 'size', 'tags'],
+      message: 'Sẽ tạo sản phẩm mới.',
+      errors: []
     });
+    expect(result.preview_rows[1].status).toBe('update');
+    expect(result.preview_rows[1].code).toBe('M7');
+    expect(result.preview_rows[1].product_status).toBe('hidden');
+    expect(result.preview_rows[2].status).toBe('update');
+    expect(result.preview_rows[2].code).toBe('M15');
+    expect(result.preview_rows[2].product_status).toBe('active');
     expect(state.products.some(product => product.code === 'M14')).toBeFalse();
     expect(state.assets.some(asset => asset.public_url === 'https://cdn.example.test/m14.png')).toBeFalse();
     expect(state.audits.length).toBe(0);
-    expect(queries.length).toBe(0);
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
+    expect(queries.some(item => item.sql === 'ROLLBACK')).toBeFalse();
+    expect(queries.some(item => /^INSERT\b/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^UPDATE\b/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => /^DELETE\b/i.test(item.sql))).toBeFalse();
+    expect(queries.some(item => item.sql.includes('FROM shop_products'))).toBeTrue();
+  });
+
+  it('validate_only classifies archived codes as blocking conflicts without opening a transaction', async () => {
+    const state = createState();
+    state.products.push({
+      id: 'prod-archived',
+      shop_id: 'onboarding-shop',
+      code: 'M20',
+      name: 'Archived M20',
+      description: 'archived',
+      price: null,
+      currency: '',
+      status: 'archived',
+      sort_order: 20,
+      metadata_json: {},
+      updated_at: '2026-05-17T00:00:00.000Z'
+    });
+    const queries = [];
+    const service = createService(state, queries);
+
+    const result = await service.importProducts({
+      principal,
+      shopId: 'onboarding-shop',
+      body: {
+        validate_only: true,
+        csv: 'code,name\nm20,Try Archived'
+      }
+    });
+
+    expect(result.validate_only).toBeTrue();
+    expect(result.archived_conflict_count).toBe(1);
+    expect(result.blocking).toBeTrue();
+    expect(result.preview_rows[0].status).toBe('archived_conflict');
+    expect(result.preview_rows[0].blocking).toBeTrue();
+    expect(result.preview_rows[0].message).toBe('Mã này thuộc một sản phẩm đã lưu trữ và đang được giữ chỗ. Hãy khôi phục sản phẩm đó từ danh mục, hoặc dùng mã khác.');
+    expect(result.errors[0].code).toBe('archived_product_code');
+    expect(state.products.find(product => product.id === 'prod-archived').status).toBe('archived');
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(queries.some(item => /^INSERT\b|^UPDATE\b|^DELETE\b/i.test(item.sql))).toBeFalse();
+  });
+
+  it('validate_only classifies duplicate codes inside the CSV as blocking preview rows', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+
+    const result = await service.importProducts({
+      principal,
+      shopId: 'onboarding-shop',
+      body: {
+        validate_only: 'true',
+        csv: [
+          'code,name',
+          'M30,First',
+          'm30,Second'
+        ].join('\n')
+      }
+    });
+
+    expect(result.duplicate_count).toBe(2);
+    expect(result.blocking).toBeTrue();
+    expect(result.preview_rows.map(row => row.status)).toEqual(['duplicate_in_csv', 'duplicate_in_csv']);
+    expect(result.errors.length).toBe(2);
+    expect(result.errors[0].code).toBe('duplicate_product_code_in_csv');
+    expect(result.errors[0].related_rows).toEqual([2, 3]);
+    expect(state.products.length).toBe(1);
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(queries.some(item => /^INSERT\b|^UPDATE\b|^DELETE\b/i.test(item.sql))).toBeFalse();
+  });
+
+  it('validate_only reports invalid product code, name, and status as error preview rows', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+
+    const result = await service.importProducts({
+      principal,
+      shopId: 'onboarding-shop',
+      body: {
+        validate_only: 'true',
+        csv: [
+          'code,name,status',
+          'BAD CODE,Name,active',
+          'M31,,active',
+          'M32,Name,deleted'
+        ].join('\n')
+      }
+    });
+
+    expect(result.error_count).toBe(3);
+    expect(result.blocking).toBeTrue();
+    expect(result.preview_rows.map(row => row.status)).toEqual(['error', 'error', 'error']);
+    expect(result.errors.map(error => error.code)).toEqual([
+      'invalid_product_code',
+      'invalid_product_name',
+      'invalid_product_status'
+    ]);
+    expect(JSON.stringify(result).includes('BAD CODE')).toBeFalse();
+    expect(queries.some(item => item.sql === 'BEGIN')).toBeFalse();
+    expect(queries.some(item => /^INSERT\b|^UPDATE\b|^DELETE\b/i.test(item.sql))).toBeFalse();
+  });
+
+  it('validate_only reports ignored columns as warnings without blocking import', async () => {
+    const state = createState();
+    const queries = [];
+    const service = createService(state, queries);
+
+    const result = await service.importProducts({
+      principal,
+      shopId: 'onboarding-shop',
+      body: {
+        validate_only: 'true',
+        csv: 'code,name,extra_col\nM33,Extra Column,ignored'
+      }
+    });
+
+    expect(result.ignored_columns).toEqual(['extra_col']);
+    expect(result.ignored_columns_count).toBe(1);
+    expect(result.create_count).toBe(1);
+    expect(result.error_count).toBe(0);
+    expect(result.blocking).toBeFalse();
+    expect(result.preview_rows[0].status).toBe('create');
+  });
+
+  it('preview product name sanitizer escapes HTML and hides sensitive-looking values', () => {
+    expect(safePreviewProductName('<b>Demo</b>')).toBe('&lt;b&gt;Demo&lt;/b&gt;');
+    expect(safePreviewProductName('token abc123')).toBe('[not shown]');
+    expect(safePreviewProductName('postgres://user:pass@example.test/db')).toBe('[not shown]');
   });
 
   it('rejects principals without product write permission before opening a transaction', async () => {

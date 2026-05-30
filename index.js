@@ -11,6 +11,7 @@ const { createRuleEngine } = require('./core/rules');
 const { buildQuickReplies, resolveQuickReplyPayload } = require('./core/quick-replies');
 const { resolveShopConfigForPage } = require('./core/shops/db-shop-config');
 const { getAdminRequestToken, registerAdminRoutes } = require('./core/admin-routes');
+const { registerWizardRoutes } = require('./core/admin/wizard-routes');
 const { createAiClient } = require('./core/ai-client');
 const {
   createEventTracker,
@@ -41,7 +42,7 @@ const {
   isAiFallbackEnabled,
   isFollowUpEnabled
 } = require('./core/bot-mode');
-const { pageRef } = require('./core/utils/log-refs');
+const { pageRef, shopRef } = require('./core/utils/log-refs');
 
 const ROOT_DIR = __dirname;
 let multiShopDbPool = null;
@@ -304,6 +305,7 @@ const PUBLIC_BASE_URL =
   process.env.RENDER_EXTERNAL_URL ||
   '';
 const MULTI_SHOP_DB_CONFIG_ENABLED = envBoolean('MULTI_SHOP_DB_CONFIG_ENABLED', false);
+const SHOP_LIVE_GATE_ENABLED = envBoolean('SHOP_LIVE_GATE_ENABLED', false);
 const FILE_CONFIG_PAGE_IDS = envList('FB_PAGE_ID')
   .concat(envList('PAGE_ID'))
   .map(String)
@@ -336,14 +338,15 @@ function evaluateDbShopRuntimeAdmission({
   logger = console
 } = {}) {
   if (!result?.found) {
-    if (hasRuntimeAllowlist(allowlist)) return { failClosed: true, reason: result?.reason || 'page_not_found' };
-    if (result?.reason === 'missing_page_id') return { failClosed: true, reason: result.reason };
-    if (knownFileConfigPage) return { reason: result?.reason || 'page_not_found' };
     return { failClosed: true, reason: result?.reason || 'page_not_found' };
   }
 
   const shopId = String(result.shop?.id || '').trim();
   const resolvedPageId = String(result.page?.page_id || normalizedPageId || '').trim();
+  const shopStatus = String(result.shop?.status || '').trim().toLowerCase();
+  if (shopStatus && shopStatus !== 'active') {
+    return { failClosed: true, reason: 'shop_status_not_active' };
+  }
   if (!isAllowedResolvedRuntime({ shopId, pageId: resolvedPageId }, allowlist)) {
     logger.warn?.(
       `[multi-shop] runtime admission: resolved shop not in allowlist, fail-closed reason=shop_not_allowed shop_id=${safeLogValue(shopId)} page_ref=${pageRef(resolvedPageId)}`
@@ -352,6 +355,86 @@ function evaluateDbShopRuntimeAdmission({
   }
 
   return null;
+}
+
+function evaluateDbShopRuntimeLiveGate({
+  result,
+  enabled = SHOP_LIVE_GATE_ENABLED
+} = {}) {
+  if (!enabled) return null;
+  if (!result?.found) return null;
+  const shop = result.shop || {};
+  if (shop.controlPlaneColumnsAvailable === false) {
+    return { failClosed: true, reason: 'shop_live_gate_schema_missing' };
+  }
+  const status = String(shop.status || '').trim().toLowerCase();
+  if (status !== 'active') return { failClosed: true, reason: 'shop_status_not_active' };
+  const lifecycle = String(shop.lifecycle || '').trim().toLowerCase();
+  if (lifecycle !== 'live') return { failClosed: true, reason: 'lifecycle_not_live' };
+  if (!shop.live_enabled) return { failClosed: true, reason: 'live_disabled' };
+  return null;
+}
+
+function normalizeOptionalBoolean(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'boolean') return value;
+  return /^(1|true|yes|on)$/i.test(String(value).trim());
+}
+
+function resolveEffectiveMessengerDryRun({
+  globalDryRun = MESSENGER_DRY_RUN,
+  shopDryRun = null,
+  shopDryRunColumnAvailable = true
+} = {}) {
+  const normalizedGlobal = Boolean(globalDryRun);
+  const normalizedShop = normalizeOptionalBoolean(shopDryRun);
+  if (normalizedGlobal) {
+    return {
+      dryRun: true,
+      source: 'global',
+      globalDryRun: true,
+      shopDryRun: normalizedShop,
+      shopDryRunColumnAvailable: shopDryRunColumnAvailable !== false
+    };
+  }
+  if (normalizedShop === true) {
+    return {
+      dryRun: true,
+      source: 'shop',
+      globalDryRun: false,
+      shopDryRun: true,
+      shopDryRunColumnAvailable: shopDryRunColumnAvailable !== false
+    };
+  }
+  return {
+    dryRun: false,
+    source: normalizedShop === false ? 'shop' : 'legacy_missing_shop_dry_run',
+    globalDryRun: false,
+    shopDryRun: normalizedShop,
+    shopDryRunColumnAvailable: shopDryRunColumnAvailable !== false
+  };
+}
+
+function logMessengerDryRunDecision({
+  decision,
+  shopId = '',
+  pageId = '',
+  logger = console
+} = {}) {
+  if (!decision || typeof logger?.log !== 'function') return;
+  const shopDryRun = decision.shopDryRun == null
+    ? 'missing'
+    : (decision.shopDryRun ? 'true' : 'false');
+  logger.log([
+    '[messenger-dry-run]',
+    `effective=${decision.dryRun ? 'dry_run' : 'send_allowed'}`,
+    `source=${safeLogValue(decision.source)}`,
+    `global=${decision.globalDryRun ? 'true' : 'false'}`,
+    `shop=${shopDryRun}`,
+    `shop_column=${decision.shopDryRunColumnAvailable ? 'available' : 'missing'}`,
+    `shop_ref=${shopRef(shopId)}`,
+    `page_ref=${pageRef(pageId)}`
+  ].join(' '));
 }
 
 async function validateRuntimeAllowlistOnStartup({
@@ -558,24 +641,18 @@ const {
 registerMediaRoutes(app);
 
 function buildDbShopRuntime(resolved, options = {}) {
+  const runtimeStorage = options.storage || storage;
   const dbConfig = applyBotModeConfig(resolved.config);
   const dbProducts = resolved.products || [];
+  const messengerDryRun = Boolean(options.messengerDryRun);
   const messenger = options.messenger
     || (typeof options.messengerFactory === 'function'
-      ? options.messengerFactory(options.fbPageToken)
-      : withPageToken(options.fbPageToken));
+      ? options.messengerFactory(options.fbPageToken, { dryRun: messengerDryRun })
+      : withPageToken(options.fbPageToken, { dryRun: messengerDryRun }));
   const dbRules = createRuleEngine({
     products: dbProducts,
     config: dbConfig,
-    contextStore: {
-      getLastProductCode: userId => storage.getLastProductCode(userId),
-      setLastProductCode: (userId, code) => storage.setLastProductCode(userId, code),
-      getOrderDraft: userId => storage.getOrderDraft(userId),
-      mergeOrderDraft: (userId, details) => storage.mergeOrderDraft(userId, details),
-      getSessionState: userId => storage.getSessionState(userId),
-      setSessionState: (userId, state) => storage.setSessionState(userId, state),
-      clearOrderDraft: userId => storage.clearOrderDraft(userId)
-    }
+    contextStore: runtimeStorage
   });
   const dbImages = getDbAssetImageRuntime({
     config: dbConfig,
@@ -583,13 +660,66 @@ function buildDbShopRuntime(resolved, options = {}) {
     rules: dbRules,
     sendCarousel: messenger.sendCarousel
   });
+  const dbEventTracker = createEventTracker({
+    storage: runtimeStorage,
+    deriveSessionState: dbRules.deriveSessionState,
+    sessionTimeoutMs: SESSION_TIMEOUT_MS
+  });
+  const dbAiClient = createAiClient({
+    storage: runtimeStorage,
+    products: dbProducts,
+    shopConfig: dbConfig,
+    deriveSessionState: dbRules.deriveSessionState,
+    normalizeText: dbRules.normalizeText,
+    render: dbRules.render,
+    truncateText,
+    config: {
+      geminiApiKey: GEMINI_API_KEY,
+      geminiProvider: GEMINI_PROVIDER,
+      geminiModel: GEMINI_MODEL,
+      geminiTemperature: GEMINI_TEMPERATURE,
+      geminiMaxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+      googleCloudProject: GOOGLE_CLOUD_PROJECT,
+      googleCloudLocation: GOOGLE_CLOUD_LOCATION,
+      geminiHistoryLimit: GEMINI_HISTORY_LIMIT
+    }
+  });
+  const dbNotifications = createNotificationService({
+    storage: runtimeStorage,
+    fbPageToken: options.fbPageToken || FB_PAGE_TOKEN,
+    fbProfileCacheTtlMs: FB_PROFILE_CACHE_TTL_MS,
+    telegramAlertCooldownMs: TELEGRAM_ALERT_COOLDOWN_MS,
+    fallbackAlertThreshold: FALLBACK_ALERT_THRESHOLD,
+    fallbackHandoffThreshold: FALLBACK_HANDOFF_THRESHOLD,
+    handoffMs: HANDOFF_MS,
+    trackEvent: dbEventTracker.trackEvent,
+    truncateText
+  });
+  const dbLeadParser = createLeadParser({
+    storage: runtimeStorage,
+    products: dbProducts,
+    extractPhone: dbRules.extractPhone,
+    extractRequestedProductCodes: dbRules.extractRequestedProductCodes,
+    normalizeText: dbRules.normalizeText,
+    deriveSessionState: dbRules.deriveSessionState,
+    STATES: dbRules.STATES,
+    pushLeadToSheet: options.pushLeadToSheet || pushLeadToSheet,
+    sendTelegramAlert: dbNotifications.sendTelegramAlert,
+    trackEvent: dbEventTracker.trackEvent
+  });
 
   return {
+    storage: runtimeStorage,
     shopConfig: dbConfig,
+    messengerDryRun,
     useGemini: USE_GEMINI && isAiFallbackEnabled(dbConfig),
     buildDeterministicReply: dbRules.buildDeterministicReply,
     buildFallbackReply: dbRules.buildFallbackReply,
+    buildLeadDetails: dbLeadParser.buildLeadDetails,
+    buildConfirmedSheetLead: dbLeadParser.buildConfirmedSheetLead,
     extractRequestedProductCodes: dbRules.extractRequestedProductCodes,
+    captureHandoffOrderUpdate: dbLeadParser.captureHandoffOrderUpdate,
+    notifyStaffForReadyOrder: dbLeadParser.notifyStaffForReadyOrder,
     looksLikePhone: dbRules.looksLikePhone,
     shouldSilenceAfterCompleteOrder: dbRules.shouldSilenceAfterCompleteOrder,
     wantsHuman: dbRules.wantsHuman,
@@ -597,6 +727,11 @@ function buildDbShopRuntime(resolved, options = {}) {
     render: dbRules.render,
     deriveSessionState: dbRules.deriveSessionState,
     STATES: dbRules.STATES,
+    callGemini: dbAiClient.callGemini,
+    getGeminiErrorInfo: dbAiClient.getGeminiErrorInfo,
+    shouldUseFallbackReply: dbAiClient.shouldUseFallbackReply,
+    isProbablyIncompleteReply: dbAiClient.isProbablyIncompleteReply,
+    recordConversationTurn: dbAiClient.recordConversationTurn,
     getMenuImageUrls: dbImages.getMenuImageUrls,
     buildRequestedImageUrls: dbImages.buildRequestedImageUrls,
     isGreetingText: dbImages.isGreetingText,
@@ -605,8 +740,38 @@ function buildDbShopRuntime(resolved, options = {}) {
     sendMessage: messenger.sendMessage,
     sendQuickReplies: messenger.sendQuickReplies,
     sendImage: messenger.sendImage,
-    showTyping: messenger.showTyping
+    showTyping: messenger.showTyping,
+    pushLeadToSheet: options.pushLeadToSheet || pushLeadToSheet,
+    sendTelegramAlert: dbNotifications.sendTelegramAlert,
+    sendTelegramOperationalAlert: dbNotifications.sendTelegramOperationalAlert,
+    resetFallbackAttention: dbNotifications.resetFallbackAttention,
+    trackFallbackAttention: dbNotifications.trackFallbackAttention,
+    trackEvent: dbEventTracker.trackEvent,
+    maybeResetTimedOutSession: dbEventTracker.maybeResetTimedOutSession,
+    redactSensitiveText
   };
+}
+
+async function resolveStorageForDbRuntime(result) {
+  if (!MULTI_SHOP_DB_CONFIG_ENABLED) return storage;
+  if (typeof storage.forContext !== 'function') {
+    const err = new Error('runtime_storage_context_unavailable');
+    err.code = 'runtime_storage_context_unavailable';
+    throw err;
+  }
+
+  const runtimeStorage = storage.forContext({
+    tenantId: result.tenantId || process.env.TENANT_ID || 'default',
+    pageId: result.page?.page_id,
+    shopId: result.shop?.id
+  });
+  if (!runtimeStorage || typeof runtimeStorage !== 'object') {
+    const err = new Error('runtime_storage_context_invalid');
+    err.code = 'runtime_storage_context_invalid';
+    throw err;
+  }
+  if (runtimeStorage.ready) await runtimeStorage.ready;
+  return runtimeStorage;
 }
 
 async function resolveDbShopRuntimeForPage({
@@ -614,7 +779,10 @@ async function resolveDbShopRuntimeForPage({
   db,
   credentialMasterKey = process.env.CREDENTIAL_MASTER_KEY,
   credentialResolver = resolvePageCredential,
-  messengerFactory
+  messengerFactory,
+  shopLiveGateEnabled = SHOP_LIVE_GATE_ENABLED,
+  globalMessengerDryRun = MESSENGER_DRY_RUN,
+  logger = console
 } = {}) {
   const normalizedPageId = String(pageId || '').trim();
   const queryable = db || getMultiShopDbPool();
@@ -630,6 +798,12 @@ async function resolveDbShopRuntimeForPage({
     knownFileConfigPage: isKnownFileConfigPage(normalizedPageId)
   });
   if (admission) return admission;
+
+  const liveGate = evaluateDbShopRuntimeLiveGate({
+    result,
+    enabled: shopLiveGateEnabled
+  });
+  if (liveGate) return liveGate;
 
   if (!result.products.length) return { failClosed: true, reason: 'db_products_empty' };
   const modeName = String(result.config?.botMode?.name || '').trim();
@@ -650,9 +824,28 @@ async function resolveDbShopRuntimeForPage({
   if (!credential?.found || !credential.secret) {
     return { failClosed: true, reason: credential?.reason || 'credential_not_found' };
   }
+  let runtimeStorage;
+  try {
+    runtimeStorage = await resolveStorageForDbRuntime(result);
+  } catch {
+    return { failClosed: true, reason: 'runtime_storage_context_unavailable' };
+  }
+  const dryRunDecision = resolveEffectiveMessengerDryRun({
+    globalDryRun: globalMessengerDryRun,
+    shopDryRun: result.shop?.dry_run,
+    shopDryRunColumnAvailable: result.shop?.dryRunColumnAvailable !== false
+  });
+  logMessengerDryRunDecision({
+    decision: dryRunDecision,
+    shopId: result.shop?.id,
+    pageId: result.page?.page_id || normalizedPageId,
+    logger
+  });
   return buildDbShopRuntime(result, {
+    storage: runtimeStorage,
     fbPageToken: credential.secret,
-    messengerFactory
+    messengerFactory,
+    messengerDryRun: dryRunDecision.dryRun
   });
 }
 
@@ -743,6 +936,7 @@ const webhook = createWebhook({
   maybeResetTimedOutSession,
   redactSensitiveText,
   resolveRuntimeForPage: MULTI_SHOP_DB_CONFIG_ENABLED ? resolveDbShopRuntimeForPage : undefined,
+  fileConfigPageIds: FILE_CONFIG_PAGE_IDS,
   webhookQueue: webhookQueueRepository,
   webhookQueueEnabled: WEBHOOK_QUEUE_ENABLED
 });
@@ -783,6 +977,15 @@ app.get('/', (_req, res) => res.send('🤖 Shop Bot đang chạy!'));
 app.get('/healthz', (_req, res) => res.json(buildHealthPayload()));
 
 registerAdminRoutes(app, {
+  storage,
+  adminExportToken: ADMIN_EXPORT_TOKEN,
+  adminIpAllowlist: ADMIN_IP_ALLOWLIST,
+  adminLoginRateLimitWindowMs: ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS,
+  adminLoginRateLimitMax: ADMIN_LOGIN_RATE_LIMIT_MAX,
+  getClientIp
+});
+
+registerWizardRoutes(app, {
   storage,
   adminExportToken: ADMIN_EXPORT_TOKEN,
   adminIpAllowlist: ADMIN_IP_ALLOWLIST,
@@ -850,6 +1053,7 @@ module.exports = {
   buildAbandonedCartReminderText,
   createRuntimeAllowlist,
   evaluateDbShopRuntimeAdmission,
+  evaluateDbShopRuntimeLiveGate,
   buildGeminiRuntimeContext,
   buildGeminiRequestHistory,
   buildHealthPayload,
@@ -861,6 +1065,7 @@ module.exports = {
   isAllowedResolvedRuntime,
   recordConversationTurn,
   redactSensitiveText,
+  resolveEffectiveMessengerDryRun,
   resolveDbShopRuntimeForPage,
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,

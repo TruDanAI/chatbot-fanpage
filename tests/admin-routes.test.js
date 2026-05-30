@@ -40,7 +40,7 @@ function createApp() {
   };
 }
 
-function createReq({ headers = {}, params = {}, query = {}, body = {} } = {}) {
+function createReq({ headers = {}, params = {}, query = {}, body = {}, file = undefined, files = undefined } = {}) {
   const normalized = Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -48,6 +48,8 @@ function createReq({ headers = {}, params = {}, query = {}, body = {} } = {}) {
     body,
     params,
     query,
+    file,
+    files,
     get(name) {
       return normalized[String(name).toLowerCase()] || '';
     }
@@ -99,6 +101,16 @@ function createRes() {
       this.body = JSON.stringify(body);
       return this;
     }
+  };
+}
+
+function createUploadFile(overrides = {}) {
+  const buffer = overrides.buffer || Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+  return {
+    originalname: overrides.originalname || 'upload.jpg',
+    mimetype: overrides.mimetype || 'image/jpeg',
+    buffer,
+    size: overrides.size == null ? buffer.length : overrides.size
   };
 }
 
@@ -350,6 +362,12 @@ function createDashboardReaderStub() {
           slug: 'adult-shop',
           name: 'Adult Shop',
           status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          dry_run: false,
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed',
           page_count: 2,
           active_page_count: 1,
           product_count: 2,
@@ -369,6 +387,15 @@ function createDashboardReaderStub() {
           slug: 'adult-shop',
           name: 'Adult Shop',
           status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          dry_run: false,
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_readiness_checked_at: '2026-05-12T00:30:00.000Z',
+          last_manual_test_status: 'passed',
+          last_manual_test_at: '2026-05-12T00:20:00.000Z',
+          last_ready_by: 'admin-1',
           default_locale: 'vi-VN',
           timezone: 'Asia/Bangkok',
           created_at: '2026-05-11T00:00:00.000Z',
@@ -483,6 +510,12 @@ function createDashboardReaderStub() {
           slug: 'adult-shop',
           name: 'Adult Shop',
           status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          dry_run: false,
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed',
           updated_at: '2026-05-12T00:00:00.000Z',
           encrypted_value: 'do-not-return',
           page_access_token: 'do-not-return'
@@ -542,6 +575,15 @@ function createOnboardingShopDetailModel(overrides = {}) {
       slug: 'new-shop',
       name: 'New Shop',
       status: 'active',
+      package: 'basic',
+      lifecycle: 'configuring',
+      dry_run: true,
+      live_enabled: false,
+      last_readiness_status: 'unknown',
+      last_readiness_checked_at: '',
+      last_manual_test_status: 'unknown',
+      last_manual_test_at: '',
+      last_ready_by: '',
       default_locale: 'vi-VN',
       timezone: 'Asia/Bangkok',
       created_at: '2026-05-16T00:00:00.000Z',
@@ -648,7 +690,7 @@ function createInternalNoteServiceStub({ failWith, noteRows, createFailWith, cre
   };
 }
 
-function createProductWriteServiceStub({ failWith, createdProduct, updatedProduct, statusProduct, archivedProduct } = {}) {
+function createProductWriteServiceStub({ failWith, createdProduct, updatedProduct, statusProduct, archivedProduct, restoredProduct } = {}) {
   const calls = [];
   const baseProduct = {
     id: 'prod-1',
@@ -701,6 +743,14 @@ function createProductWriteServiceStub({ failWith, createdProduct, updatedProduc
       return {
         shopId: input.shopId,
         product: archivedProduct || { ...baseProduct, status: 'archived', enabled: false }
+      };
+    },
+    async restoreProduct(input = {}) {
+      calls.push({ method: 'restoreProduct', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        product: restoredProduct || { ...baseProduct, status: 'hidden', enabled: false }
       };
     }
   };
@@ -797,6 +847,48 @@ function createAssetWriteServiceStub({ failWith, bulkFailWith, createdAsset, upd
   };
 }
 
+function createAssetUploadServiceStub({ enabled = true, configured = true, failWith, createdAsset } = {}) {
+  const calls = [];
+  const baseAsset = {
+    id: 'asset-upload-1',
+    shop_id: 'adult-shop',
+    product_id: 'prod-1',
+    product_code: 'DB1',
+    asset_type: 'product_image',
+    storage_provider: 'object_storage',
+    public_url: 'https://res.cloudinary.com/example/image/upload/v1/admin_uploads/adult-shop/product_image/asset.jpg',
+    content_type: 'image/jpeg',
+    size_bytes: 12,
+    status: 'active',
+    sort_order: 1,
+    updated_at: '2026-05-12T04:00:00.000Z'
+  };
+  return {
+    calls,
+    isEnabled() {
+      return enabled;
+    },
+    getCloudinaryConfig() {
+      return configured ? { ok: true, folder: 'admin_uploads' } : { ok: false, reason: 'missing_cloudinary_config' };
+    },
+    getPolicy() {
+      return { maxBytes: 5242880, allowedMime: ['image/jpeg', 'image/png', 'image/webp'], allowedExt: ['.jpg', '.jpeg', '.png', '.webp'] };
+    },
+    async createUploadedAsset(input = {}) {
+      calls.push({ method: 'createUploadedAsset', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        asset: createdAsset || {
+          ...baseAsset,
+          asset_type: input.body?.asset_type || 'menu_image',
+          product_id: input.body?.asset_type === 'product_image' ? (input.body?.product_id || 'prod-1') : ''
+        }
+      };
+    }
+  };
+}
+
 function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) {
   const calls = [];
   return {
@@ -834,6 +926,126 @@ function createShopSettingsWriteServiceStub({ failWith, updatedSettings } = {}) 
   };
 }
 
+function createShopControlWriteServiceStub({ failWith, updatedShop, readiness } = {}) {
+  const calls = [];
+  function buildEmergencyResult(input = {}, overrides = {}) {
+    return {
+      shopId: input.shopId,
+      shop: {
+        id: input.shopId,
+        slug: input.shopId,
+        name: 'Control Shop',
+        status: overrides.status || 'paused',
+        package: 'basic',
+        lifecycle: overrides.lifecycle || 'paused',
+        dry_run: true,
+        live_enabled: false,
+        last_readiness_status: overrides.last_readiness_status || 'unknown',
+        last_readiness_checked_at: overrides.last_readiness_checked_at || '',
+        last_manual_test_status: 'passed',
+        last_manual_test_at: '2026-05-17T00:00:00.000Z',
+        last_ready_by: 'admin-1',
+        updated_at: '2026-05-17T00:00:00.000Z'
+      }
+    };
+  }
+  return {
+    calls,
+    async updateControlPlane(input = {}) {
+      calls.push({ method: 'updateControlPlane', input });
+      if (failWith) throw failWith;
+      const body = input.body || {};
+      return {
+        shopId: input.shopId,
+        shop: updatedShop || {
+          id: input.shopId,
+          slug: input.shopId,
+          name: 'Control Shop',
+          status: 'active',
+          package: String(body.package || 'basic').trim(),
+          lifecycle: String(body.lifecycle || 'configuring').trim(),
+          dry_run: true,
+          live_enabled: /^(1|true|yes|on|enabled|active)$/i.test(String(body.live_enabled || '').trim()),
+          last_readiness_status: 'passed',
+          last_readiness_checked_at: '2026-05-17T00:00:00.000Z',
+          last_manual_test_status: String(body.manual_test_status || 'unknown').trim(),
+          last_manual_test_at: '2026-05-17T00:00:00.000Z',
+          last_ready_by: 'admin-1',
+          updated_at: '2026-05-17T00:00:00.000Z'
+        },
+        readiness: readiness || {
+          status: 'passed',
+          hardBlockers: [],
+          warnings: [{ key: 'product_assets_ready', label: 'No active product images' }]
+        }
+      };
+    },
+    async pauseShop(input = {}) {
+      calls.push({ method: 'pauseShop', input });
+      if (failWith) throw failWith;
+      return updatedShop
+        ? { shopId: input.shopId, shop: updatedShop }
+        : buildEmergencyResult(input, { status: 'paused', lifecycle: 'paused' });
+    },
+    async resumeShop(input = {}) {
+      calls.push({ method: 'resumeShop', input });
+      if (failWith) throw failWith;
+      return updatedShop
+        ? { shopId: input.shopId, shop: updatedShop }
+        : buildEmergencyResult(input, { status: 'active', lifecycle: 'configuring', last_readiness_status: 'unknown' });
+    }
+  };
+}
+
+function createShopReadinessCheckServiceStub({ failWith, readiness } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async checkReadiness(input = {}) {
+      calls.push({ method: 'checkReadiness', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId,
+        checkedAt: '2026-05-17T00:02:00.000Z',
+        readiness: readiness || {
+          shop_id: input.shopId,
+          readiness_status: 'failed',
+          hard_blockers: [{
+            key: 'product_ready',
+            label: 'Active products',
+            detail: 'No active products found.',
+            next_action: 'Add or activate at least one product.'
+          }],
+          warnings: [{
+            key: 'live_enabled_failed_readiness',
+            label: 'Live flag enabled while readiness failed',
+            detail: 'live_enabled is true while hard readiness blockers are present.',
+            next_action: 'Disable live_enabled or clear blockers before pilot.'
+          }],
+          checks: [{
+            key: 'product_ready',
+            label: 'Active products',
+            status: 'fail',
+            count: 0,
+            detail: 'No active products found.',
+            next_action: 'Add or activate at least one product.'
+          }],
+          safe_counts: {
+            products: 0,
+            menu_images: 1,
+            product_images: 0,
+            active_page_mappings: 1,
+            active_credentials: 1
+          },
+          page_id: 'raw-page-id',
+          access_token: 'do-not-return',
+          encrypted_value: 'do-not-return'
+        }
+      };
+    }
+  };
+}
+
 function createShopWriteServiceStub({ failWith, createdShop } = {}) {
   const calls = [];
   return {
@@ -851,6 +1063,11 @@ function createShopWriteServiceStub({ failWith, createdShop } = {}) {
           slug: shopId,
           name,
           status: String(body.status || 'active').trim(),
+          package: String(body.package || 'basic').trim(),
+          lifecycle: String(body.lifecycle || 'draft').trim(),
+          live_enabled: false,
+          last_readiness_status: 'unknown',
+          last_manual_test_status: 'unknown',
           default_locale: String(body.locale || body.default_locale || 'vi-VN').trim(),
           timezone: String(body.timezone || 'Asia/Ho_Chi_Minh').trim(),
           created_at: '2026-05-16T00:00:00.000Z',
@@ -904,6 +1121,30 @@ function createPageMappingWriteServiceStub({ failWith, createdPage } = {}) {
           page_access_token: 'do-not-return'
         }
       };
+    },
+    async archivePageMapping(input = {}) {
+      calls.push({ method: 'archivePageMapping', input });
+      if (failWith) throw failWith;
+      return {
+        shopId: input.shopId || 'adult-shop',
+        pageMappingId: input.pageMappingId || 'page-map-1',
+        page_ref: 'p:safe-page',
+        page: {
+          id: input.pageMappingId || 'page-map-1',
+          shop_id: input.shopId || 'adult-shop',
+          page_id: 'raw-page-id',
+          page_ref: 'p:safe-page',
+          page_name: 'Archived Page',
+          status: 'archived',
+          created_at: '2026-05-16T00:00:00.000Z',
+          updated_at: '2026-05-16T00:01:00.000Z',
+          page_access_token: 'do-not-return',
+          encrypted_value: 'do-not-return'
+        },
+        archivedCredentialCount: 1,
+        activeCredentialCountAfter: 0,
+        already_archived: false
+      };
     }
   };
 }
@@ -929,6 +1170,92 @@ function createPageCredentialWriteServiceStub({ failWith, createdCredential } = 
         active_credential_count: 1,
         archived_count: Boolean(input.body?.rotate) ? 1 : 0,
         rotated: Boolean(input.body?.rotate)
+      };
+    }
+  };
+}
+
+function createPageCutoverWriteServiceStub({ failWith, cutoverResult } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async cutoverPage(input = {}) {
+      calls.push({ method: 'cutoverPage', input });
+      if (failWith) throw failWith;
+      return cutoverResult || {
+        shopId: input.shopId || 'staging-shop',
+        shop_ref: 's:safe-shop',
+        old_page_ref: 'p:old-safe',
+        new_page_ref: 'p:new-safe',
+        old_page_mapping_id: 'page-old',
+        new_page_mapping_id: 'page-new',
+        old_credential_ref: 'c:old-safe',
+        new_credential_ref: 'c:new-safe',
+        old_mapping_status: 'archived',
+        new_mapping_status: 'active',
+        old_credential_status: 'archived',
+        new_credential_status: 'active',
+        active_mapping_count: 1,
+        active_credential_count: 1,
+        readiness_stale: true,
+        page_id: 'raw-page-id',
+        new_page_id: 'raw-new-page-id',
+        token: 'EAAB-do-not-return',
+        encrypted_value: 'encrypted-do-not-return'
+      };
+    }
+  };
+}
+
+function createPageSetupPreviewServiceStub({ failWith, pageResult, credentialResult } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async previewPageMapping(input = {}) {
+      calls.push({ method: 'previewPageMapping', input });
+      if (failWith) throw failWith;
+      return pageResult || {
+        schemaReady: true,
+        validate_only: true,
+        shop_ref: 's:safe-shop',
+        page_ref: 'p:safe-page',
+        duplicate_active_mapping: false,
+        conflict: false,
+        page_format_valid: true,
+        page_name: {
+          provided: true,
+          length: 9,
+          max_length: 180,
+          status: 'ok'
+        },
+        readiness_impact: {
+          validate_only: true,
+          changes_readiness: false,
+          blockers_remaining: ['page_mapping_ready', 'credential_ready'],
+          live_enabled_after_preview: false
+        }
+      };
+    },
+    async previewCredentialPrerequisites(input = {}) {
+      calls.push({ method: 'previewCredentialPrerequisites', input });
+      if (failWith) throw failWith;
+      return credentialResult || {
+        schemaReady: true,
+        validate_only: true,
+        shop_ref: 's:safe-shop',
+        page_ref: '',
+        credential_type: 'fb_page_token',
+        credential_type_allowed: true,
+        credential_master_key_configured: true,
+        token_accepted: false,
+        health_check: false,
+        messenger_send: false,
+        readiness_impact: {
+          validate_only: true,
+          changes_readiness: false,
+          blockers_remaining: ['page_mapping_ready', 'credential_ready'],
+          live_enabled_after_preview: false
+        }
       };
     }
   };
@@ -2541,6 +2868,12 @@ describe('admin dashboard routes', () => {
       slug: 'adult-shop',
       name: 'Adult Shop',
       status: 'active',
+      package: 'basic',
+      lifecycle: 'live',
+      dry_run: false,
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_manual_test_status: 'passed',
       page_count: 2,
       active_page_count: 1,
       product_count: 2,
@@ -2847,6 +3180,12 @@ describe('admin dashboard routes', () => {
       slug: 'adult-shop',
       name: 'Adult Shop',
       status: 'active',
+      package: 'basic',
+      lifecycle: 'live',
+      dry_run: false,
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_manual_test_status: 'passed',
       updated_at: '2026-05-12T00:00:00.000Z'
     });
     expect(body.pageMappings.total).toBe(2);
@@ -2943,13 +3282,109 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('shop detail HTML render product search/filter controls, badges, and archive confirmation', async () => {
+  it('shop detail HTML render product search/filter controls, localized badges, and visual placeholders', async () => {
     const app = createApp();
+    const reader = createDashboardReaderStub();
+
+    // Customize getShopDetail to return products with localized states and a missing image case
+    reader.getShopDetail = async (shopId) => {
+      return {
+        schemaReady: true,
+        shop: {
+          id: shopId,
+          slug: 'adult-shop',
+          name: 'Adult Shop',
+          status: 'active',
+          package: 'basic',
+          lifecycle: 'live',
+          dry_run: false,
+          live_enabled: true,
+          last_readiness_status: 'passed',
+          last_readiness_checked_at: '2026-05-12T00:30:00.000Z',
+          last_manual_test_status: 'passed',
+          last_manual_test_at: '2026-05-12T00:20:00.000Z',
+          last_ready_by: 'admin-1',
+          default_locale: 'vi-VN',
+          timezone: 'Asia/Bangkok',
+          created_at: '2026-05-11T00:00:00.000Z',
+          updated_at: '2026-05-12T00:00:00.000Z'
+        },
+        pages: [],
+        settings: {},
+        products: [
+          {
+            id: 'prod-1',
+            code: 'DB1',
+            name: 'DB Product',
+            description: 'safe product',
+            price_text: '150k',
+            status: 'active',
+            sort_order: 1,
+            updated_at: '2026-05-12T00:00:00.000Z'
+          },
+          {
+            id: 'prod-2',
+            code: 'DB2',
+            name: 'Hidden Product',
+            description: 'hidden product',
+            price_text: '220k',
+            status: 'hidden',
+            sort_order: 2,
+            updated_at: '2026-05-12T00:10:00.000Z'
+          },
+          {
+            id: 'prod-3',
+            code: 'DB3',
+            name: 'Archived Product',
+            description: 'archived product',
+            price_text: '330k',
+            status: 'archived',
+            sort_order: 3,
+            updated_at: '2026-05-12T00:20:00.000Z'
+          },
+          {
+            id: 'prod-4',
+            code: 'DB4',
+            name: 'Active Product No Image',
+            description: 'active product without image',
+            price_text: '440k',
+            status: 'active',
+            sort_order: 4,
+            updated_at: '2026-05-12T00:30:00.000Z'
+          }
+        ],
+        assets: {
+          summary: {
+            total: 1,
+            active: 1,
+            product_image: 1,
+            product_image_active: 1
+          },
+          rows: [{
+            id: 'asset-1',
+            product_id: 'prod-1',
+            product_code: 'DB1',
+            asset_type: 'product_image',
+            storage_provider: 'public_url',
+            public_url: 'https://cdn.example.test/db1.jpg',
+            content_type: 'image/jpeg',
+            status: 'active',
+            sort_order: 1,
+            updated_at: '2026-05-12T00:00:00.000Z'
+          }]
+        },
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1
+        }
+      };
+    };
+
     registerAdminRoutes(app, {
       storage: createStorageStub(),
       adminExportToken: 'secret',
       getClientIp: () => '127.0.0.1',
-      dashboardReader: createDashboardReaderStub(),
+      dashboardReader: reader,
       adminPrincipalRoles: ['maintainer']
     });
 
@@ -2965,11 +3400,37 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('name/title');
     expect(res.body).toContain('price_text');
     expect(res.body).toContain('sort_order');
-    expect(res.body).toContain('status status-success">active');
-    expect(res.body).toContain('status status-warning">hidden');
-    expect(res.body).toContain('status status-danger">archived');
-    expect(res.body).toContain('data-confirm="Archive product"');
-    expect(res.body).toContain('Archive this product? It will be hidden from active use, not deleted.');
+
+    // Localized status labels & helper copy
+    expect(res.body).toContain('status status-success">Hoạt động');
+    expect(res.body).toContain('bot có thể tư vấn');
+    expect(res.body).toContain('status status-warning">Tạm ẩn');
+    expect(res.body).toContain('bot không tư vấn');
+    expect(res.body).toContain('status status-danger">Đã lưu trữ');
+    expect(res.body).toContain('giữ lại lịch sử, không dùng trong bot');
+
+    // Style archived rows
+    expect(res.body).toContain('<tr style="opacity: 0.6;">');
+
+    // Product code helper
+    expect(res.body).toContain('Mã khách nhắn cho bot');
+
+    // "Ảnh" column & image thumbnails/placeholders
+    expect(res.body).toContain('<th>Ảnh</th>');
+    expect(res.body).toContain('https://cdn.example.test/db1.jpg'); // prod-1 thumbnail URL
+    expect(res.body).toContain('⚠'); // active product missing image warning symbol
+    expect(res.body).toContain('Thiếu ảnh'); // active product missing image warning text
+
+    // Mobile card fallback list
+    expect(res.body).toContain('class="product-mobile-list"');
+    expect(res.body).toContain('class="product-card-fallback"');
+
+    // Archive is now a styled modal (no bare confirm()) and archived rows show lifecycle placeholders
+    expect(res.body).toContain('data-product-archive="true"');
+    expect(res.body).toContain('>Lưu trữ</button>');
+    expect(res.body.includes("onclick=\"return confirm('Archive this product?")).toBeFalse();
+    expect(res.body).toContain('>Khôi phục</button>');
+    expect(res.body).toContain('Sẽ khả dụng ở bước khôi phục sản phẩm.');
     expect(res.body).toContain('Add asset URL');
     expect(res.body).toContain('action="/admin/shops/adult-shop/assets"');
     expect(res.body).toContain('name="asset_type"');
@@ -2979,6 +3440,304 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('data-confirm="Archive asset"');
     expect(res.body.includes('storage_key')).toBeFalse();
     expect(res.body.includes('shop_image')).toBeFalse();
+  });
+
+  it('shop detail HTML shows page mapping archive controls in staging only', async () => {
+    const model = createOnboardingShopDetailModel({
+      pages: [{
+        id: 'page-active',
+        page_id: 'raw-active-page-id',
+        page_name: 'Active Page',
+        status: 'active',
+        active_credential_count: 2,
+        created_at: '2026-05-12T00:00:00.000Z',
+        updated_at: '2026-05-12T00:10:00.000Z'
+      }, {
+        id: 'page-archived',
+        page_id: 'raw-archived-page-id',
+        page_name: 'Archived Page',
+        status: 'archived',
+        active_credential_count: 0,
+        created_at: '2026-05-12T00:00:00.000Z',
+        updated_at: '2026-05-12T00:20:00.000Z'
+      }]
+    });
+
+    const stagingApp = createApp();
+    registerAdminRoutes(stagingApp, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(model),
+      adminPrincipalRoles: ['maintainer'],
+      adminPageArchiveEnabled: true
+    });
+    const stagingRes = createRes();
+    await stagingApp.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), stagingRes);
+
+    expect(stagingRes.statusCode).toBe(200);
+    expect(stagingRes.body).toContain('Active Mappings');
+    expect(stagingRes.body).toContain('Archived Mappings (1)');
+    expect(stagingRes.body).toContain('action="/admin/shops/new-shop/pages/page-active/archive"');
+    expect(stagingRes.body).toContain('data-danger-confirm="true"');
+    expect(stagingRes.body).toContain('name="confirmation_text"');
+    expect(stagingRes.body).toContain('placeholder="ARCHIVE MAPPING"');
+    expect(stagingRes.body).toContain('>2</td>');
+    expect(stagingRes.body.includes('raw-active-page-id')).toBeFalse();
+    expect(stagingRes.body.includes('raw-archived-page-id')).toBeFalse();
+
+    const productionApp = createApp();
+    registerAdminRoutes(productionApp, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(model),
+      adminPrincipalRoles: ['maintainer'],
+      adminPageArchiveEnabled: false
+    });
+    const productionRes = createRes();
+    await productionApp.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), productionRes);
+
+    expect(productionRes.statusCode).toBe(200);
+    expect(productionRes.body).toContain('Active Mappings');
+    expect(productionRes.body).toContain('Archived Mappings (1)');
+    expect(productionRes.body.includes('/pages/page-active/archive')).toBeFalse();
+    expect(productionRes.body.includes('data-expected-confirm-text="ARCHIVE MAPPING"')).toBeFalse();
+    expect(productionRes.body.includes('placeholder="ARCHIVE MAPPING"')).toBeFalse();
+    expect(productionRes.body.includes('raw-active-page-id')).toBeFalse();
+    expect(productionRes.body.includes('raw-archived-page-id')).toBeFalse();
+  });
+
+  it('shop detail Fanpage Connection tab renders operator state labels without leaking identifiers or credentials', async () => {
+    const cases = [{
+      name: 'S0',
+      model: createOnboardingShopDetailModel({
+        settings: {
+          bot_mode: 'menu_code_handoff',
+          settings_json: {
+            database_url: 'postgres://secret-user:secret-pass@db.example.test/app',
+            harmless: 'visible'
+          }
+        }
+      }),
+      label: 'CHƯA KẾT NỐI'
+    }, {
+      name: 'S1',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-1',
+          page_id: 'raw-page-id-s1',
+          page_ref: 'p:safe-s1',
+          page_name: 'Safe Page S1',
+          status: 'active',
+          active_credential_count: 0
+        }]
+      }),
+      label: 'THIẾU QUYỀN GỬI TIN'
+    }, {
+      name: 'S2',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-2',
+          page_id: 'raw-page-id-s2',
+          page_ref: 'p:safe-s2',
+          page_name: 'Safe Page S2',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return',
+          access_token: 'EAAB-secret'
+        }
+      }),
+      label: 'ĐÃ KẾT NỐI'
+    }, {
+      name: 'S6',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-3',
+          page_id: 'raw-page-id-s6a',
+          page_ref: 'p:safe-s6a',
+          page_name: 'Safe Page S6 A',
+          status: 'active',
+          active_credential_count: 1
+        }, {
+          id: 'page-map-4',
+          page_id: 'raw-page-id-s6b',
+          page_ref: 'p:safe-s6b',
+          page_name: 'Safe Page S6 B',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 2,
+          encrypted_value: 'do-not-return'
+        }
+      }),
+      label: 'XUNG ĐỘT KẾT NỐI'
+    }, {
+      name: 'UNKNOWN',
+      model: createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-map-5',
+          page_id: 'raw-page-id-unknown',
+          page_ref: 'p:safe-unknown',
+          page_name: 'Safe Page Unknown',
+          status: 'active',
+          active_credential_count: -1
+        }]
+      }),
+      label: 'CẦN KIỂM TRA'
+    }];
+
+    for (const item of cases) {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(item.model),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('Current Connection / Kết nối hiện tại');
+      expect(res.body).toContain(item.label);
+      expect(res.body).toContain(`${item.name} -`);
+      expect(res.body).toContain('Kết nối Fanpage = cho ZenBot biết tin nhắn từ Page nào thuộc shop này.');
+      expect(res.body).toContain('Token không bao giờ hiển thị lại');
+      expect(res.body).toContain('Token phải nhập đúng môi trường vì staging/prod keys khác nhau.');
+      expect(res.body).toContain('Không tự động kiểm tra Meta');
+      expect(res.body).toContain('Thay thế Token');
+      expect(res.body).toContain('Thay thế Trang');
+      expect(res.body).toContain('Môi trường:');
+      expect(res.body.includes('raw-page-id')).toBeFalse();
+      expect(res.body.includes('EAAB-secret')).toBeFalse();
+      expect(res.body.includes('do-not-return')).toBeFalse();
+      expect(res.body.includes('postgres://secret-user')).toBeFalse();
+    }
+  });
+
+  it('shop detail Fanpage Connection tab preserves existing mapping and credential forms', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-active',
+          page_id: 'raw-active-page-id',
+          page_ref: 'p:safe-active',
+          page_name: 'Active Page',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'do-not-return'
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pages"');
+    expect(res.body).toContain('name="page_id"');
+    expect(res.body).toContain('name="page_name"');
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pages/page-active/credentials"');
+    expect(res.body).toContain('name="credential_type" value="fb_page_token"');
+    expect(res.body).toContain('name="token" type="password"');
+    expect(res.body).toContain('name="rotate" value="true"');
+    expect(res.body).toContain('name="confirmation_text"');
+    expect(res.body.includes('raw-active-page-id')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+  });
+
+  it('shop detail credential replacement flow renders hardened confirmation markup without leaking secrets', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [{
+          id: 'page-active',
+          page_id: 'raw-secret-page-id-999',
+          page_ref: 'p:safe-active',
+          page_name: 'Active Page',
+          status: 'active',
+          active_credential_count: 1
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 1,
+          encrypted_value: 'v1:encrypted-secret',
+          access_token: 'EAAB-render-secret-token'
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+    const tokenInput = (res.body.match(/<input name="token" type="password"[^>]*>/) || [''])[0];
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('data-credential-replacement="true"');
+    expect(res.body).toContain('data-danger-confirm-scope="credential-replacement"');
+    expect(res.body).toContain('data-countdown-seconds="3"');
+    expect(res.body).toContain('id="danger-confirm-modal"');
+    expect(res.body).toContain('id="modal-checkbox"');
+    expect(res.body).toContain('id="modal-slug-input"');
+    expect(res.body).toContain('name="operator_ack"');
+    expect(res.body).toContain('name="shop_slug_confirmation"');
+    expect(res.body).toContain('pattern="new-shop"');
+    expect(res.body).toContain('Không dán token staging vào production.');
+    expect(res.body).toContain('Token sẽ được mã hóa bằng khóa của môi trường hiện tại.');
+    expect(res.body).toContain('Token không hiển thị lại sau khi lưu.');
+    expect(res.body).toContain('Sau khi thay token, hãy chạy lại kiểm tra hoàn tất.');
+    expect(res.body).toContain('Không tự động gọi Meta Graph API hoặc chạy kiểm tra sức khỏe token khi lưu.');
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pages/page-active/credentials"');
+    expect(res.body).toContain('name="credential_type" value="fb_page_token"');
+    expect(res.body).toContain('name="rotate" value="true"');
+    expect(res.body).toContain('name="confirmation_text"');
+    expect(tokenInput).toContain('name="token" type="password"');
+    expect(tokenInput).toContain('autocomplete="new-password"');
+    expect(tokenInput.includes('value=')).toBeFalse();
+    expect(res.body.includes('raw-secret-page-id-999')).toBeFalse();
+    expect(res.body.includes('EAAB-render-secret-token')).toBeFalse();
+    expect(res.body.includes('v1:encrypted-secret')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('page-token-health')).toBeFalse();
+    expect(res.body.includes('check-page-token-health')).toBeFalse();
+    expect(res.body.includes('debug_token')).toBeFalse();
+    expect(res.body.includes('graph.facebook.com')).toBeFalse();
   });
 
   it('shop detail HTML renders image manager groups, large lazy thumbnails, badges, and replace URL forms', async () => {
@@ -3102,6 +3861,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Menu assets ready');
     expect(res.body).toContain('Product assets ready');
     expect(res.body).toContain('Health ready');
+    expect(res.body).toContain('Chạy lại kiểm tra hoàn tất');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/readiness-check"');
+    expect(res.body).toContain('Chỉ cập nhật trạng thái kiểm tra sẵn sàng và thời gian kiểm tra.');
     expect(res.body).toContain('edit settings');
     expect(res.body).toContain('add page mapping');
     expect(res.body).toContain('add credential');
@@ -3113,6 +3875,182 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain("target.closest('.tab-section')");
     expect(res.body).toContain("const activeHash = activeSection ? '#' + activeSection.id : '#overview';");
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
+  });
+
+  it('shop detail HTML shows current dry-run state and the matching emergency control', async () => {
+    for (const item of [
+      {
+        shop: { status: 'active', lifecycle: 'configuring', dry_run: true, live_enabled: false },
+        shown: 'action="/admin/shops/new-shop/pause"',
+        hidden: 'action="/admin/shops/new-shop/resume"',
+        label: 'Tạm dừng hoạt động Bot',
+        placeholder: 'placeholder="PAUSE SHOP"',
+        explanation: 'Tạm dừng sẽ ngắt mọi phản hồi tự động của bot'
+      },
+      {
+        shop: { status: 'paused', lifecycle: 'paused', dry_run: true, live_enabled: false },
+        shown: 'action="/admin/shops/new-shop/resume"',
+        hidden: 'action="/admin/shops/new-shop/pause"',
+        label: 'Kích hoạt lại hoạt động Bot',
+        placeholder: 'placeholder="RESUME SHOP"',
+        explanation: 'Kích hoạt lại sẽ đưa bot hoạt động trở lại'
+      }
+    ]) {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({ shop: item.shop })),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<tr><th>Chế độ test an toàn (dry_run)</th><td><span class="status status-success">true</span></td></tr>');
+      expect(res.body).toContain('<tr><th>Cho phép chạy thật (live_enabled)</th><td><span class="status status-warning">disabled</span></td></tr>');
+      expect(res.body).toContain('Emergency');
+      expect(res.body).toContain(item.explanation);
+      expect(res.body).toContain(item.shown);
+      expect(res.body).toContain(item.label);
+      expect(res.body).toContain(item.placeholder);
+      expect(res.body.includes(item.hidden)).toBeFalse();
+    }
+  });
+
+  it('shop detail HTML renders passed readiness with visible warning list', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed'
+        },
+        settings: { bot_mode: 'menu_code_handoff' },
+        pages: [{ id: 'page-map-1', status: 'active' }],
+        products: [
+          { id: 'prod-1', status: 'active' },
+          { id: 'prod-2', status: 'active' },
+          { id: 'prod-3', status: 'active' },
+          { id: 'prod-4', status: 'active' },
+          { id: 'prod-5', status: 'active' }
+        ],
+        credentials: { active_fb_page_token_count: 1 },
+        assets: {
+          summary: {
+            total: 2,
+            active: 2,
+            menu_image: 1,
+            menu_image_active: 1,
+            product_image: 1,
+            product_image_active: 1
+          }
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<tr><th>Kiểm tra hoàn tất (Readiness)</th><td><span class="status status-success">passed</span></td></tr>');
+    expect(res.body).toContain('Status <span class="status status-success">ready</span>');
+    expect(res.body).toContain('Cảnh báo (Warnings)');
+    expect(res.body).toContain('Product image coverage');
+    expect(res.body).toContain('Active product images (1) are fewer than active products (5).');
+    expect(res.body).toContain('Không có lỗi chặn nào hiện tại.');
+  });
+
+  it('shop detail HTML prompts operators to rerun readiness when connection state is stale', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          last_readiness_status: 'unknown',
+          last_readiness_checked_at: '',
+          last_ready_by: ''
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Cần chạy lại kiểm tra hoàn tất');
+    expect(res.body).toContain('<span class="status status-neutral">unknown</span><br><span class="meta">Cần chạy lại kiểm tra hoàn tất</span>');
+  });
+
+  it('shop detail HTML switches demo-shop configuring/non-live page setup to preview-only controls', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          id: 'demo-shop',
+          slug: 'demo-shop',
+          name: 'Demo Shop',
+          status: 'active',
+          lifecycle: 'configuring',
+          live_enabled: false
+        },
+        pages: [{
+          id: 'demo-page-map',
+          page_id: '12345678901',
+          page_name: 'Demo Page',
+          status: 'active',
+          updated_at: '2026-05-16T00:00:00.000Z'
+        }],
+        credentials: {
+          available: true,
+          active_fb_page_token_count: 0
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Page Setup Preview');
+    expect(res.body).toContain('action="/admin/shops/demo-shop/pages/preview"');
+    expect(res.body).toContain('action="/admin/shops/demo-shop/page-credentials/preview"');
+    expect(res.body).toContain('Credential writes are disabled in preview mode.');
+    expect(res.body).toContain('name="credential_type"');
+    expect(res.body).toContain('value="fb_page_token"');
+    expect(res.body.includes('action="/admin/shops/demo-shop/pages"')).toBeFalse();
+    expect(res.body.includes('action="/admin/shops/demo-shop/pages/demo-page-map/credentials"')).toBeFalse();
+    expect(res.body.includes('type="password"')).toBeFalse();
+    expect(res.body.includes('name="token"')).toBeFalse();
+    expect(res.body.includes('Save credential')).toBeFalse();
+    expect(res.body.includes('Add mapping')).toBeFalse();
+    expect(res.body.includes('12345678901')).toBeFalse();
+    expect(res.body).toContain('p:');
   });
 
   it('shop detail HTML renders chat behavior settings edit form', async () => {
@@ -3460,6 +4398,427 @@ describe('admin dashboard routes', () => {
     }
   });
 
+  it('page mapping archive API returns sanitized result and does not accept page_id body scope', async () => {
+    const app = createApp();
+    const pageMappingWrites = createPageMappingWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageMappingWriteService: pageMappingWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+      body: { confirmation_text: 'ARCHIVE MAPPING' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.shop_id).toBe('new-shop');
+    expect(body.page.id).toBe('page-map-1');
+    expect(body.page.status).toBe('archived');
+    expect(body.page.page_ref).toBe('p:safe-page');
+    expect(body.archived_credential_count).toBe(1);
+    expect(body.active_credential_count_after).toBe(0);
+    expect(pageMappingWrites.calls[0].method).toBe('archivePageMapping');
+    expect(pageMappingWrites.calls[0].input.shopId).toBe('new-shop');
+    expect(pageMappingWrites.calls[0].input.pageMappingId).toBe('page-map-1');
+    expect(pageMappingWrites.calls[0].input.body.confirmation_text).toBe('ARCHIVE MAPPING');
+    expect(pageMappingWrites.calls[0].input.body.page_id).toBe(undefined);
+    expect(body.page.page_id).toBe(undefined);
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(bodyText.includes('page_access_token')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page mapping archive HTML redirects without exposing raw Page or credential values', async () => {
+    const app = createApp();
+    const pageMappingWrites = createPageMappingWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageMappingWriteService: pageMappingWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+      body: { confirmation_text: 'ARCHIVE MAPPING' }
+    }), res);
+    const responseText = `${res.body}\n${res.headers.location || ''}`;
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/new-shop?pageMessage=archived');
+    expect(pageMappingWrites.calls[0].method).toBe('archivePageMapping');
+    expect(responseText.includes('raw-page-id')).toBeFalse();
+    expect(responseText.includes('do-not-return')).toBeFalse();
+    expect(responseText.includes('encrypted_value')).toBeFalse();
+    expect(responseText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page mapping archive API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const pageMappingWrites = createPageMappingWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageMappingWriteService: pageMappingWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+        params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+        body: { confirmation_text: 'ARCHIVE MAPPING' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+        body: { confirmation_text: 'ARCHIVE MAPPING' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageMappingWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_page.archive');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+    }
+  });
+
+  it('page mapping archive API maps staging and protection errors safely', async () => {
+    for (const item of [
+      { code: 'archive_confirmation_required', status: 400, error: 'archive_confirmation_required' },
+      { code: 'page_id_not_accepted', status: 400, error: 'page_id_not_accepted' },
+      { code: 'staging_only', status: 403, error: 'staging_only' },
+      { code: 'adult_shop_protected', status: 403, error: 'adult_shop_protected' },
+      { code: 'page_mapping_not_found', status: 404, error: 'page_mapping_not_found' },
+      { code: 'page_mapping_not_active', status: 409, error: 'page_mapping_not_active' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shop_pages" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageMappingWriteService: createPageMappingWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/:pageMappingId/archive'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop', pageMappingId: 'page-map-1' },
+        body: { confirmation_text: 'ARCHIVE MAPPING' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('page cutover API returns a sanitized staging-only cutover summary', async () => {
+    const app = createApp();
+    const pageCutoverWrites = createPageCutoverWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageCutoverWriteService: pageCutoverWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+      headers: { authorization: 'Bearer secret', 'x-request-id': 'req-cutover-1' },
+      params: { shopId: 'staging-shop' },
+      body: {
+        new_page_id: 'raw-new-page-id',
+        new_page_name: 'New Page',
+        new_page_token: 'EAAB-local-cutover-page-token-value',
+        confirmation_text: 'CUTOVER PAGE',
+        shop_slug_confirmation: 'staging-shop',
+        expected_current_page_mapping_id: 'page-old',
+        expected_current_page_ref: 'p:old-safe'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.schemaReady).toBeTrue();
+    expect(body.shop_id).toBe('staging-shop');
+    expect(body.old_page_ref).toBe('p:old-safe');
+    expect(body.new_page_ref).toBe('p:new-safe');
+    expect(body.old_page_mapping_id).toBe('page-old');
+    expect(body.new_page_mapping_id).toBe('page-new');
+    expect(body.old_credential_ref).toBe('c:old-safe');
+    expect(body.new_credential_ref).toBe('c:new-safe');
+    expect(body.active_mapping_count).toBe(1);
+    expect(body.active_credential_count).toBe(1);
+    expect(body.readiness_stale).toBeTrue();
+    expect(pageCutoverWrites.calls[0].method).toBe('cutoverPage');
+    expect(pageCutoverWrites.calls[0].input.shopId).toBe('staging-shop');
+    expect(pageCutoverWrites.calls[0].input.body.new_page_token).toBe('EAAB-local-cutover-page-token-value');
+    expect(pageCutoverWrites.calls[0].input.requestContext.requestId).toBe('req-cutover-1');
+    expect(bodyText.includes('raw-new-page-id')).toBeFalse();
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('EAAB-local-cutover-page-token-value')).toBeFalse();
+    expect(bodyText.includes('EAAB-do-not-return')).toBeFalse();
+    expect(bodyText.includes('encrypted-do-not-return')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('new_page_id')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page cutover API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const pageCutoverWrites = createPageCutoverWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCutoverWriteService: pageCutoverWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+        params: { shopId: 'staging-shop' },
+        body: { new_page_token: 'EAAB-local-cutover-page-token-value' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'staging-shop' },
+        body: { new_page_token: 'EAAB-local-cutover-page-token-value' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageCutoverWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_page.cutover');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+      expect(String(deniedRes.body).includes('EAAB-local-cutover-page-token-value')).toBeFalse();
+    }
+  });
+
+  it('page cutover API maps validation and production errors safely', async () => {
+    for (const item of [
+      { code: 'page_cutover_not_allowed_in_production', status: 403, error: 'page_cutover_not_allowed_in_production' },
+      { code: 'page_cutover_confirmation_required', status: 400, error: 'page_cutover_confirmation_required' },
+      { code: 'shop_slug_confirmation_mismatch', status: 400, error: 'shop_slug_confirmation_mismatch' },
+      { code: 'active_page_mapping_required', status: 409, error: 'active_page_mapping_required' },
+      { code: 'active_page_mapping_ambiguous', status: 409, error: 'active_page_mapping_ambiguous' },
+      { code: 'duplicate_active_page_id', status: 409, error: 'duplicate_active_page_id' },
+      { code: 'same_page_id', status: 409, error: 'same_page_id' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} token=EAAB-secret encrypted_value=v1:secret at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCutoverWriteService: createPageCutoverWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'staging-shop' },
+        body: {
+          new_page_id: 'raw-new-page-id',
+          new_page_token: 'EAAB-local-cutover-page-token-value',
+          confirmation_text: 'CUTOVER PAGE',
+          shop_slug_confirmation: 'staging-shop'
+        }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('EAAB-secret')).toBeFalse();
+      expect(bodyText.includes('EAAB-local-cutover-page-token-value')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+      expect(bodyText.includes('v1:secret')).toBeFalse();
+      expect(bodyText.includes('encrypted_value')).toBeFalse();
+    }
+  });
+
+  it('page mapping preview API returns sanitized validate-only output and safe audit metadata', async () => {
+    const app = createApp();
+    const pageSetupPreviews = createPageSetupPreviewServiceStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageSetupPreviewService: pageSetupPreviews,
+      auditLogger,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/preview'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' },
+      body: { page_id: '98765432109', page_name: 'Demo Page' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+    const audit = auditLogger.entries[auditLogger.entries.length - 1];
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.validate_only).toBeTrue();
+    expect(body.shop_ref).toBe('s:safe-shop');
+    expect(body.page_ref).toBe('p:safe-page');
+    expect(body.page_format_valid).toBeTrue();
+    expect(body.duplicate_active_mapping).toBeFalse();
+    expect(body.readiness_impact.changes_readiness).toBeFalse();
+    expect(body.readiness_impact.blockers_remaining).toEqual(['page_mapping_ready', 'credential_ready']);
+    expect(body.readiness_impact.live_enabled_after_preview).toBeFalse();
+    expect(pageSetupPreviews.calls[0].method).toBe('previewPageMapping');
+    expect(audit.action).toBe('admin.shop_page.preview');
+    expect(audit.outcome).toBe('success');
+    expect(Object.keys(audit.metadata).sort()).toEqual([
+      'credential_type',
+      'health_check',
+      'messenger_send',
+      'page_ref',
+      'shop_ref',
+      'token_accepted',
+      'validate_only'
+    ].sort());
+    expect(audit.metadata.shop_ref).toBe('s:safe-shop');
+    expect(audit.metadata.page_ref).toBe('p:safe-page');
+    expect(audit.metadata.credential_type).toBe('');
+    expect(audit.metadata.validate_only).toBeTrue();
+    expect(audit.metadata.token_accepted).toBeFalse();
+    expect(audit.metadata.health_check).toBeFalse();
+    expect(audit.metadata.messenger_send).toBeFalse();
+    expect(bodyText.includes('98765432109')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(JSON.stringify(audit).includes('98765432109')).toBeFalse();
+    expect(JSON.stringify(audit).includes('auth_method')).toBeFalse();
+  });
+
+  it('credential preview API rejects submitted token safely and does not audit it', async () => {
+    const err = new Error('raw token EAAB-local-admin-page-token-value should not return');
+    err.code = 'credential_token_not_accepted_in_preview';
+    const app = createApp();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageSetupPreviewService: createPageSetupPreviewServiceStub({ failWith: err }),
+      auditLogger,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/page-credentials/preview'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' },
+      body: { credential_type: 'fb_page_token', token: 'EAAB-local-admin-page-token-value' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(400);
+    expect(body.error).toBe('credential_token_not_accepted_in_preview');
+    expect(bodyText.includes('EAAB-local-admin-page-token-value')).toBeFalse();
+    expect(bodyText.includes('raw token')).toBeFalse();
+    expect(auditLogger.entries.some(entry => entry.action === 'admin.shop_page_credential.preview' && entry.outcome === 'success')).toBeFalse();
+  });
+
+  it('credential preview API returns prerequisites without health check or messenger flags enabled', async () => {
+    const app = createApp();
+    const pageSetupPreviews = createPageSetupPreviewServiceStub();
+    const auditLogger = createAuditLoggerStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageSetupPreviewService: pageSetupPreviews,
+      auditLogger,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/page-credentials/preview'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'demo-shop' },
+      body: { credential_type: 'fb_page_token' }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+    const audit = auditLogger.entries[auditLogger.entries.length - 1];
+
+    expect(res.statusCode).toBe(200);
+    expect(body.validate_only).toBeTrue();
+    expect(body.credential_type).toBe('fb_page_token');
+    expect(body.credential_type_allowed).toBeTrue();
+    expect(body.credential_master_key_configured).toBeTrue();
+    expect(body.token_accepted).toBeFalse();
+    expect(body.health_check).toBeFalse();
+    expect(body.messenger_send).toBeFalse();
+    expect(body.readiness_impact.blockers_remaining).toEqual(['page_mapping_ready', 'credential_ready']);
+    expect(audit.action).toBe('admin.shop_page_credential.preview');
+    expect(audit.metadata.credential_type).toBe('fb_page_token');
+    expect(audit.metadata.token_accepted).toBeFalse();
+    expect(audit.metadata.health_check).toBeFalse();
+    expect(audit.metadata.messenger_send).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('access_token')).toBeFalse();
+    expect(bodyText.includes('EAAB')).toBeFalse();
+  });
+
   it('page credential create API requires auth and write permission before calling service', async () => {
     for (const role of ['viewer', 'support']) {
       const pageCredentialWrites = createPageCredentialWriteServiceStub();
@@ -3690,6 +5049,9 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Required columns:');
     expect(res.body).toContain('metadata_json');
     expect(res.body).toContain('name="validate_only"');
+    expect(res.body).toContain('Xem trước CSV');
+    expect(res.body).toContain('data-product-import-form');
+    expect(res.body).toContain('data-product-import-server-preview');
     expect(res.body).toContain('data-product-import-preview');
     expect(res.body).toContain('safeImportPreviewCell');
     expect(res.body).toContain("return 'not shown';");
@@ -3880,9 +5242,23 @@ describe('admin dashboard routes', () => {
     }
   });
 
-  it('product import HTML POST redirects after safe import', async () => {
+  it('product import HTML POST renders final result summary after safe import', async () => {
     const app = createApp();
-    const productImports = createProductImportServiceStub();
+    const productImports = createProductImportServiceStub({
+      result: {
+        shop_id: 'adult-shop',
+        rows_received: 4,
+        products_created: 2,
+        products_updated: 1,
+        product_images_created: 1,
+        product_images_updated: 0,
+        product_images_skipped: 2,
+        image_assets_touched: 1,
+        ignored_columns: [],
+        unchanged_count: 1,
+        errors: []
+      }
+    });
     registerAdminRoutes(app, {
       storage: createStorageStub(),
       adminExportToken: 'secret',
@@ -3899,9 +5275,53 @@ describe('admin dashboard routes', () => {
       body: { csv: 'code,name\nM7,Demo Product' }
     }), res);
 
-    expect(res.statusCode).toBe(303);
-    expect(res.headers.location).toBe('/admin/shops/adult-shop?productMessage=imported');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.headers.location).toBe(undefined);
+    expect(res.body).toContain('Nhập sản phẩm CSV đã hoàn tất');
+    expect(res.body).toContain('Import được áp dụng theo cơ chế all-or-nothing.');
+    expect(res.body).toMatch(/Đã tạo mới[\s\S]*<strong>2<\/strong>/);
+    expect(res.body).toMatch(/Đã cập nhật[\s\S]*<strong>1<\/strong>/);
+    expect(res.body).toMatch(/Bỏ qua \/ Không đổi[\s\S]*<strong>1<\/strong>/);
+    expect(res.body).toMatch(/Tổng dòng xử lý[\s\S]*<strong>4<\/strong>/);
+    expect(res.body).toContain('Quay lại Danh mục sản phẩm');
+    expect(res.body).toContain('Kiểm tra sản phẩm thiếu ảnh');
+    expect(res.body).toContain('Chạy kiểm tra hoàn tất nếu cần');
+    expect(res.body.includes('Server Preview')).toBeFalse();
+    expect(res.body.includes('Nhập chính thức')).toBeFalse();
     expect(productImports.calls[0].method).toBe('importProducts');
+  });
+
+  it('product import HTML failure says import was not applied without partial success', async () => {
+    const err = Object.assign(new Error('commit failed at postgres://secret'), {
+      code: 'product_import_commit_failed'
+    });
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: createProductImportServiceStub({ failWith: err }),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { csv: 'code,name\nM7,Demo Product' }
+    }), res);
+
+    expect(res.statusCode).toBe(500);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body).toContain('Product import could not be committed.');
+    expect(res.body).toContain('Import chưa được áp dụng. Không có sản phẩm nào được tạo mới hoặc cập nhật.');
+    expect(res.body.includes('Nhập sản phẩm CSV đã hoàn tất')).toBeFalse();
+    expect(res.body.includes('Đã tạo mới')).toBeFalse();
+    expect(res.body.includes('Đã cập nhật')).toBeFalse();
+    expect(res.body.includes('Tổng dòng xử lý')).toBeFalse();
+    expect(res.body.includes('postgres://secret')).toBeFalse();
   });
 
   it('product import HTML POST renders structured validation errors safely', async () => {
@@ -3950,6 +5370,7 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(400);
     expect(res.headers['content-type']).toBe('html');
     expect(res.body).toContain('Product import validation failed.');
+    expect(res.body).toContain('Import chưa được áp dụng. Không có sản phẩm nào được tạo mới hoặc cập nhật.');
     expect(res.body).toContain('<th>row</th>');
     expect(res.body).toContain('<code>code</code>');
     expect(res.body).toContain('<code>invalid_product_code</code>');
@@ -3961,6 +5382,8 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('token=abc')).toBeFalse();
     expect(res.body.includes('Raw Product')).toBeFalse();
     expect(res.body.includes('raw csv')).toBeFalse();
+    expect(res.body.includes('Đã tạo mới')).toBeFalse();
+    expect(res.body.includes('Đã cập nhật')).toBeFalse();
   });
 
   it('product import HTML validate-only returns preview without redirect', async () => {
@@ -3978,14 +5401,22 @@ describe('admin dashboard routes', () => {
         ignored_columns: [],
         errors: [],
         validate_only: true,
+        create_count: 1,
+        update_count: 0,
+        archived_conflict_count: 0,
+        duplicate_count: 0,
+        error_count: 0,
+        blocking: false,
         preview_rows: [{
           row: 2,
+          status: 'create',
           code: 'M7',
           name: 'Demo Product',
-          status: 'active',
+          product_status: 'active',
           sort_order: 1,
           has_image_url: true,
-          metadata_keys: ['priceText']
+          metadata_keys: ['priceText'],
+          message: 'Sẽ tạo sản phẩm mới.'
         }]
       }
     });
@@ -4007,11 +5438,80 @@ describe('admin dashboard routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers.location).toBe(undefined);
-    expect(res.body).toContain('Validation passed. No products were written.');
+    expect(res.body).toContain('CSV preview passed. No products were written.');
     expect(res.body).toContain('Server Preview');
+    expect(res.body).toContain('Sẽ tạo');
+    expect(res.body).toContain('Tạo mới');
     expect(res.body).toContain('<code>M7</code>');
-    expect(res.body.includes('Demo Product')).toBeFalse();
+    expect(res.body).toContain('Demo Product');
+    expect(res.body).toContain('Nhập chính thức');
+    expect(res.body).toContain('Final import revalidates');
     expect(productImports.calls[0].input.body.validate_only).toBe('true');
+  });
+
+  it('product import HTML validate-only hides final import when preview has blockers', async () => {
+    const app = createApp();
+    const productImports = createProductImportServiceStub({
+      result: {
+        shop_id: 'adult-shop',
+        rows_received: 1,
+        products_created: 0,
+        products_updated: 0,
+        product_images_created: 0,
+        product_images_updated: 0,
+        product_images_skipped: 1,
+        image_assets_touched: 0,
+        ignored_columns: [],
+        errors: [{
+          row: 2,
+          field: 'code',
+          code: 'archived_product_code',
+          message: 'Mã này thuộc một sản phẩm đã lưu trữ và đang được giữ chỗ. Hãy khôi phục sản phẩm đó từ danh mục, hoặc dùng mã khác.',
+          suggested_fix: 'Khôi phục sản phẩm đã lưu trữ từ danh mục, hoặc dùng mã khác.'
+        }],
+        validate_only: true,
+        create_count: 0,
+        update_count: 0,
+        archived_conflict_count: 1,
+        duplicate_count: 0,
+        error_count: 0,
+        blocking_error_count: 1,
+        blocking: true,
+        preview_rows: [{
+          row: 2,
+          status: 'archived_conflict',
+          code: 'M20',
+          name: 'Archived Product',
+          product_status: 'active',
+          sort_order: 0,
+          has_image_url: false,
+          metadata_keys: [],
+          message: 'Mã này thuộc một sản phẩm đã lưu trữ và đang được giữ chỗ. Hãy khôi phục sản phẩm đó từ danh mục, hoặc dùng mã khác.'
+        }]
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productImportService: productImports,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/products/import'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { validate_only: 'true', csv: 'code,name\nM20,Archived Product' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('CSV preview found blocking rows. No products were written.');
+    expect(res.body).toContain('Trùng mã đã lưu trữ');
+    expect(res.body).toContain('archived_product_code');
+    expect(res.body.includes('data-product-import-confirm')).toBeFalse();
+    expect(res.body.includes('Nhập chính thức')).toBeFalse();
   });
 
   it('product update API succeeds and keeps write scoped to route shop/product', async () => {
@@ -4093,6 +5593,49 @@ describe('admin dashboard routes', () => {
     expect(productWrites.calls[0].method).toBe('archiveProduct');
   });
 
+  it('product restore API restores archived product to hidden (never active)', async () => {
+    const app = createApp();
+    const productWrites = createProductWriteServiceStub({
+      restoredProduct: {
+        id: 'prod-1',
+        shop_id: 'adult-shop',
+        code: 'DB1',
+        name: 'Restored Product',
+        description: 'safe product',
+        price_text: '150k',
+        status: 'hidden',
+        enabled: false,
+        sort_order: 1,
+        tags: [],
+        category: 'demo',
+        metadata_json: {},
+        updated_at: '2026-05-12T04:00:00.000Z'
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      productWriteService: productWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/products/:productId/restore'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop', productId: 'prod-1' }
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.product.status).toBe('hidden');
+    expect(body.product.enabled).toBeFalse();
+    expect(productWrites.calls[0].method).toBe('restoreProduct');
+    expect(productWrites.calls[0].input.shopId).toBe('adult-shop');
+    expect(productWrites.calls[0].input.productId).toBe('prod-1');
+  });
+
   it('asset create/update/status/archive API uses URL-only write service', async () => {
     const app = createApp();
     const assetWrites = createAssetWriteServiceStub();
@@ -4154,6 +5697,219 @@ describe('admin dashboard routes', () => {
     }), resArchive);
     expect(JSON.parse(resArchive.body).asset.status).toBe('archived');
     expect(assetWrites.calls[3].method).toBe('archiveAsset');
+  });
+
+  it('admin image upload UI is hidden by default and API returns a safe disabled response', async () => {
+    const app = createApp();
+    const assetUploads = createAssetUploadServiceStub({ enabled: false });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: assetUploads,
+      adminImageUploadEnabled: false,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const htmlRes = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(200);
+    expect(htmlRes.body.includes('/assets/uploads')).toBeFalse();
+    expect(htmlRes.body.includes('Upload menu image')).toBeFalse();
+    expect(htmlRes.body).toContain('Add asset URL');
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), apiRes);
+    const body = JSON.parse(apiRes.body);
+
+    expect(apiRes.statusCode).toBe(404);
+    expect(body.error).toBe('feature_disabled');
+    expect(assetUploads.calls.length).toBe(0);
+  });
+
+  it('admin image upload UI appears only when enabled and missing Cloudinary config returns safe API/HTML errors', async () => {
+    const missingConfig = createAssetUploadServiceStub({ enabled: true, configured: false });
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: missingConfig,
+      adminImageUploadEnabled: true,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const htmlRes = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(200);
+    expect(htmlRes.body).toContain('Upload menu image');
+    expect(htmlRes.body).toContain('Upload product image');
+    expect(htmlRes.body).toContain('DB1 - DB Product');
+    expect(htmlRes.body).toContain('action="/admin/shops/adult-shop/assets/uploads"');
+    expect(htmlRes.body).toContain('enctype="multipart/form-data"');
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), apiRes);
+    const apiBody = JSON.parse(apiRes.body);
+    const apiText = JSON.stringify(apiBody);
+
+    expect(apiRes.statusCode).toBe(503);
+    expect(apiBody.error).toBe('feature_not_configured');
+    expect(apiText.includes('cloudinary://')).toBeFalse();
+    expect(apiText.includes('secret')).toBeFalse();
+    expect(missingConfig.calls.length).toBe(0);
+
+    const htmlPostRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), htmlPostRes);
+    expect(htmlPostRes.statusCode).toBe(503);
+    expect(htmlPostRes.body).toBe('Image upload storage is not configured.');
+    expect(htmlPostRes.body.includes('secret')).toBeFalse();
+  });
+
+  it('admin image upload API/HTML require auth and product write permission before calling service', async () => {
+    for (const route of [
+      'POST /admin/api/shops/:shopId/assets/uploads',
+      'POST /admin/shops/:shopId/assets/uploads'
+    ]) {
+      const assetUploads = createAssetUploadServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        assetUploadService: assetUploads,
+        auditLogger,
+        adminImageUploadEnabled: true,
+        adminPrincipalRoles: ['viewer']
+      });
+
+      const unauthRes = createRes();
+      await app.routes[route](createReq({
+        params: { shopId: 'adult-shop' },
+        body: { asset_type: 'menu_image' },
+        file: createUploadFile()
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes[route](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'adult-shop' },
+        body: { asset_type: 'menu_image' },
+        file: createUploadFile()
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(assetUploads.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_asset.upload');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+    }
+  });
+
+  it('admin image upload API and HTML success call upload service without leaking storage keys', async () => {
+    const app = createApp();
+    const assetUploads = createAssetUploadServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: assetUploads,
+      adminImageUploadEnabled: true,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'product_image', product_id: 'prod-1', sort_order: '3' },
+      file: createUploadFile()
+    }), apiRes);
+    const apiBody = JSON.parse(apiRes.body);
+    const apiText = JSON.stringify(apiBody);
+
+    expect(apiRes.statusCode).toBe(201);
+    expect(apiBody.asset.storage_provider).toBe('object_storage');
+    expect(apiBody.asset.storage_key).toBe(undefined);
+    expect(apiText.includes('cloudinary://')).toBeFalse();
+    expect(apiText.includes('secret')).toBeFalse();
+    expect(assetUploads.calls[0].method).toBe('createUploadedAsset');
+    expect(assetUploads.calls[0].input.file.originalname).toBe('upload.jpg');
+
+    const htmlRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(303);
+    expect(htmlRes.headers.location).toBe('/admin/shops/adult-shop?assetMessage=uploaded');
+    expect(assetUploads.calls[1].method).toBe('createUploadedAsset');
+  });
+
+  it('admin image upload API and HTML map provider failures without leaking secrets', async () => {
+    const err = new Error('Cloudinary failed with cloudinary://key:secret@example-cloud and signed params');
+    err.code = 'cloudinary_upload_failed';
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      assetUploadService: createAssetUploadServiceStub({ failWith: err }),
+      adminImageUploadEnabled: true,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const apiRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), apiRes);
+    const apiText = apiRes.body;
+    expect(apiRes.statusCode).toBe(502);
+    expect(JSON.parse(apiRes.body).error).toBe('upload_failed');
+    expect(apiText.includes('cloudinary://')).toBeFalse();
+    expect(apiText.includes('secret')).toBeFalse();
+    expect(apiText.includes('signed params')).toBeFalse();
+
+    const htmlRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/assets/uploads'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' },
+      body: { asset_type: 'menu_image' },
+      file: createUploadFile()
+    }), htmlRes);
+    expect(htmlRes.statusCode).toBe(502);
+    expect(htmlRes.body).toBe('Image upload could not be completed.');
   });
 
   it('bulk menu image import API requires auth and write permission before calling service', async () => {
@@ -4486,6 +6242,329 @@ describe('admin dashboard routes', () => {
       expect(bodyText.includes('relation')).toBeFalse();
       expect(bodyText.includes('postgres://secret')).toBeFalse();
     }
+  });
+
+  it('shop control API updates package lifecycle live state and returns safe readiness', async () => {
+    const app = createApp();
+    const controlWrites = createShopControlWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopControlWriteService: controlWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['PATCH /admin/api/shops/:shopId/control-plane'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: {
+        package: 'sales_flow',
+        lifecycle: 'live',
+        live_enabled: 'true',
+        manual_test_status: 'passed',
+        confirm_live: 'true',
+        override_readiness: 'true',
+        token: 'do-not-return'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.shop.package).toBe('sales_flow');
+    expect(body.shop.lifecycle).toBe('live');
+    expect(body.shop.live_enabled).toBeTrue();
+    expect(body.shop.last_manual_test_status).toBe('passed');
+    expect(body.readiness.status).toBe('passed');
+    expect(body.readiness.warnings[0].key).toBe('product_assets_ready');
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(controlWrites.calls[0].method).toBe('updateControlPlane');
+    expect(controlWrites.calls[0].input.shopId).toBe('new-shop');
+    expect(controlWrites.calls[0].input.body.confirm_live).toBe('true');
+  });
+
+  it('shop pause and resume routes call emergency controls and return safe state', async () => {
+    const app = createApp();
+    const controlWrites = createShopControlWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopControlWriteService: controlWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const pauseRes = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pause'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: { confirmation_text: 'PAUSE SHOP', access_token: 'do-not-return' }
+    }), pauseRes);
+    const pauseBody = JSON.parse(pauseRes.body);
+
+    expect(pauseRes.statusCode).toBe(200);
+    expect(pauseBody.ok).toBeTrue();
+    expect(pauseBody.shop.status).toBe('paused');
+    expect(pauseBody.shop.lifecycle).toBe('paused');
+    expect(pauseBody.shop.dry_run).toBeTrue();
+    expect(pauseBody.shop.live_enabled).toBeFalse();
+    expect(JSON.stringify(pauseBody).includes('do-not-return')).toBeFalse();
+    expect(controlWrites.calls[0].method).toBe('pauseShop');
+    expect(controlWrites.calls[0].input.shopId).toBe('new-shop');
+
+    const resumeRes = createRes();
+    await app.routes['POST /admin/shops/:shopId/resume'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: { confirmation_text: 'RESUME SHOP' }
+    }), resumeRes);
+
+    expect(resumeRes.statusCode).toBe(303);
+    expect(resumeRes.headers.location).toBe('/admin/shops/new-shop?controlMessage=resumed');
+    expect(controlWrites.calls[1].method).toBe('resumeShop');
+    expect(controlWrites.calls[1].input.shopId).toBe('new-shop');
+  });
+
+  it('shop control API maps validation and schema errors safely', async () => {
+    for (const item of [
+      { code: 'invalid_shop_package', status: 400, error: 'invalid_shop_package' },
+      { code: 'live_confirmation_required', status: 400, error: 'live_confirmation_required' },
+      { code: 'pause_confirmation_required', status: 400, error: 'pause_confirmation_required' },
+      { code: 'resume_confirmation_required', status: 400, error: 'resume_confirmation_required' },
+      { code: 'readiness_blockers_present', status: 400, error: 'readiness_blockers_present' },
+      { code: 'adult_shop_protected', status: 403, error: 'adult_shop_protected' },
+      { code: 'staging_only', status: 403, error: 'staging_only' },
+      { code: 'shop_not_paused', status: 409, error: 'shop_not_paused' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'shop_control_commit_failed', status: 500, error: 'shop_control_commit_failed' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shops" at postgres://secret`);
+      err.code = item.code;
+      if (item.code === 'readiness_blockers_present') err.details = { blockers: ['page_mapping_ready'] };
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopControlWriteService: createShopControlWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['PATCH /admin/api/shops/:shopId/control-plane'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' },
+        body: { package: 'bad', lifecycle: 'live', live_enabled: 'true' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('shop readiness check API returns safe checklist details', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: {
+        page_id: 'raw-page-id',
+        access_token: 'do-not-return'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.shop_id).toBe('new-shop');
+    expect(body.readiness_status).toBe('failed');
+    expect(body.hard_blockers[0].key).toBe('product_ready');
+    expect(body.warnings[0].key).toBe('live_enabled_failed_readiness');
+    expect(body.checks[0]).toEqual({
+      key: 'product_ready',
+      label: 'Active products',
+      status: 'fail',
+      next_action: 'Add or activate at least one product.',
+      count: 0,
+      detail: 'No active products found.'
+    });
+    expect(body.safe_counts).toEqual({
+      products: 0,
+      menu_images: 1,
+      product_images: 0,
+      active_page_mappings: 1,
+      active_credentials: 1
+    });
+    expect(body.ok).toBe(undefined);
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('access_token')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('do-not-return')).toBeFalse();
+    expect(readinessChecks.calls[0].method).toBe('checkReadiness');
+    expect(readinessChecks.calls[0].input.shopId).toBe('new-shop');
+  });
+
+  it('shop readiness check API returns passed status with visible warnings', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub({
+      readiness: {
+        shop_id: 'new-shop',
+        readiness_status: 'passed',
+        hard_blockers: [],
+        warnings: [{
+          key: 'product_assets_ready',
+          label: 'Product image coverage',
+          detail: 'Active product images (1) are fewer than active products (5).',
+          next_action: 'Add active product images for products that need visual confirmation.'
+        }],
+        checks: [{
+          key: 'product_assets_ready',
+          label: 'Product image coverage',
+          status: 'warning',
+          count: 1,
+          detail: 'Active product images (1) are fewer than active products (5).',
+          next_action: 'Add active product images for products that need visual confirmation.'
+        }],
+        safe_counts: {
+          products: 5,
+          menu_images: 1,
+          product_images: 1,
+          active_page_mappings: 1,
+          active_credentials: 1
+        }
+      }
+    });
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' },
+      body: {}
+    }), res);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.readiness_status).toBe('passed');
+    expect(body.hard_blockers).toEqual([]);
+    expect(body.warnings[0].key).toBe('product_assets_ready');
+    expect(body.checks[0].status).toBe('warning');
+    expect(body.safe_counts.products).toBe(5);
+    expect(body.safe_counts.product_images).toBe(1);
+  });
+
+  it('shop readiness check API requires write-capable admin auth before service call', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['viewer']
+    });
+
+    const unauthenticated = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      params: { shopId: 'new-shop' }
+    }), unauthenticated);
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(readinessChecks.calls.length).toBe(0);
+
+    const forbidden = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), forbidden);
+    expect(forbidden.statusCode).toBe(403);
+    expect(readinessChecks.calls.length).toBe(0);
+  });
+
+  it('shop readiness check API maps errors safely', async () => {
+    for (const item of [
+      { code: 'shop_not_found', status: 404, error: 'shop_not_found' },
+      { code: 'shop_archived', status: 409, error: 'shop_archived' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' },
+      { code: 'readiness_check_commit_failed', status: 500, error: 'readiness_check_commit_failed' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} relation "shops" at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        shopReadinessCheckService: createShopReadinessCheckServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/readiness-check'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('relation')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('shop readiness check HTML route redirects after recheck', async () => {
+    const app = createApp();
+    const readinessChecks = createShopReadinessCheckServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopReadinessCheckService: readinessChecks,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/readiness-check'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/admin/shops/new-shop?controlMessage=readiness-checked');
+    expect(readinessChecks.calls[0].input.shopId).toBe('new-shop');
   });
 
   it('shop settings HTML update redirects with success banner key', async () => {
@@ -4828,6 +6907,62 @@ describe('admin dashboard PostgreSQL reader', () => {
         throw new Error(`unexpected write SQL: ${sql}`);
       }
     }
+  });
+
+  it('reader không chạy song song nhiều query trên cùng PostgreSQL client khi đọc shop detail', async () => {
+    const queries = [];
+    class FakeClient {
+      constructor() {
+        this.active = false;
+      }
+      async connect() {}
+      async end() {}
+      async query(sql, params = []) {
+        if (this.active) throw new Error('overlapping query on one client');
+        this.active = true;
+        queries.push({ sql, params });
+        try {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (sql.includes('FROM shops') && sql.includes('WHERE id = $1 OR slug = $1')) {
+            return {
+              rows: [{
+                id: 'adult-shop',
+                slug: 'adult-shop',
+                name: 'Adult Shop',
+                status: 'active',
+                default_locale: 'vi',
+                timezone: 'Asia/Bangkok',
+                created_at: '2026-05-12T00:00:00.000Z',
+                updated_at: '2026-05-12T00:00:00.000Z'
+              }]
+            };
+          }
+          if (sql.includes('FROM shop_pages') && sql.includes('ORDER BY status ASC')) return { rows: [] };
+          if (sql.includes('FROM shop_settings')) return { rows: [] };
+          if (sql.includes('FROM shop_products') && sql.includes('ORDER BY sort_order ASC')) return { rows: [] };
+          if (sql.includes('FROM shop_assets') && sql.includes('GROUP BY asset_type')) return { rows: [] };
+          if (sql.includes('FROM shop_assets a')) return { rows: [] };
+          if (sql.includes('FROM shop_page_credentials')) {
+            return { rows: [{ active_fb_page_token_count: 0 }] };
+          }
+          throw new Error(`unexpected query: ${sql}`);
+        } finally {
+          this.active = false;
+        }
+      }
+    }
+    const reader = createPostgresDashboardReader({
+      databaseUrl: 'postgres://example.test/db',
+      tenantId: 'default',
+      pageId: 'page',
+      Client: FakeClient
+    });
+
+    const model = await reader.getShopDetail('adult-shop');
+
+    expect(model.schemaReady).toBeTrue();
+    expect(model.shop.id).toBe('adult-shop');
+    expect(queries.length).toBe(7);
   });
 
   it('reader dùng filter parameterized và giới hạn limit', async () => {
@@ -5401,6 +7536,9 @@ describe('admin dashboard PostgreSQL reader', () => {
             'new-shop',
             'New Shop',
             'active',
+            'basic',
+            'draft',
+            false,
             'vi-VN',
             'Asia/Ho_Chi_Minh'
           ]);
@@ -5410,8 +7548,13 @@ describe('admin dashboard PostgreSQL reader', () => {
               slug: params[1],
               name: params[2],
               status: params[3],
-              default_locale: params[4],
-              timezone: params[5],
+              package: params[4],
+              lifecycle: params[5],
+              live_enabled: params[6],
+              last_readiness_status: 'unknown',
+              last_manual_test_status: 'unknown',
+              default_locale: params[7],
+              timezone: params[8],
               created_at: '2026-05-16T00:00:00.000Z',
               updated_at: '2026-05-16T00:00:00.000Z'
             }]
@@ -5449,6 +7592,9 @@ describe('admin dashboard PostgreSQL reader', () => {
           expect(params[7]).toBe('new-shop');
           expect(metadata.shop_id).toBe('new-shop');
           expect(metadata.slug).toBe('new-shop');
+          expect(metadata.package).toBe('basic');
+          expect(metadata.lifecycle).toBe('draft');
+          expect(metadata.live_enabled).toBe(false);
           expect(metadata.bot_mode).toBe('menu_code_handoff');
           expect(metadata.display_name_length).toBe('New Shop'.length);
           expect(JSON.stringify(metadata).includes('token')).toBeFalse();
@@ -5881,6 +8027,86 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
     expect(queries.some(item => item.sql === 'COMMIT')).toBeFalse();
   });
+
+  it('POST /admin/shops/:shopId/delete-draft successfully deletes eligible draft shop and renders success HTML', async () => {
+    const app = createApp();
+    const mockResult = { success: true, shopId: 'draft-shop', slug: 'draft-shop-slug' };
+    const deleteWrites = {
+      calls: [],
+      async deleteDraftShop(input) {
+        this.calls.push(input);
+        return mockResult;
+      }
+    };
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopDeleteWriteService: deleteWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/delete-draft'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'draft-shop' },
+      body: { confirmation_text: 'DELETE DRAFT', shop_slug: 'draft-shop-slug' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body.includes('Xóa cửa hàng thành công')).toBeTrue();
+    expect(res.body.includes('draft-shop-slug')).toBeTrue();
+    expect(deleteWrites.calls.length).toBe(1);
+    expect(deleteWrites.calls[0].shopId).toBe('draft-shop');
+    expect(deleteWrites.calls[0].body.confirmation_text).toBe('DELETE DRAFT');
+  });
+
+  it('POST /admin/shops/:shopId/delete-draft blocks deletion when ineligible and renders detailed reasons HTML', async () => {
+    const app = createApp();
+    const errorDetails = {
+      code: 'shop_deletion_blocked',
+      details: {
+        reasons: [
+          'Shop này nằm trong danh sách bảo vệ hệ thống',
+          'Shop có dữ liệu đơn hàng (orders) trong hệ thống'
+        ]
+      }
+    };
+    const err = new Error('Shop deletion blocked');
+    err.code = errorDetails.code;
+    err.details = errorDetails.details;
+
+    const deleteWrites = {
+      calls: [],
+      async deleteDraftShop(input) {
+        this.calls.push(input);
+        throw err;
+      }
+    };
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      shopDeleteWriteService: deleteWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/shops/:shopId/delete-draft'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'draft-shop' },
+      body: { confirmation_text: 'DELETE DRAFT', shop_slug: 'draft-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.headers['content-type']).toBe('html');
+    expect(res.body.includes('Thao tác bị chặn')).toBeTrue();
+    expect(res.body.includes('Shop này nằm trong danh sách bảo vệ hệ thống')).toBeTrue();
+    expect(res.body.includes('Shop có dữ liệu đơn hàng (orders) trong hệ thống')).toBeTrue();
+  });
 });
 
 describe('admin audit PostgreSQL writer', () => {
@@ -5939,5 +8165,171 @@ describe('admin audit PostgreSQL writer', () => {
     expect(queries[0].sql.trim()).toMatch(/^INSERT INTO admin_audit_log/i);
     expect(queries[0].params[5]).toBe(PERMISSIONS.DASHBOARD_READ);
     expect(queries[0].params[12]).toBe(JSON.stringify({ filter: 'masked' }));
+  });
+});
+
+describe('Product Add/Edit Drawer UI', () => {
+  it('shop detail HTML renders reusable drawer/modal markup and keeps form inputs unchanged', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    // 1. Verify drawer/modal container exists
+    expect(res.body).toContain('id="product-drawer"');
+    expect(res.body).toContain('class="drawer-backdrop"');
+    expect(res.body).toContain('class="drawer-panel"');
+    expect(res.body).toContain('id="drawer-title"');
+    expect(res.body).toContain('id="drawer-body-container"');
+
+    // 2. Verify drawer styling exists
+    expect(res.body).toContain('.drawer-backdrop');
+    expect(res.body).toContain('.drawer-panel');
+
+    // 3. Verify add product form action/method/input names remain unchanged
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products"');
+    expect(res.body).toContain('name="code"');
+    expect(res.body).toContain('name="name"');
+    expect(res.body).toContain('name="price_text"');
+    expect(res.body).toContain('name="sort_order"');
+    expect(res.body).toContain('name="status"');
+    expect(res.body).toContain('name="category"');
+    expect(res.body).toContain('name="tags"');
+    expect(res.body).toContain('name="description"');
+
+    // 4. Verify product edit form action/method/input names remain unchanged
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/prod-1"');
+
+    // 5. Verify progressive-enhancement markup: edit trigger + inline fallback form
+    expect(res.body).toContain('class="js-edit-product-btn');
+    expect(res.body).toContain('class="js-fallback-form-container"');
+    expect(res.body).toContain('body.js-enabled #add-product-section');
+
+    // 6. Verify no raw secrets/DB URLs/tokens/Page IDs in HTML
+    expect(res.body.includes('postgres://')).toBeFalse();
+    expect(res.body.includes('postgresql://')).toBeFalse();
+    expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
+  });
+});
+
+describe('Product archive/restore lifecycle UX', () => {
+  async function renderShopDetail() {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    return res;
+  }
+
+  it('renders a styled archive confirmation modal instead of a bare confirm()', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('id="product-archive-modal"');
+    expect(res.body).toContain('id="product-archive-message"');
+    expect(res.body).toContain('id="product-archive-confirm"');
+    expect(res.body).toContain('id="product-archive-cancel"');
+    // Archive copy template (static portion lives in the inline controller)
+    expect(res.body).toContain('Bot sẽ ngừng tư vấn sản phẩm này. Lịch sử đơn/chat cũ vẫn giữ nguyên. Bạn có thể khôi phục sau.');
+    // Buttons: Lưu trữ / Hủy
+    expect(res.body).toContain('>Lưu trữ</button>');
+    expect(res.body).toContain('>Hủy</button>');
+    // No one-click bare confirm() archive
+    expect(res.body.includes("confirm('Archive this product?")).toBeFalse();
+    // Active product carries the archive trigger; archived product does not
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/archive" data-product-archive="true"');
+    expect(res.body.includes('products/prod-3/archive')).toBeFalse();
+  });
+
+  // P1.2e3b1: archived row renders disabled Khôi phục + Xóa nháp placeholders; no functional form.
+  it('archived row renders disabled Khôi phục and Xóa nháp placeholders, no functional restore form', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    // Both disabled placeholder buttons present
+    expect(res.body).toContain('>Khôi phục</button>');
+    expect(res.body).toContain('>Xóa nháp</button>');
+    // Tooltips communicate deferred intent
+    expect(res.body).toContain('Sẽ khả dụng ở bước khôi phục sản phẩm.');
+    expect(res.body).toContain('Chỉ khả dụng cho sản phẩm nháp chưa có lịch sử, sẽ làm ở bước riêng.');
+    // No functional restore form for archived prod-3 (buttons are type=button disabled, not submit)
+    expect(res.body.includes('products/prod-3/status')).toBeFalse();
+    // No Sửa edit button for the archived row
+    expect(res.body.includes('data-product-id="prod-3"')).toBeFalse();
+  });
+
+  // P1.2e3b1: active row shows Tạm ẩn / Lưu trữ / Sửa.
+  it('active row renders Tạm ẩn, Lưu trữ, and Sửa; no English Disable label', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('>Tạm ẩn</button>');
+    expect(res.body).toContain('>Lưu trữ</button>');
+    // Product status toggle form uses Vietnamese Tạm ẩn, not the old English Disable
+    expect(res.body).toMatch(/action="\/admin\/shops\/adult-shop\/products\/prod-1\/status"[\s\S]{0,120}>Tạm ẩn<\/button>/);
+    // Sửa button present for active product (prod-1)
+    expect(res.body).toContain('data-product-id="prod-1"');
+    // Existing status toggle endpoint preserved for active product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/status"');
+    // Existing archive endpoint preserved for active product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/archive" data-product-archive="true"');
+  });
+
+  // P1.2e3b1: hidden row shows Hiện lại / Lưu trữ / Sửa.
+  it('hidden row renders Hiện lại, Lưu trữ, and Sửa; no English Enable label', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('>Hiện lại</button>');
+    expect(res.body.includes('>Enable</button>')).toBeFalse();
+    // Sửa button present for hidden product (prod-2)
+    expect(res.body).toContain('data-product-id="prod-2"');
+    // Existing status toggle endpoint preserved for hidden product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-2/status"');
+    // Existing archive endpoint preserved for hidden product
+    expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-2/archive" data-product-archive="true"');
+  });
+
+  it('exposes a duplicate-code hint that accounts for archived product codes', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    // Registry includes the archived product code (DB3 -> db3)
+    expect(res.body).toContain('id="product-codes-registry"');
+    expect(res.body).toContain('data-code="db3"');
+    // Hint element + warning copy template present
+    expect(res.body).toContain('class="js-duplicate-code-hint');
+    expect(res.body).toContain('đã tồn tại trong shop này, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.');
+    // Product code history helper under the code field
+    expect(res.body).toContain('Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.');
+  });
+
+  it('adds an explicit drawer cancel button with unsaved-change discard guard', async () => {
+    const res = await renderShopDetail();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('class="js-cancel-drawer');
+    expect(res.body).toContain('>Hủy bỏ</button>');
+    expect(res.body).toContain('Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi?');
   });
 });

@@ -38,6 +38,7 @@ const PRODUCT_FLASH_MESSAGES = {
 };
 const ASSET_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Asset created.' },
+  uploaded: { type: 'success', text: 'Image uploaded.' },
   updated: { type: 'success', text: 'Asset updated.' },
   enabled: { type: 'success', text: 'Asset enabled.' },
   disabled: { type: 'success', text: 'Asset disabled.' },
@@ -45,11 +46,19 @@ const ASSET_FLASH_MESSAGES = {
   'menu-imported': { type: 'success', text: 'Menu image URLs imported.' }
 };
 const PAGE_FLASH_MESSAGES = {
-  created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' }
+  created: { type: 'success', text: 'Page mapping created. Credentials were not changed.' },
+  archived: { type: 'success', text: 'Page mapping archived. Active credentials for that mapping were archived.' },
+  'already-archived': { type: 'success', text: 'Page mapping was already archived.' }
 };
 const CREDENTIAL_FLASH_MESSAGES = {
   created: { type: 'success', text: 'Page credential saved.' },
   rotated: { type: 'success', text: 'Page credential rotated.' }
+};
+const CONTROL_FLASH_MESSAGES = {
+  updated: { type: 'success', text: 'Shop control plane updated.' },
+  'readiness-checked': { type: 'success', text: 'Readiness checked.' },
+  paused: { type: 'success', text: 'Shop paused. Runtime routing is stopped and dry-run remains on.' },
+  resumed: { type: 'success', text: 'Shop resumed in dry-run with live disabled.' }
 };
 
 function createAdminReadHandlers({
@@ -57,6 +66,8 @@ function createAdminReadHandlers({
   internalNoteService,
   tenantId = 'default',
   pageId = '',
+  adminImageUploadEnabled = false,
+  adminPageArchiveEnabled = false,
   authorizeAdminRequest,
   recordAdminAudit
 } = {}) {
@@ -136,6 +147,11 @@ function createAdminReadHandlers({
   function resolveCredentialFlash(query = {}) {
     const key = String(query.credentialMessage || '').trim().toLowerCase();
     return CREDENTIAL_FLASH_MESSAGES[key] || {};
+  }
+
+  function resolveControlFlash(query = {}) {
+    const key = String(query.controlMessage || '').trim().toLowerCase();
+    return CONTROL_FLASH_MESSAGES[key] || {};
   }
 
   function createUnavailableShopHealthPresentation(shop = null) {
@@ -462,6 +478,8 @@ function createAdminReadHandlers({
       const statusCode = model.schemaReady !== false && !model.shop ? 404 : 200;
       const presented = presentShopDetailApi(model);
       presented.assets = presentShopAssetsForHtml(model.assets || {});
+      presented.adminImageUploadEnabled = Boolean(adminImageUploadEnabled && hasPermission(principal, PERMISSIONS.PRODUCT_WRITE));
+      presented.pageArchiveEnabled = Boolean(adminPageArchiveEnabled && hasPermission(principal, PERMISSIONS.PRODUCT_WRITE));
       if (model.schemaReady !== false && model.shop) {
         try {
           presented.health = presentShopHealthApi(await reader.getShopHealth(shopId));
@@ -471,6 +489,7 @@ function createAdminReadHandlers({
       }
       const productFilters = normalizeShopProductFilters(req.query || {});
       const products = Array.isArray(presented.products) ? presented.products : [];
+      presented.assetProducts = products;
       presented.products = filterShopProducts(products, productFilters);
       presented.productFilters = productFilters;
       presented.productFilterSummary = {
@@ -481,6 +500,7 @@ function createAdminReadHandlers({
       presented.assetFlash = resolveAssetFlash(req.query || {});
       presented.pageFlash = resolvePageFlash(req.query || {});
       presented.credentialFlash = resolveCredentialFlash(req.query || {});
+      presented.controlFlash = resolveControlFlash(req.query || {});
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,

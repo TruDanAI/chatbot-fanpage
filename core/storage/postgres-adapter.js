@@ -238,6 +238,7 @@ function createPostgresStorageAdapter(options = {}) {
   let customerWriteQueue = Promise.resolve();
   let eventWriteQueue = Promise.resolve();
   let writeQueue = Promise.resolve();
+  const contextAdapters = new Map();
 
   if (!options.client && !databaseUrl) {
     throw new Error('STORAGE_ADAPTER=postgres requires DATABASE_URL.');
@@ -677,8 +678,45 @@ function createPostgresStorageAdapter(options = {}) {
     return eventWriteQueue;
   }
 
+  function forContext(context = {}) {
+    const scopedTenantId = normalizeIdentifier(context.tenantId, tenantId);
+    const scopedPageId = normalizeIdentifier(context.pageId, pageId);
+    const scopedShopId = trimText(context.shopId);
+    if (scopedTenantId === tenantId && scopedPageId === pageId) return adapter;
+
+    const key = JSON.stringify([scopedTenantId, scopedPageId, scopedShopId]);
+    if (!contextAdapters.has(key)) {
+      const contextClient = typeof options.contextClientFactory === 'function'
+        ? options.contextClientFactory({
+            tenantId: scopedTenantId,
+            pageId: scopedPageId,
+            shopId: scopedShopId
+          })
+        : (!databaseUrl && options.client ? options.client : null);
+
+      contextAdapters.set(key, createPostgresStorageAdapter({
+        dataDir: DATA_DIR,
+        tenantId: scopedTenantId,
+        pageId: scopedPageId,
+        databaseUrl,
+        Client,
+        ...(contextClient ? { client: contextClient } : {}),
+        ...(typeof options.contextClientFactory === 'function'
+          ? { contextClientFactory: options.contextClientFactory }
+          : {})
+      }));
+    }
+    return contextAdapters.get(key);
+  }
+
   const adapter = {
     ready,
+
+    forContext,
+
+    getStorageContext() {
+      return { tenantId, pageId };
+    },
 
     getDataDir() {
       return DATA_DIR;
@@ -1196,6 +1234,11 @@ function createPostgresStorageAdapter(options = {}) {
 
     async close() {
       await adapter.flush();
+      for (const child of contextAdapters.values()) {
+        if (child !== adapter && typeof child.close === 'function') {
+          await child.close();
+        }
+      }
       if (ownsClient) await client.end();
     }
   };

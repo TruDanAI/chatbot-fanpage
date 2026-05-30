@@ -12,6 +12,7 @@ const {
   buildAbandonedCartReminderText,
   createRuntimeAllowlist,
   evaluateDbShopRuntimeAdmission,
+  evaluateDbShopRuntimeLiveGate,
   buildGeminiRequestHistory,
   buildGeminiRuntimeContext,
   buildHealthPayload,
@@ -24,6 +25,7 @@ const {
   maybeResetTimedOutSession,
   redactSensitiveText,
   resolveDbShopRuntimeForPage,
+  resolveEffectiveMessengerDryRun,
   recordConversationTurn,
   validateRuntimeAllowlistOnStartup
 } = require('../index');
@@ -211,6 +213,50 @@ describe('index: security hardening helpers', () => {
     expect(pageRef('')).toBe('unknown');
   });
 
+  it('global Messenger dry-run forces dry-run even when a shop is live-send eligible', () => {
+    const decision = resolveEffectiveMessengerDryRun({
+      globalDryRun: true,
+      shopDryRun: false,
+      shopDryRunColumnAvailable: true
+    });
+
+    expect(decision.dryRun).toBeTrue();
+    expect(decision.source).toBe('global');
+  });
+
+  it('shop dry_run keeps one DB shop in dry-run when global dry-run is off', () => {
+    const decision = resolveEffectiveMessengerDryRun({
+      globalDryRun: false,
+      shopDryRun: true,
+      shopDryRunColumnAvailable: true
+    });
+
+    expect(decision.dryRun).toBeTrue();
+    expect(decision.source).toBe('shop');
+  });
+
+  it('shop dry_run=false allows the DB send path when global dry-run is off', () => {
+    const decision = resolveEffectiveMessengerDryRun({
+      globalDryRun: false,
+      shopDryRun: false,
+      shopDryRunColumnAvailable: true
+    });
+
+    expect(decision.dryRun).toBeFalse();
+    expect(decision.source).toBe('shop');
+  });
+
+  it('missing shop dry_run preserves legacy global-only Messenger behavior', () => {
+    const decision = resolveEffectiveMessengerDryRun({
+      globalDryRun: false,
+      shopDryRun: null,
+      shopDryRunColumnAvailable: false
+    });
+
+    expect(decision.dryRun).toBeFalse();
+    expect(decision.source).toBe('legacy_missing_shop_dry_run');
+  });
+
   it('runtime admission allows all resolved shops when allowlist is empty', () => {
     const allowlist = createRuntimeAllowlist({});
     const admission = evaluateDbShopRuntimeAdmission({
@@ -294,6 +340,81 @@ describe('index: security hardening helpers', () => {
     expect(admission).toEqual({ failClosed: true, reason: 'shop_not_allowed' });
   });
 
+  it('runtime admission fails closed for paused shops even when live gate is disabled', () => {
+    const admission = evaluateDbShopRuntimeAdmission({
+      result: {
+        found: true,
+        shop: { id: 'paused-shop', status: 'paused' },
+        page: { page_id: 'page-paused' }
+      },
+      allowlist: createRuntimeAllowlist({})
+    });
+
+    expect(admission).toEqual({ failClosed: true, reason: 'shop_status_not_active' });
+  });
+
+  it('runtime live gate is a no-op when disabled', () => {
+    const gate = evaluateDbShopRuntimeLiveGate({
+      enabled: false,
+      result: {
+        found: true,
+        shop: { status: 'active', lifecycle: 'paused', live_enabled: false }
+      }
+    });
+
+    expect(gate).toBe(null);
+  });
+
+  it('runtime live gate allows active live enabled shops', () => {
+    const gate = evaluateDbShopRuntimeLiveGate({
+      enabled: true,
+      result: {
+        found: true,
+        shop: { status: 'active', lifecycle: 'live', live_enabled: true }
+      }
+    });
+
+    expect(gate).toBe(null);
+  });
+
+  it('runtime live gate fails closed for non-live lifecycle values', () => {
+    for (const lifecycle of ['draft', 'configuring', 'ready', 'paused', 'archived']) {
+      const gate = evaluateDbShopRuntimeLiveGate({
+        enabled: true,
+        result: {
+          found: true,
+          shop: { status: 'active', lifecycle, live_enabled: true }
+        }
+      });
+
+      expect(gate).toEqual({ failClosed: true, reason: 'lifecycle_not_live' });
+    }
+  });
+
+  it('runtime live gate fails closed when live switch is disabled', () => {
+    const gate = evaluateDbShopRuntimeLiveGate({
+      enabled: true,
+      result: {
+        found: true,
+        shop: { status: 'active', lifecycle: 'live', live_enabled: false }
+      }
+    });
+
+    expect(gate).toEqual({ failClosed: true, reason: 'live_disabled' });
+  });
+
+  it('runtime live gate fails closed when control columns are missing and gate is enabled', () => {
+    const gate = evaluateDbShopRuntimeLiveGate({
+      enabled: true,
+      result: {
+        found: true,
+        shop: { status: 'active', lifecycle: 'live', live_enabled: true, controlPlaneColumnsAvailable: false }
+      }
+    });
+
+    expect(gate).toEqual({ failClosed: true, reason: 'shop_live_gate_schema_missing' });
+  });
+
   it('runtime admission fails closed for unresolved pages when allowlist is active', () => {
     const logs = [];
     const allowlist = createRuntimeAllowlist({
@@ -334,6 +455,131 @@ describe('index: security hardening helpers', () => {
     expect(errors.join('\n')).toContain('fail-closed');
   });
 
+  function createDryRunRuntimeDb(shopsByPage = {}) {
+    return {
+      query: async (sql, values) => {
+        const normalized = String(sql).replace(/\s+/g, ' ').trim();
+        if (normalized.includes('FROM shop_pages sp')) {
+          const page = shopsByPage[values[0]];
+          if (!page) return { rows: [] };
+          return {
+            rows: [{
+              shop_id: page.shopId,
+              shop_slug: page.shopId,
+              shop_name: page.shopId,
+              shop_status: 'active',
+              shop_package: 'basic',
+              shop_lifecycle: 'live',
+              live_enabled: true,
+              shop_dry_run: page.dryRun,
+              default_locale: 'vi-VN',
+              timezone: 'Asia/Bangkok',
+              page_mapping_id: `${page.shopId}-page-map`,
+              page_id: values[0],
+              page_name: 'DB Page',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: '',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_products')) {
+          return {
+            rows: [{
+              id: `${values[0]}-prod`,
+              shop_id: values[0],
+              code: 'DB1',
+              name: 'DB Product',
+              description: 'DB only',
+              price: 100000,
+              currency: 'VND',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_assets')) return { rows: [] };
+        return { rows: [] };
+      }
+    };
+  }
+
+  it('DB-backed runtime passes global dry-run kill switch into the send path', async () => {
+    const dryPath = [];
+    const runtime = await resolveDbShopRuntimeForPage({
+      pageId: 'page_live_candidate',
+      db: createDryRunRuntimeDb({
+        page_live_candidate: { shopId: 'shop-live-candidate', dryRun: false }
+      }),
+      globalMessengerDryRun: true,
+      credentialResolver: async () => ({ found: true, secret: 'shop-live-candidate' }),
+      messengerFactory: (_credential, options = {}) => ({
+        sendCarousel: async () => {},
+        sendImage: async () => {},
+        sendMessage: async () => dryPath.push(options.dryRun ? 'dry' : 'real'),
+        sendQuickReplies: async () => {},
+        showTyping: () => {}
+      }),
+      logger: { log() {} }
+    });
+
+    expect(runtime.failClosed).toBe(undefined);
+    expect(runtime.messengerDryRun).toBeTrue();
+    await runtime.sendMessage('sender_db', 'hello');
+    expect(dryPath).toEqual(['dry']);
+  });
+
+  it('DB-backed runtime applies per-shop dry_run independently for two shops', async () => {
+    const realPath = [];
+    const dryPath = [];
+    const db = createDryRunRuntimeDb({
+      page_shop_a: { shopId: 'shop-a', dryRun: false },
+      page_shop_b: { shopId: 'shop-b', dryRun: true }
+    });
+    const credentialResolver = async args => ({
+      found: true,
+      secret: args.shopId
+    });
+    const messengerFactory = (credential, options = {}) => ({
+      sendCarousel: async () => {},
+      sendImage: async () => {},
+      sendMessage: async () => {
+        if (options.dryRun) dryPath.push(credential);
+        else realPath.push(credential);
+      },
+      sendQuickReplies: async () => {},
+      showTyping: () => {}
+    });
+
+    const runtimeA = await resolveDbShopRuntimeForPage({
+      pageId: 'page_shop_a',
+      db,
+      globalMessengerDryRun: false,
+      credentialResolver,
+      messengerFactory,
+      logger: { log() {} }
+    });
+    const runtimeB = await resolveDbShopRuntimeForPage({
+      pageId: 'page_shop_b',
+      db,
+      globalMessengerDryRun: false,
+      credentialResolver,
+      messengerFactory,
+      logger: { log() {} }
+    });
+
+    expect(runtimeA.messengerDryRun).toBeFalse();
+    expect(runtimeB.messengerDryRun).toBeTrue();
+    await runtimeA.sendMessage('sender_a', 'hello');
+    await runtimeB.sendMessage('sender_b', 'hello');
+    expect(realPath).toEqual(['shop-a']);
+    expect(dryPath).toEqual(['shop-b']);
+  });
+
   it('DB-backed runtime resolves and uses the page credential for Messenger sends', async () => {
     const sent = [];
     const credentialCalls = [];
@@ -348,6 +594,7 @@ describe('index: security hardening helpers', () => {
               shop_id: 'adult-shop',
               shop_slug: 'adult-shop',
               shop_name: 'Adult Shop',
+              shop_dry_run: false,
               default_locale: 'vi-VN',
               timezone: 'Asia/Bangkok',
               page_mapping_id: 'page-map-db',
@@ -391,8 +638,9 @@ describe('index: security hardening helpers', () => {
         credentialCalls.push(args);
         return { found: true, secret: 'db-page-token' };
       },
-      messengerFactory: token => {
+      messengerFactory: (token, options = {}) => {
         factoryToken = token;
+        expect(options.dryRun).toBeFalse();
         return {
           sendCarousel: async () => {},
           sendImage: async (senderId, url) => sent.push({ type: 'image', senderId, url, token }),
@@ -404,6 +652,7 @@ describe('index: security hardening helpers', () => {
     });
 
     expect(runtime.failClosed).toBe(undefined);
+    expect(runtime.messengerDryRun).toBeFalse();
     expect(factoryToken).toBe('db-page-token');
     expect(credentialCalls.length).toBe(1);
     expect(credentialCalls[0].shopId).toBe('adult-shop');
@@ -471,6 +720,141 @@ describe('index: security hardening helpers', () => {
 
     expect(runtime).toEqual({ failClosed: true, reason: 'credential_not_found' });
     expect(messengerFactoryCalled).toBeFalse();
+  });
+
+  it('DB-backed runtime live gate blocks non-live DB shops before credentials are used', async () => {
+    let credentialResolverCalled = false;
+    const db = {
+      query: async (sql, values) => {
+        const normalized = String(sql).replace(/\s+/g, ' ').trim();
+        if (normalized.includes('FROM shop_pages sp')) {
+          return {
+            rows: [{
+              shop_id: 'demo-shop',
+              shop_slug: 'demo-shop',
+              shop_name: 'Demo Shop',
+              shop_status: 'active',
+              shop_package: 'basic',
+              shop_lifecycle: 'ready',
+              live_enabled: true,
+              default_locale: 'vi-VN',
+              timezone: 'Asia/Bangkok',
+              page_mapping_id: 'page-map-db',
+              page_id: values[0],
+              page_name: 'DB Page',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: '',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_products')) {
+          return {
+            rows: [{
+              id: 'prod-db',
+              shop_id: 'demo-shop',
+              code: 'MÃ99',
+              name: 'DB Product',
+              description: 'DB only',
+              price: 999000,
+              currency: 'VND',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_assets')) return { rows: [] };
+        return { rows: [] };
+      }
+    };
+
+    const runtime = await resolveDbShopRuntimeForPage({
+      pageId: 'page_db',
+      db,
+      shopLiveGateEnabled: true,
+      credentialResolver: async () => {
+        credentialResolverCalled = true;
+        return { found: true, secret: 'db-page-token' };
+      }
+    });
+
+    expect(runtime).toEqual({ failClosed: true, reason: 'lifecycle_not_live' });
+    expect(credentialResolverCalled).toBeFalse();
+  });
+
+  it('DB-backed runtime preserves old behavior when live gate is disabled', async () => {
+    let credentialResolverCalled = false;
+    const db = {
+      query: async (sql, values) => {
+        const normalized = String(sql).replace(/\s+/g, ' ').trim();
+        if (normalized.includes('FROM shop_pages sp')) {
+          return {
+            rows: [{
+              shop_id: 'demo-shop',
+              shop_slug: 'demo-shop',
+              shop_name: 'Demo Shop',
+              shop_status: 'active',
+              shop_package: 'basic',
+              shop_lifecycle: 'paused',
+              live_enabled: false,
+              default_locale: 'vi-VN',
+              timezone: 'Asia/Bangkok',
+              page_mapping_id: 'page-map-db',
+              page_id: values[0],
+              page_name: 'DB Page',
+              bot_mode: 'menu_code_handoff',
+              handoff_enabled: true,
+              handoff_message: '',
+              menu_intro_text: '',
+              fallback_text: '',
+              settings_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_products')) {
+          return {
+            rows: [{
+              id: 'prod-db',
+              shop_id: 'demo-shop',
+              code: 'MÃ99',
+              name: 'DB Product',
+              description: 'DB only',
+              price: 999000,
+              currency: 'VND',
+              status: 'active',
+              sort_order: 1,
+              metadata_json: {}
+            }]
+          };
+        }
+        if (normalized.includes('FROM shop_assets')) return { rows: [] };
+        return { rows: [] };
+      }
+    };
+
+    const runtime = await resolveDbShopRuntimeForPage({
+      pageId: 'page_db',
+      db,
+      shopLiveGateEnabled: false,
+      credentialResolver: async () => {
+        credentialResolverCalled = true;
+        return { found: true, secret: 'db-page-token' };
+      },
+      messengerFactory: () => ({
+        sendCarousel: async () => {},
+        sendImage: async () => {},
+        sendMessage: async () => {},
+        sendQuickReplies: async () => {},
+        showTyping: () => {}
+      })
+    });
+
+    expect(runtime.failClosed).toBe(undefined);
+    expect(credentialResolverCalled).toBeTrue();
   });
 
   it('DB-backed runtime fails closed when credential lookup throws', async () => {

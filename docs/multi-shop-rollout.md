@@ -242,6 +242,172 @@ Safety boundary:
   documentation update.
 - `WEBHOOK_QUEUE_ENABLED` remains false and is a separate future gate.
 
+## Basic E2E Staging Checkpoint - 2026-05-24
+
+Staging-only checkpoint recorded after the completed Basic E2E test:
+
+- Staging `demo-shop` readiness passed.
+- Real Messenger menu test passed.
+- Real Messenger code `11` test passed.
+- No Messenger send errors were observed.
+- Staging was restored to `MESSENGER_DRY_RUN=true`.
+- Production and `adult-shop` were untouched.
+
+## nem-bui-xa Basic Staging Ready Checkpoint - 2026-05-25
+
+This checkpoint records the completed Basic staging dry-run E2E pass for
+`nem-bui-xa`. It is documentation-only and is not approval to deploy, change
+environment variables, write a database, touch `/data`, call Meta Graph API,
+run token health checks, send Messenger messages, or enable live traffic.
+
+Staging shop readiness:
+
+- `nem-bui-xa` shop shell created.
+- Products imported: `5`.
+- Imported product codes: `1`, `2`, `3`, `4`, `5`.
+- Menu image uploaded.
+- Product image for code `1` uploaded.
+- Page mapping created.
+- Credential created.
+- `handoff` active.
+- `manual_test_status=passed`.
+- `readiness_status=passed`.
+- `dry_run=true`.
+- `live_enabled=false`.
+
+Dry-run webhook E2E checks:
+
+- Dry-run webhook menu passed.
+- Dry-run webhook code `1` passed.
+- Product image marker passed.
+- No real Messenger sends were performed.
+
+Routing and isolation:
+
+- No wrong-shop routing was observed.
+- No `adult-shop` or `demo-shop` config, data, or asset side effects were
+  introduced.
+- `adult-shop` and `demo-shop` remain out of scope for this checkpoint.
+
+## nem-bui-xa Real Messenger Staging Test Checkpoint - 2026-05-25
+
+This checkpoint records the completed `nem-bui-xa` real Messenger staging test
+and rollback to safe dry-run mode. It is documentation-only and is not approval
+to deploy, change environment variables, write a database, touch `/data`, call
+Meta Graph API, run token health checks, send Messenger messages, enable
+`live_enabled`, or modify `adult-shop` or `demo-shop` config, data, or assets.
+
+Real Messenger staging test results:
+
+- `nem-bui-xa` real Messenger menu test passed.
+- Real Messenger code `1` test passed.
+- Menu image was sent.
+- Product image and product info were sent.
+- Handoff was active.
+- No Messenger send errors were observed.
+- No wrong-shop routing was observed.
+- No `adult-shop` or `demo-shop` side effects were observed.
+
+Rollback and final safe state:
+
+- Rollback completed after the real Messenger test.
+- Final staging `MESSENGER_DRY_RUN=true`.
+- Final `nem-bui-xa` `dry_run=true`.
+- Final `nem-bui-xa` `live_enabled=false`.
+- `nem-bui-xa` readiness remained `passed`.
+
+## P0.2 Shop Pause/Resume Emergency Control Checkpoint - 2026-05-26
+
+This checkpoint records the staging deployment and verification of the
+shop-level pause/resume emergency control. It is documentation-only and is not
+approval to deploy, change environment variables, write a database, touch
+`/data`, call Meta Graph API, run token health checks, send Messenger messages,
+or modify `adult-shop` or `demo-shop` config, data, or assets.
+
+Staging deployment:
+
+- Commit `2ea325b Add shop pause and resume controls`.
+- Railway staging deployment `b7818f64-6358-4057-a04f-8bdb7c58f922`:
+  `SUCCESS`.
+
+`nem-bui-xa` pause/resume verification:
+
+- Pause/resume was tested on `nem-bui-xa`.
+- Pause sets `status=paused` and `lifecycle=paused`.
+- Pause keeps `dry_run=true` and `live_enabled=false`.
+- Runtime fails closed for the paused shop.
+- Resume returns `status=active` and `lifecycle=configuring`.
+- Resume keeps `dry_run=true` and `live_enabled=false`.
+- Readiness check after resume passed with a `product_assets_ready` warning
+  only.
+
+Isolation and safety boundary:
+
+- `adult-shop` and `demo-shop` config, data, and assets were unchanged.
+- No Messenger sends were performed.
+- No production action was taken.
+
+## P0.3 Shop Dry-Run Controls Checkpoint - 2026-05-26
+
+This checkpoint records the staging deployment and verification of the per-shop dry-run operator controls. It is documentation-only and is not approval to deploy, change environment variables, write a database, touch `/data`, call Meta Graph API, run token health checks, send Messenger messages, or modify `adult-shop` or `demo-shop` config, data, or assets.
+
+Staging deployment:
+
+- Commit `980928c Add safe shop dry-run controls`.
+- Railway staging deployment `74465cb2-4854-4ffb-ba9a-59f76f896994`: `SUCCESS`.
+- Full tests: `786 passed` (`npm test`).
+- Focused tests: `174 passed` (`shop-control-writes` and `admin-routes`).
+- Staging health check `/healthz`: HTTP 200, `messenger.dryRun=true`, `storage.ready=true`.
+- Staging admin UI `/admin/login`: HTTP 200.
+
+`nem-bui-xa` dry-run control verification:
+
+- Precheck: `status=active`, `lifecycle=configuring`, `last_readiness_status=passed`, `dry_run=true`, `live_enabled=false`.
+- Disable dry-run: `POST /admin/api/shops/nem-bui-xa/dry-run/disable` with strict confirmation successfully disabled dry-run (`dry_run=false` persisted in DB).
+- Re-enable dry-run: `POST /admin/api/shops/nem-bui-xa/dry-run/enable` with confirmation successfully re-enabled dry-run (`dry_run=true` persisted in DB).
+- live_enabled stayed `false` throughout the sequence.
+- lifecycle stayed `configuring` (non-live) throughout the sequence.
+- Global `MESSENGER_DRY_RUN` stayed `true` (no actual sends).
+
+Isolation and safety boundary:
+
+- `adult-shop` and `demo-shop` config, data, and assets were completely unchanged.
+- No Messenger sends were performed.
+- No production action was taken.
+- P0.1 (readiness checks), P0.2 (emergency brake), and P0.3 (safe dry-run controls) are completely implemented and verified.
+
+## Closed Pre-Shop-2 Isolation Gates - 2026-05-24
+
+The three pre-shop-2 isolation blockers are implemented and covered by local
+tests:
+
+- Per-shop `dry_run`: global `MESSENGER_DRY_RUN=true` remains the kill switch;
+  shop `dry_run=true` keeps that shop on the dry-run path; shop
+  `dry_run=false` is only for a controlled live test or live switch on the
+  target shop.
+- Unmapped Page fail-closed: DB-backed webhook requests for an unmapped Page
+  return HTTP `200`, fail closed, and produce no Messenger send, typing, or
+  storage side effects.
+- Two-shop isolation regression: `tests/multi-shop-isolation.test.js` covers
+  two mapped shops with different `dry_run` values plus an unmapped Page.
+
+Required local pre-flight before shop #2 readiness, manual Messenger testing,
+or go-live:
+
+1. Run the isolation regression:
+
+   ```bash
+   node -e "require('./tests/multi-shop-isolation.test.js'); require('./tests/harness').run().then(code => process.exit(code))"
+   ```
+
+2. Run `npm test`.
+3. Continue only if both pass.
+
+Shop #2 go-live remains blocked until readiness passes, the manual test passes,
+active mapping count is exactly `1`, active credential count is exactly `1`,
+the target shop is the only shop with `dry_run=false`, and all other shops
+remain `dry_run=true`.
+
 ## Required Staging Environment
 
 The staging admin/product-write path needs these environment variables set with
@@ -286,10 +452,11 @@ Audit writes remain fail-closed for product writes. Missing or broken audit
 schema must fail the product transaction safely instead of persisting a product
 without an audit record.
 
-## Next Engineering Steps Before Shop #2
+## Completed Engineering Foundation Before Shop #2
 
-This section is an engineering roadmap, not approval to deploy, change
-production environment variables, or write production data.
+This section records engineering foundation already implemented before shop #2.
+It is not approval to deploy, change production environment variables, or write
+production data.
 
 1. Per-page credential resolution: phase 1 deployed in
    `67efcbef921f5bf326f4e78120ea0c1d70c0295c` but gated.
@@ -763,7 +930,8 @@ approval.
   control; page IDs are only a transition override.
 - Product updates, status changes, and archive actions must stay shop-scoped;
   no cross-shop updates.
-- Product code uniqueness is enforced per shop for active products.
+- Product code uniqueness is enforced per shop across active, hidden, and
+  archived products; archived codes remain reserved historical identifiers.
 - Keep `WEBHOOK_QUEUE_ENABLED=false` in production until schema apply, worker
   operation, retry observability, and rollback have separate approval.
 - Keep file-backed config as rollback fallback until production DB-backed
@@ -787,13 +955,189 @@ non-destructive:
 - Do not delete audit rows or product rows as a rollback shortcut. Archive only
   approved smoke products when cleanup is in scope.
 
+## Setup Wizard P1.1 MVP Completion Checkpoint - 2026-05-28
+
+This checkpoint records the successful E2E staging implementation and verification of the P1.1 Admin Setup Wizard MVP in safe dry-run mode.
+
+- **Status**: Completed and E2E Verified
+- **Commit**: `0614e17 Add setup wizard dry-run simulation step`
+- **Staging Verification URL**: `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Setup Steps Completed**:
+  - **Step 0 Pre-flight**: Env, dry-run, DB configuration, and connection checks.
+  - **Step 1 Shop Shell**: Creation form with custom slug routing.
+  - **Step 2 Products/Menu**: Bulk catalog seeding and welcoming settings.
+  - **Step 3 Page Mapping**: Safe Facebook Page mapping in draft status.
+  - **Step 4 Page Credential**: Secure context-bound credentials encryption.
+  - **Step 5 Readiness Gate**: Integrity check separating hard blockers.
+  - **Step 6 Dry-Run Simulation**: Sandbox deterministic webhook testing.
+- **wizard-smoke-shop Final State**:
+  - `dry_run = true`
+  - `live_enabled = false`
+  - `lifecycle = draft`
+  - `last_manual_test_status = passed`
+- **Incident Handling**: Addressed a staging database credential leak prior to E2E verification by rotating the database password programmatically, updating Postgres service variables, and propagating changes safely to all linked containers.
+- **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, or token health checks were executed. Credentials are strictly locked in dry-run mode.
+
+## Shop Detail UX and Delete Draft Checkpoint (P1.2d) - 2026-05-29
+
+This checkpoint records the successful E2E staging implementation, testing, deployment, and verification of the P1.2d update suite. This update comprises clean tabbed layout groupings, status-based action guidance, danger-confirmation modals, and a transactional Delete Draft Shop safety service.
+
+- **Status**: Completed and E2E Verified
+- **Staging Verification URL**: `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Key Deliverables Completed**:
+  - **P1.2d1 Tabbed Layout**: Reorganized Shop Detail view into 5 navigation tabs (Tổng quan, Sản phẩm & Menu, Hình ảnh, Kết nối Fanpage, Vận hành an toàn) in commit `bbdb7f5`.
+  - **P1.2d2 Status Guidance & Empty States**: Integrated status summary cards, next action guidance cards, and visual onboarding empty states.
+  - **P1.2d3 Danger Confirmation Modals**: Deployed red-themed confirmation modals in commit `a284a35` on staging (deployment `b17c4d4f-51cc-439a-b38f-5599ad605ae6`) featuring checked-to-unlock checkboxes, exact slug typing verification, and 3-second disabled confirmation countdown timers.
+  - **P1.2d4 Safe Delete Draft Shop Service**: Created transactional cascade deletion service in commit `2d4615f` on staging (deployment `d735284e-eadb-4667-b3ba-63807c1e1580`) allowing deletion strictly for draft/configuring shops while hard-blocking protected slugs (`adult-shop`, `demo-shop`, `nem-bui-xa`, and `prod`/`production` markers) or shops with runtime/customer data (orders, messages, conversations, events, queue, profiles).
+- **Staging Verification**:
+  - **Success Path**: Created and verified deletion of disposable shop `delete-draft-smoke-1780022921` (returned 200 OK success HTML, and subsequent fetches returned 404).
+  - **Safety Blocker Path**: Attempted deletion of protected `adult-shop` (returned 409 Conflict detailing blocker reasons).
+  - **Negative Input Path**: Deletion of `delete-draft-smoke-neg-1780022921` with wrong slug returned 400 Bad Request.
+  - **System Isolation**: `adult-shop`, `demo-shop`, `nem-bui-xa`, and `wizard-smoke-shop` are completely untouched and unchanged.
+- **Safety Boundary**: No production actions, Meta Graph API calls, Messenger sends, token health checks, or production data writes were executed.
+
+## Product/Menu Management UX Polish Checkpoint (P1.2e) - 2026-05-29
+
+This checkpoint records the completed Product/Menu management UX polish across
+layout, drawer editing, image/status table polish, product lifecycle safety,
+CSV import preview, and CSV import result summaries. It is documentation-only
+and is not approval to deploy, change environment variables, write any
+database, touch `/data`, touch production, call Meta Graph API, run token
+health checks, or send Messenger messages.
+
+- **Status**: Completed and E2E Verified
+- **Staging Verification URL**:
+  `https://chatbot-fanpage-staging-staging.up.railway.app`
+- **Detailed Checkpoint**:
+  [product-menu-polish-checkpoint.md](product-menu-polish-checkpoint.md)
+
+| Slice | Commit | Staging deployment | Completed scope |
+| --- | --- | --- | --- |
+| P1.2e1 Products & Menu layout polish | `97e8f90` | `9727ec8b-0e2f-49c4-b2ed-adbb1a967742` | Separated bot script settings from the product catalog, added the catalog health summary, and added Add Product / CSV anchors for faster operator navigation. |
+| P1.2e2 Product drawer editing UI | `65d5b5e` | `9e739790-4ac0-4dac-95cf-123bfdbb21f5` | Added drawer-based add/edit UX with progressive enhancement, preserved fallback forms, and fixed the `activeDrawerForm` collision. |
+| P1.2e3a Product image/status visual polish | `2dbd193` | `72d569f2-19d7-4592-a662-176924952831` | Added the image column, missing-image warning, localized status labels, and mobile fallback. |
+| P1.2e3b1 Product lifecycle row actions | `94b0915` | `aaa77674-c28f-4a23-a7f3-786b61e0b37b` | Added `Tạm ẩn`, `Hiện lại`, and `Lưu trữ` row actions, the archive modal, and archived row placeholders. |
+| P1.2e3b2 Product code history safety | `d545b4a` | `3a1b47c3-20df-4521-98c3-7f976c74abfb` | Reserved archived codes, restored archived products to `hidden`, and blocked duplicate archived-code creates. |
+| P1.2e3c1 CSV import preview | `758a5dc` | `36729b08-83de-4265-a323-c4a8f6ee673f` | Added preview classifications for `create`, `update`, `archived_conflict`, `duplicate_in_csv`, and `error`; preview is read-only, and blocker CSVs hide final import. |
+| P1.2e3c2 CSV import result summary | `3d668a3` | `0ca452ab-227c-407d-81ed-951fa6c22a02` | Added success summary labels, removed partial-success claims from failed imports, and verified the staging smoke with a disposable product imported then archived. |
+
+Final Product/Menu policy:
+
+- `active` products are customer-visible and available to chatbot product-code
+  matching.
+- `hidden` products remain editable but are temporarily unavailable to the
+  chatbot until explicitly shown again.
+- `archived` products are retired historical records; they stay out of normal
+  catalog operation while preserving prior references.
+- Product code is a historical identifier. Once a code has existed in a shop,
+  that code remains reserved for that product.
+- Archived product codes cannot be reused by new products in the same shop.
+- CSV import is preview-first and all-or-nothing; blockers prevent final import
+  instead of applying partial writes.
+- CSV import never auto-restores archived products. An archived-code match is a
+  blocker that requires an explicit operator lifecycle action.
+
+Safety boundary for this documentation checkpoint:
+
+- No deployment was performed.
+- No environment variable was changed.
+- No database or `/data` write was performed.
+- No production system was touched.
+- No Meta Graph API call, token health check, or Messenger send was performed.
+
+## Fanpage Connection Cutover Checkpoint (P1.2f) - 2026-05-30
+
+This checkpoint records the staged Fanpage Connection and Page cutover work. It
+is documentation-only and is not approval to deploy, change environment
+variables, write any database, touch `/data`, touch production, call Meta Graph
+API, run token health checks, or send Messenger messages.
+
+- **Detailed Checkpoint**:
+  [fanpage-connection-cutover-checkpoint.md](fanpage-connection-cutover-checkpoint.md)
+- **P1.2f1 Fanpage Connection State UI**: commit `4b91d48`, staging deployment
+  `8d50a5b7-9893-482e-970b-20186b76c7d4`, with states `CHƯA KẾT NỐI`,
+  `THIẾU QUYỀN GỬI TIN`, `ĐÃ KẾT NỐI`, `XUNG ĐỘT KẾT NỐI`, and
+  `CẦN KIỂM TRA`.
+- **P1.2f2 Credential Replacement UX**: commit `208f1fe`, staging deployment
+  `e084cedb-747e-407f-9658-3d62b6d64410`, with password-only non-prefilled
+  token entry, danger modal, checkbox, exact shop slug, countdown, and
+  environment/encryption warning. No automatic token health check is run.
+- **P1.2f2b Readiness Stale Behavior**: commit `534bd92`, staging deployment
+  `971eaa9e-edb1-43bc-aa31-1e5f2718b368`; mapping and credential mutations
+  mark readiness unknown while leaving `dry_run`, `live_enabled`, `lifecycle`,
+  and `status` unchanged.
+- **P1.2f3 Staging-Only Page Cutover Service**: commit `a5df5b5`, staging
+  deployment `125463cb-5507-4bcf-9768-42086c3b48a8`, API-only route
+  `POST /admin/api/shops/:shopId/pages/cutover`, production blocked, atomic
+  transaction, exactly-one-active mapping/credential post-condition, old
+  mapping/credential archived, new mapping/credential active, readiness stale,
+  rollback/negative checks passing, and no Meta call, token health check, or
+  Messenger send.
+- **Staging Smoke**: `wizard-smoke-shop` cut over from old safe ref
+  `p:421ca33965` to new safe ref `p:94bf9048cd`; cleanup option B was used.
+  Final state remained safe with `active mappings=1`, `active credentials=1`,
+  `dry_run=true`, `live_enabled=false`, `lifecycle=draft`, and
+  `messenger.dryRun=true`.
+- **Production Policy**: no production UI cutover is enabled yet; production
+  cutover still requires explicit operator approval and a runbook; production
+  credentials must be encrypted in the production runtime context only; never
+  use a staging key or staging token for production credentials.
+
+Safety boundary for this documentation checkpoint:
+
+- No deployment was performed.
+- No environment variable was changed.
+- No database or `/data` write was performed.
+- No production system was touched.
+- No Meta Graph API call, token health check, or Messenger send was performed.
+
+## Production Page Cutover Runbook and Approval Gate (P1.2g) - 2026-05-30
+
+This checkpoint is documentation and design only. It is not approval to deploy,
+change environment variables, write any database, touch `/data`, touch
+production, call the Meta Graph API, run a token health check, send a Messenger
+message, or enable any production cutover UI or route.
+
+P1.2g adds the production-safe Page cutover runbook and the operator approval
+gate plan that must precede any future production cutover:
+
+- **Runbook**:
+  [production-page-cutover-runbook.md](production-page-cutover-runbook.md)
+- **Approval gate plan**:
+  [operator-approval-gate-plan.md](operator-approval-gate-plan.md)
+
+Key documented decisions:
+
+- Production cutover remains impossible today by design. The cutover service
+  refuses production runtime (`page_cutover_not_allowed_in_production`, 403),
+  the route is API-only with no UI button, and the only production shop
+  (`adult-shop`) is in the protected-shop set. Slugs containing
+  `prod`/`production` are also blocked, and the non-live gate still prevents
+  live or archived shops from cutover.
+- Two-gate approval is required for any future production cutover: an owner
+  approval phrase `duoc cutover page production shop=<slug> new_page_ref=<p:hash>`
+  (human gate, consistent with the `duoc ghi DB production` convention) and the
+  in-request `CUTOVER PAGE` confirmation plus exact shop slug and pinned
+  expected current state (service gate).
+- A two-person rule applies: the owner approves, a different `PRODUCT_WRITE`
+  operator executes.
+- Production tokens must be issued from the production Meta app, encrypted only
+  with the production `CREDENTIAL_MASTER_KEY` inside the production runtime;
+  staging tokens, staging keys, and `encrypted_value` rows must never cross
+  environments.
+- A fresh, verified production backup, exactly-one active mapping/credential,
+  post-cutover readiness re-check, and a reverse-cutover rollback path are
+  required, with reversible flag controls (`MESSENGER_DRY_RUN`,
+  `MULTI_SHOP_DB_CONFIG_ENABLED`) as immediate safety levers.
+
+Enabling a runnable production cutover path (any guard change, approval-gate
+enforcement in code, then a guarded UI) is future work and needs its own
+review, tests, and separate approval.
+
 ## Open TODOs
 
-- Page mapping management for newly created shop shells is next.
-- Asset upload is still pending.
+- Asset upload and media direct integration enhancements.
 - Dashboard UX for multi-shop operations is still basic.
-- Multi-tenant admin identity separation is future work; current auth remains
-  the static-token/session bridge.
-- Product/admin pagination and search can be expanded after production MVP
-  safety is proven.
+- Multi-tenant admin identity separation is future work; current auth remains the static-token/session bridge.
+- Product/admin pagination and search can be expanded after production MVP safety is proven.
 - Metrics and analytics for multi-shop operations are future work.

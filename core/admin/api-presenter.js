@@ -3,6 +3,7 @@ const {
   maskPhone
 } = require('./views');
 const { pageRef } = require('../utils/log-refs');
+const { buildShopReadiness } = require('./shop-readiness');
 
 function limitText(value = '', max = 240) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -23,13 +24,17 @@ function compactObject(value = {}) {
   );
 }
 
-const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|authorization|cookie|credential|api[_-]?key|access[_-]?key|private[_-]?key|customer|phone|address|email)/i;
+const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|authorization|cookie|credential|api[_-]?key|access[_-]?key|private[_-]?key|database[_-]?url|db[_-]?url|customer|phone|address|email)/i;
+const SENSITIVE_VALUE_PATTERN = /\b(?:postgres(?:ql)?:\/\/|mysql:\/\/|mongodb(?:\+srv)?:\/\/|redis:\/\/)/i;
 
 function sanitizeAdminValue(value, key = '', depth = 0) {
   if (SENSITIVE_KEY_PATTERN.test(String(key || ''))) return '[redacted]';
   if (value == null) return value;
   if (depth > 6) return '[truncated]';
-  if (typeof value === 'string') return limitText(value, 500);
+  if (typeof value === 'string') {
+    if (SENSITIVE_VALUE_PATTERN.test(value)) return '[redacted]';
+    return limitText(value, 500);
+  }
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (Array.isArray(value)) return value.slice(0, 80).map(item => sanitizeAdminValue(item, key, depth + 1));
   if (typeof value === 'object') {
@@ -316,6 +321,12 @@ function presentShopListItem(shop = {}) {
     slug: shop.slug || '',
     name: limitText(shop.name, 120),
     status: shop.status || '',
+    package: shop.package || 'basic',
+    lifecycle: shop.lifecycle || '',
+    dry_run: shop.dry_run == null ? null : Boolean(shop.dry_run),
+    live_enabled: Boolean(shop.live_enabled),
+    last_readiness_status: shop.last_readiness_status || 'unknown',
+    last_manual_test_status: shop.last_manual_test_status || 'unknown',
     page_count: Number(shop.page_count || 0),
     active_page_count: Number(shop.active_page_count || 0),
     product_count: Number(shop.product_count || 0),
@@ -327,7 +338,7 @@ function presentShopListItem(shop = {}) {
 
 function presentShopPage(page = {}) {
   const rawPageId = page.page_id || '';
-  return {
+  const result = {
     id: page.id || '',
     shop_id: page.shop_id || '',
     page_ref: page.page_ref || (rawPageId ? pageRef(rawPageId) : ''),
@@ -336,6 +347,10 @@ function presentShopPage(page = {}) {
     created_at: page.created_at || '',
     updated_at: page.updated_at || ''
   };
+  if (page.active_credential_count != null) {
+    result.active_credential_count = Number(page.active_credential_count || 0);
+  }
+  return result;
 }
 
 function presentShopSettings(settings = {}) {
@@ -430,6 +445,7 @@ function presentShopOnboarding(model = {}, shop = null) {
     action_href: href
   });
   const shopActive = String(shop.status || '').toLowerCase() === 'active';
+  const manualTestPassed = String(shop.last_manual_test_status || '').toLowerCase() === 'passed';
   const checklist = [
     item('shop_active', 'Shop active', shopActive, shopActive ? 'review shop status' : 'activate shop', `${shopHref}#metadata`),
     item('settings_ready', 'Settings ready', settingsReady, settingsReady ? 'edit settings' : 'create settings', `${shopHref}#settings`),
@@ -438,14 +454,72 @@ function presentShopOnboarding(model = {}, shop = null) {
     item('product_ready', 'Product ready', counts.active_product_count > 0, 'add product', `${shopHref}#products`),
     item('menu_assets_ready', 'Menu assets ready', counts.active_menu_image_count > 0, 'add menu image', `${shopHref}#assets`),
     item('product_assets_ready', 'Product assets ready', counts.active_product_image_count > 0, 'add product image', `${shopHref}#assets`),
+    item('manual_test_ready', 'Manual test passed', manualTestPassed, 'run manual test and mark passed', `${shopHref}#control-plane`),
     item('health_ready', 'Health ready', Boolean(shop.id), 'view health', `/admin/api/shops/${encodeURIComponent(shopId)}/health`)
   ];
+  const readiness = presentReadinessResult(buildShopReadiness({
+    shop,
+    settings,
+    counts,
+    manualTestStatus: shop.last_manual_test_status,
+    globalDryRunState: { available: true, dry_run: true }
+  }));
 
   return {
     ready: checklist.every(entry => entry.passed),
     counts,
     checklist,
+    readiness_status: readiness.readiness_status,
+    hard_blockers: readiness.hard_blockers,
+    warnings: readiness.warnings,
+    checks: readiness.checks,
+    safe_counts: readiness.safe_counts,
     ...(credentials.available === false ? { credential_status: 'unavailable' } : {})
+  };
+}
+
+function presentReadinessIssue(item = {}) {
+  return {
+    key: limitText(item.key || '', 80),
+    label: limitText(item.label || '', 120),
+    detail: limitText(item.detail || '', 240),
+    next_action: limitText(item.next_action || '', 240)
+  };
+}
+
+function presentReadinessCheck(check = {}) {
+  const status = ['pass', 'fail', 'warning'].includes(String(check.status || ''))
+    ? String(check.status || '')
+    : 'fail';
+  const result = {
+    key: limitText(check.key || '', 80),
+    label: limitText(check.label || '', 120),
+    status,
+    next_action: limitText(check.next_action || '', 240)
+  };
+  if (check.count != null) result.count = Number(check.count || 0);
+  if (check.detail) result.detail = limitText(check.detail || '', 240);
+  return result;
+}
+
+function presentReadinessResult(readiness = {}) {
+  const status = ['passed', 'failed', 'warnings'].includes(String(readiness.readiness_status || ''))
+    ? String(readiness.readiness_status || '')
+    : 'failed';
+  const counts = readiness.safe_counts || {};
+  return {
+    shop_id: limitText(readiness.shop_id || '', 160),
+    readiness_status: status,
+    hard_blockers: (readiness.hard_blockers || []).map(presentReadinessIssue),
+    warnings: (readiness.warnings || []).map(presentReadinessIssue),
+    checks: (readiness.checks || []).map(presentReadinessCheck),
+    safe_counts: {
+      products: Number(counts.products || 0),
+      menu_images: Number(counts.menu_images || 0),
+      product_images: Number(counts.product_images || 0),
+      active_page_mappings: Number(counts.active_page_mappings || 0),
+      active_credentials: Number(counts.active_credentials || 0)
+    }
   };
 }
 
@@ -469,6 +543,12 @@ function presentShopHealthApi(model = {}) {
     slug: model.shop.slug || '',
     name: limitText(model.shop.name, 120),
     status: model.shop.status || '',
+    package: model.shop.package || 'basic',
+    lifecycle: model.shop.lifecycle || '',
+    dry_run: model.shop.dry_run == null ? null : Boolean(model.shop.dry_run),
+    live_enabled: Boolean(model.shop.live_enabled),
+    last_readiness_status: model.shop.last_readiness_status || 'unknown',
+    last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
     updated_at: model.shop.updated_at || ''
   } : null;
   const activity = model.activity || {};
@@ -514,6 +594,15 @@ function presentShopDetailApi(model = {}) {
     slug: model.shop.slug || '',
     name: limitText(model.shop.name, 120),
     status: model.shop.status || '',
+    package: model.shop.package || 'basic',
+    lifecycle: model.shop.lifecycle || '',
+    dry_run: model.shop.dry_run == null ? null : Boolean(model.shop.dry_run),
+    live_enabled: Boolean(model.shop.live_enabled),
+    last_readiness_status: model.shop.last_readiness_status || 'unknown',
+    last_readiness_checked_at: model.shop.last_readiness_checked_at || '',
+    last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
+    last_manual_test_at: model.shop.last_manual_test_at || '',
+    last_ready_by: model.shop.last_ready_by || '',
     default_locale: model.shop.default_locale || '',
     timezone: model.shop.timezone || '',
     created_at: model.shop.created_at || '',
@@ -555,12 +644,63 @@ function presentShopSettingsWriteApi(model = {}) {
   };
 }
 
+function presentShopControlWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || model.shop?.id || '',
+    shop: model.shop ? {
+      id: model.shop.id || '',
+      slug: model.shop.slug || '',
+      name: limitText(model.shop.name, 120),
+      status: model.shop.status || '',
+      package: model.shop.package || 'basic',
+      lifecycle: model.shop.lifecycle || '',
+      dry_run: model.shop.dry_run == null ? null : Boolean(model.shop.dry_run),
+      live_enabled: Boolean(model.shop.live_enabled),
+      last_readiness_status: model.shop.last_readiness_status || 'unknown',
+      last_readiness_checked_at: model.shop.last_readiness_checked_at || '',
+      last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
+      last_manual_test_at: model.shop.last_manual_test_at || '',
+      last_ready_by: model.shop.last_ready_by || '',
+      updated_at: model.shop.updated_at || ''
+    } : null,
+    readiness: {
+      status: model.readiness?.status || 'unknown',
+      hardBlockers: (model.readiness?.hardBlockers || []).map(item => ({
+        key: item.key || '',
+        label: limitText(item.label || '', 120)
+      })),
+      warnings: (model.readiness?.warnings || []).map(item => ({
+        key: item.key || '',
+        label: limitText(item.label || '', 120)
+      }))
+    }
+  };
+}
+
+function presentShopReadinessCheckApi(model = {}) {
+  return presentReadinessResult(model.readiness || {});
+}
+
 function presentPageMappingWriteApi(model = {}) {
   return {
     ok: true,
     schemaReady: true,
     shop_id: model.shopId || '',
     page: presentShopPage(model.page || {})
+  };
+}
+
+function presentPageMappingArchiveApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    page: presentShopPage(model.page || {}),
+    already_archived: Boolean(model.already_archived),
+    archived_credential_count: Number(model.archivedCredentialCount || 0),
+    active_credential_count_after: Number(model.activeCredentialCountAfter || 0)
   };
 }
 
@@ -579,6 +719,77 @@ function presentPageCredentialWriteApi(model = {}) {
   };
 }
 
+function presentPageCutoverWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    shop_ref: model.shop_ref || '',
+    old_page_ref: model.old_page_ref || '',
+    new_page_ref: model.new_page_ref || '',
+    old_page_mapping_id: model.old_page_mapping_id || '',
+    new_page_mapping_id: model.new_page_mapping_id || '',
+    old_credential_ref: model.old_credential_ref || '',
+    new_credential_ref: model.new_credential_ref || '',
+    old_mapping_status: model.old_mapping_status || '',
+    new_mapping_status: model.new_mapping_status || '',
+    old_credential_status: model.old_credential_status || '',
+    new_credential_status: model.new_credential_status || '',
+    active_mapping_count: Number(model.active_mapping_count || 0),
+    active_credential_count: Number(model.active_credential_count || 0),
+    readiness_stale: Boolean(model.readiness_stale)
+  };
+}
+
+function presentReadinessImpact(impact = {}) {
+  return {
+    validate_only: impact.validate_only !== false,
+    changes_readiness: Boolean(impact.changes_readiness),
+    blockers_remaining: Array.isArray(impact.blockers_remaining)
+      ? impact.blockers_remaining.map(item => limitText(item, 80)).filter(Boolean)
+      : [],
+    live_enabled_after_preview: Boolean(impact.live_enabled_after_preview)
+  };
+}
+
+function presentPageMappingPreviewApi(model = {}) {
+  const pageName = model.page_name || {};
+  return {
+    ok: true,
+    schemaReady: model.schemaReady !== false,
+    validate_only: true,
+    shop_ref: model.shop_ref || '',
+    page_ref: model.page_ref || '',
+    duplicate_active_mapping: Boolean(model.duplicate_active_mapping),
+    conflict: Boolean(model.conflict),
+    page_format_valid: Boolean(model.page_format_valid),
+    page_name: {
+      provided: Boolean(pageName.provided),
+      length: Number(pageName.length || 0),
+      max_length: Number(pageName.max_length || 0),
+      status: pageName.status || ''
+    },
+    readiness_impact: presentReadinessImpact(model.readiness_impact || {})
+  };
+}
+
+function presentPageCredentialPreviewApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: model.schemaReady !== false,
+    validate_only: true,
+    shop_ref: model.shop_ref || '',
+    page_ref: model.page_ref || '',
+    credential_type: model.credential_type || '',
+    credential_type_allowed: Boolean(model.credential_type_allowed),
+    credential_master_key_configured: Boolean(model.credential_master_key_configured),
+    token_accepted: false,
+    health_check: false,
+    messenger_send: false,
+    readiness_impact: presentReadinessImpact(model.readiness_impact || {})
+  };
+}
+
 function presentShopWriteApi(model = {}) {
   return {
     ok: true,
@@ -589,6 +800,15 @@ function presentShopWriteApi(model = {}) {
       slug: model.shop.slug || '',
       name: limitText(model.shop.name, 120),
       status: model.shop.status || '',
+      package: model.shop.package || 'basic',
+      lifecycle: model.shop.lifecycle || '',
+      dry_run: model.shop.dry_run == null ? null : Boolean(model.shop.dry_run),
+      live_enabled: Boolean(model.shop.live_enabled),
+      last_readiness_status: model.shop.last_readiness_status || 'unknown',
+      last_readiness_checked_at: model.shop.last_readiness_checked_at || '',
+      last_manual_test_status: model.shop.last_manual_test_status || 'unknown',
+      last_manual_test_at: model.shop.last_manual_test_at || '',
+      last_ready_by: model.shop.last_ready_by || '',
       default_locale: model.shop.default_locale || '',
       timezone: model.shop.timezone || '',
       created_at: model.shop.created_at || '',
@@ -623,11 +843,17 @@ module.exports = {
   presentDashboardApi,
   presentInternalNotesApi,
   presentOperations,
+  presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageCutoverWriteApi,
+  presentPageMappingArchiveApi,
+  presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
   presentShopSettingsReadApi,
   presentShopSettingsWriteApi,
+  presentShopControlWriteApi,
+  presentShopReadinessCheckApi,
   presentShopWriteApi,
   presentShopDetailApi,
   presentShopHealthApi,

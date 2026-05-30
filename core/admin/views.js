@@ -1,5 +1,6 @@
 const { normalizeRuleToggles } = require('../rule-toggles');
 const { pageRef } = require('../utils/log-refs');
+const { renderEmptyState, renderGuidanceCard } = require('./wizard-ui');
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -8,6 +9,28 @@ function escapeHtml(value = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function escapeHtmlPattern(value = '') {
+  return String(value ?? '').replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
+function escapePreviewHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&(?!(?:amp|lt|gt|quot|#39);)/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function jsString(value = '') {
+  return JSON.stringify(String(value ?? ''))
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 function limitText(value = '', max = 240) {
@@ -39,6 +62,10 @@ function encodeRoutePart(value = '') {
   return encodeURIComponent(String(value || ''));
 }
 
+function productImportStorageKey(shopId = '') {
+  return `product-import-csv:${String(shopId || '').trim().slice(0, 160)}`;
+}
+
 function formatDate(value = '') {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value);
@@ -54,9 +81,9 @@ function formatLabel(value = '') {
 
 function statusClass(value = '') {
   const status = String(value || '').toLowerCase();
-  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'enabled' || status === 'pass' || status === 'ready') return 'status status-success';
+  if (status === 'confirmed' || status === 'ready_to_confirm' || status === 'success' || status === 'active' || status === 'enabled' || status === 'pass' || status === 'passed' || status === 'ready' || status === 'true') return 'status status-success';
   if (status === 'cancelled' || status === 'denied' || status === 'fail' || status === 'incomplete' || status.includes('failed') || status.includes('error')) return 'status status-danger';
-  if (status === 'abandoned' || status === 'hidden' || status === 'disabled') return 'status status-warning';
+  if (status === 'abandoned' || status === 'hidden' || status === 'disabled' || status === 'false' || status === 'paused') return 'status status-warning';
   if (status === 'archived') return 'status status-danger';
   return 'status status-neutral';
 }
@@ -64,6 +91,23 @@ function statusClass(value = '') {
 function renderStatus(value = '') {
   const label = String(value || 'unknown');
   return `<span class="${statusClass(label)}">${escapeHtml(label)}</span>`;
+}
+
+function renderProductStatus(value = '') {
+  const status = String(value || '').toLowerCase();
+  let label = value;
+  let helper = '';
+  if (status === 'active') {
+    label = 'Hoạt động';
+    helper = 'bot có thể tư vấn';
+  } else if (status === 'hidden') {
+    label = 'Tạm ẩn';
+    helper = 'bot không tư vấn';
+  } else if (status === 'archived') {
+    label = 'Đã lưu trữ';
+    helper = 'giữ lại lịch sử, không dùng trong bot';
+  }
+  return `<span class="${statusClass(value)}">${escapeHtml(label)}</span><br><span class="meta" style="font-size: 11px; display: block; margin-top: 4px; font-weight: normal; text-transform: none; line-height: 1.3;">${escapeHtml(helper)}</span>`;
 }
 
 function dashboardQueryString(filters = {}, overrides = {}) {
@@ -163,6 +207,7 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; padding: 9px 10px; font-size: 14px; }
     .banner { border-radius: 6px; padding: 9px 10px; font-size: 14px; margin: 10px 0 14px; }
     .banner-success { color: var(--success); background: #dcfce7; border: 1px solid #bbf7d0; }
+    .banner-warning { color: #854d0e; background: #fef3c7; border: 1px solid #fde68a; }
     .banner-error { color: var(--danger); background: #fee2e2; border: 1px solid #fecaca; }
     .note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
     .note-form { display: grid; gap: 10px; margin: 12px 0 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
@@ -195,10 +240,16 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .import-preview h4 { margin: 0 0 6px; font-size: 13px; color: #334155; }
     .import-preview-scroll { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: #ffffff; }
     .import-preview-scroll table { border: 0; border-radius: 0; }
+    .import-summary-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; margin: 12px 0; }
+    .import-summary-item { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 10px; }
+    .import-summary-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .import-summary-item strong { display: block; margin-top: 2px; font-size: 20px; }
+    .import-confirm-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .import-confirm-form button:disabled { cursor: not-allowed; opacity: .55; }
     .secondary-button { border-color: var(--border) !important; background: #ffffff !important; color: #334155 !important; }
     .settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 14px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .settings-form label { display: grid; gap: 5px; color: #334155; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
-    .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
+    .settings-form input, .settings-form select, .settings-form textarea { min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: #17202a; background: #ffffff; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; }
     .settings-form textarea { min-height: 82px; resize: vertical; }
     .settings-form .wide { grid-column: 1 / -1; }
     .settings-form fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 0; }
@@ -252,6 +303,37 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .collapsible-section summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 0; }
     .collapsible-section summary:hover { color: #17202a; }
     .page-id-help { font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; line-height: 1.4; }
+    .connection-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 14px; margin: 14px 0 18px; }
+    .connection-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .connection-card h3 { margin: 0; font-size: 17px; color: #17202a; }
+    .connection-card p { margin: 4px 0 0; line-height: 1.45; }
+    .environment-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .environment-badge.env-production { color: #991b1b; background: #fee2e2; }
+    .environment-badge.env-staging { color: #854d0e; background: #fef3c7; }
+    .environment-badge.env-local { color: #166534; background: #dcfce7; }
+    .connection-state-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .connection-state-label { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; font-size: 13px; font-weight: 800; }
+    .connection-state-label.state-ok { color: var(--success); background: #dcfce7; }
+    .connection-state-label.state-warning { color: var(--warning); background: #fef3c7; }
+    .connection-state-label.state-danger { color: var(--danger); background: #fee2e2; }
+    .connection-state-label.state-neutral { color: var(--neutral); background: #e2e8f0; }
+    .connection-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .connection-summary-item { border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 10px; }
+    .connection-summary-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .connection-summary-item strong { display: block; margin-top: 4px; font-size: 18px; color: #17202a; overflow-wrap: anywhere; }
+    .connection-notes { margin: 0; padding-left: 18px; color: #334155; font-size: 13px; line-height: 1.5; }
+    .connection-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .connection-action-disabled { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--muted); background: #f8fafc; font: inherit; font-size: 14px; font-weight: 700; cursor: not-allowed; }
+    .credential-replace-panel { border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; padding: 12px; display: grid; gap: 10px; min-width: 260px; }
+    .credential-replace-panel h4 { margin: 0; color: #991b1b; font-size: 14px; }
+    .credential-replace-panel p { margin: 0; color: #7f1d1d; font-size: 13px; line-height: 1.45; }
+    .credential-safety-list { margin: 0; padding-left: 18px; color: #334155; font-size: 12px; line-height: 1.45; }
+    .credential-safety-list li + li { margin-top: 3px; }
+    .credential-confirm-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .credential-confirm-grid label { margin: 0; }
+    .credential-no-js-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    body.js-enabled .credential-js-fallback-control,
+    body.js-enabled .credential-no-js-note { display: none; }
     .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; padding-bottom: 1px; }
     .tabs a { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
     .tabs a:hover { color: #17202a; }
@@ -262,6 +344,288 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .health-card h2 { margin-top: 0; font-size: 16px; }
     .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
     .health-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+
+    /* Guidance Card */
+    .guidance-card {
+      display: flex;
+      gap: 12px;
+      padding: 14px 16px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      margin: 16px 0;
+      align-items: flex-start;
+    }
+    .guidance-card-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+    .guidance-card-body { min-width: 0; text-align: left; }
+    .guidance-card-title { display: block; font-size: 14px; color: #1e40af; margin-bottom: 4px; font-weight: bold; }
+    .guidance-card-desc { margin: 0; font-size: 13px; color: #1e3a5f; line-height: 1.5; white-space: pre-line; }
+
+    /* Empty State */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+      background: var(--surface-muted);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      text-align: center;
+      margin: 16px 0;
+    }
+    .empty-state-icon { font-size: 32px; margin-bottom: 10px; }
+    .empty-state-title { font-size: 15px; color: #334155; margin-bottom: 6px; font-weight: bold; display: block; }
+    .empty-state-desc { margin: 0; font-size: 13px; color: var(--muted); max-width: 420px; line-height: 1.5; }
+
+    /* Requirement List */
+    .requirement-list { display: grid; gap: 8px; margin: 14px 0; }
+    .requirement-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .requirement-label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #334155; }
+    .requirement-icon { font-size: 16px; flex-shrink: 0; }
+    .requirement-detail { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .requirement-detail-text { font-size: 12px; color: var(--muted); }
+
+    /* Danger Confirmation Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.visible {
+      display: flex;
+    }
+    .modal-container {
+      background: #ffffff;
+      border: 1px solid #fee2e2;
+      border-radius: 12px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      overflow: hidden;
+      animation: modalFadeIn 0.2s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { transform: scale(0.95); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .modal-header {
+      background: #fef2f2;
+      border-bottom: 1px solid #fee2e2;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .modal-header h3 {
+      margin: 0;
+      color: #991b1b;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .modal-body {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .modal-warning-box {
+      background: #fff5f5;
+      border-left: 4px solid #ef4444;
+      padding: 12px 14px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #7f1d1d;
+      line-height: 1.5;
+    }
+    .modal-consequence {
+      font-size: 13px;
+      color: #4b5563;
+      line-height: 1.5;
+    }
+    .modal-slug-label {
+      font-size: 12px;
+      font-weight: bold;
+      color: #374151;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .modal-slug-input {
+      min-height: 38px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 14px;
+      width: 100%;
+      box-sizing: border-box;
+      background: #ffffff;
+      color: #111827;
+    }
+    .modal-checkbox-label {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #374151;
+      user-select: none;
+      line-height: 1.4;
+    }
+    .modal-checkbox-label input {
+      margin-top: 2px;
+      width: 16px;
+      height: 16px;
+    }
+    .modal-footer {
+      background: #f9fafb;
+      border-top: 1px solid #e5e7eb;
+      padding: 14px 20px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+    .modal-footer button {
+      min-height: 36px;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .modal-btn-cancel {
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      color: #374151;
+    }
+    .modal-btn-cancel:hover {
+      background: #f3f4f6;
+    }
+    .modal-btn-confirm {
+      border: 1px solid #dc2626;
+      background: #dc2626;
+      color: #ffffff;
+    }
+    .modal-btn-confirm:disabled {
+      background: #fca5a5;
+      border-color: #fca5a5;
+      cursor: not-allowed;
+    }
+
+    /* Reusable Drawer/Modal styling */
+    .drawer-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(2px);
+      z-index: 999;
+      justify-content: flex-end;
+    }
+    .drawer-backdrop.visible {
+      display: flex;
+    }
+    .drawer-panel {
+      background: #ffffff;
+      width: 100%;
+      max-width: 500px;
+      height: 100%;
+      box-shadow: -10px 0 25px -5px rgba(0, 0, 0, 0.1), -5px 0 10px -5px rgba(0, 0, 0, 0.04);
+      display: flex;
+      flex-direction: column;
+      animation: drawerSlideIn 0.25s ease-out;
+    }
+    @keyframes drawerSlideIn {
+      from { transform: translateX(100%); }
+      to { transform: translateX(0); }
+    }
+    .drawer-header {
+      background: var(--surface-muted);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .drawer-header h3 {
+      margin: 0;
+      color: var(--primary-dark);
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .drawer-close-btn {
+      background: transparent;
+      border: 0;
+      font-size: 28px;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 4px 8px;
+    }
+    .drawer-close-btn:hover {
+      color: var(--primary-dark);
+    }
+    .drawer-body {
+      padding: 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .drawer-body .product-form {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      margin: 0;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr;
+    }
+    body.js-enabled #add-product-section {
+      display: none;
+    }
+    body.js-enabled .js-fallback-form-container {
+      display: none;
+    }
+    body:not(.js-enabled) .js-edit-product-btn {
+      display: none;
+    }
+    .duplicate-code-hint {
+      display: none;
+      color: var(--danger);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: none;
+      line-height: 1.4;
+    }
+    .duplicate-code-hint.visible {
+      display: block;
+    }
+    .js-cancel-drawer { display: none; }
+    body.js-enabled .drawer-body .js-cancel-drawer { display: inline-flex; }
+    @media (max-width: 640px) {
+      .product-section table { display: none !important; }
+      .product-mobile-list { display: flex !important; flex-direction: column; gap: 12px; }
+    }
   </style>
 </head>
 <body>
@@ -297,8 +661,9 @@ function renderCounts(counts = {}) {
 }
 
 function renderTable(headers, rows, renderRow) {
-  if (!rows.length) return '<div class="empty">Không có dữ liệu.</div>';
-  return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table>`;
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return '<div class="empty">Không có dữ liệu.</div>';
+  return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${safeRows.map(renderRow).join('')}</tbody></table>`;
 }
 
 function limitNoteBody(value = '', max = 800) {
@@ -370,10 +735,10 @@ function renderPagination(page = {}, filters = {}, queryString = dashboardQueryS
   const currentPage = Math.max(1, Number(page.page || filters.page || 1));
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const previous = page.hasPrevious
-    ? `<a href="${queryString(filters, { [pageParam]: page.previousPage })}">Previous</a>`
+    ? `<a href="${escapeHtml(queryString(filters, { [pageParam]: page.previousPage }))}">Previous</a>`
     : '<span>Previous</span>';
   const next = page.hasNext
-    ? `<a href="${queryString(filters, { [pageParam]: page.nextPage })}">Next</a>`
+    ? `<a href="${escapeHtml(queryString(filters, { [pageParam]: page.nextPage }))}">Next</a>`
     : '<span>Next</span>';
   return `<nav class="pagination" aria-label="Pagination">${previous}<span>Page ${escapeHtml(currentPage)} of ${escapeHtml(totalPages)}</span><span>${escapeHtml(total)} rows</span>${next}</nav>`;
 }
@@ -418,7 +783,7 @@ function renderOperations(operations = {}, filters = {}) {
           <tr>
             <td>${escapeHtml(formatLabel(row.reason))}</td>
             <td>${escapeHtml(formatDate(row.updated_at))}</td>
-            <td><a href="/admin/dashboard/users/${encodeRoutePart(row.sender_id)}${dashboardQueryString(filters)}">${escapeHtml(row.sender_id)}</a></td>
+            <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(row.sender_id)}${dashboardQueryString(filters)}`)}">${escapeHtml(row.sender_id)}</a></td>
             <td>${renderStatus(row.status)}</td>
             <td>${escapeHtml(row.product_code)}</td>
             <td>${escapeHtml(row.detail)}</td>
@@ -511,7 +876,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['updated', 'sender', 'status', 'product', 'name', 'phone', 'address', 'items'], model.orders, order => `
       <tr>
         <td>${escapeHtml(formatDate(order.updated_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(order.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(order.sender_id)}</a></td>
+        <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(order.sender_id)}${dashboardQueryString(model.filters)}`)}">${escapeHtml(order.sender_id)}</a></td>
         <td>${renderStatus(order.status)}</td>
         <td>${escapeHtml(order.product_code)}</td>
         <td>${escapeHtml(limitText(order.customer_name, 80))}</td>
@@ -526,7 +891,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['updated', 'sender', 'state', 'last product', 'last user at'], model.conversations, item => `
       <tr>
         <td>${escapeHtml(formatDate(item.updated_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(item.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(item.sender_id)}</a></td>
+        <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(item.sender_id)}${dashboardQueryString(model.filters)}`)}">${escapeHtml(item.sender_id)}</a></td>
         <td>${escapeHtml(item.session_state)}</td>
         <td>${escapeHtml(item.last_product_code)}</td>
         <td>${escapeHtml(formatDate(item.last_user_at))}</td>
@@ -538,7 +903,7 @@ function renderDashboardHtml(model) {
     ${renderTable(['time', 'sender', 'type', 'source', 'product', 'text'], model.events, event => `
       <tr>
         <td>${escapeHtml(formatDate(event.event_at))}</td>
-        <td><a href="/admin/dashboard/users/${encodeRoutePart(event.sender_id)}${dashboardQueryString(model.filters)}">${escapeHtml(event.sender_id)}</a></td>
+        <td><a href="${escapeHtml(`/admin/dashboard/users/${encodeRoutePart(event.sender_id)}${dashboardQueryString(model.filters)}`)}">${escapeHtml(event.sender_id)}</a></td>
         <td>${escapeHtml(event.type)}</td>
         <td>${escapeHtml(event.source)}</td>
         <td>${escapeHtml(event.product_code)}</td>
@@ -583,10 +948,14 @@ function renderShopsHtml(model = {}) {
     ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
     <h2>Shops</h2>
     ${createLink}
-    ${renderTable(['shop', 'status', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
+    ${renderTable(['shop', 'status', 'package', 'lifecycle', 'live', 'readiness', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
       <tr>
         <td><a href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(shop.name || shop.slug || shop.id)}</a><br><span class="meta"><code>${escapeHtml(shop.id)}</code> ${escapeHtml(shop.slug)}</span></td>
         <td>${renderStatus(shop.status)}</td>
+        <td>${escapeHtml(shop.package || 'basic')}</td>
+        <td>${renderStatus(shop.lifecycle || 'unknown')}</td>
+        <td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td>
+        <td>${renderStatus(shop.last_readiness_status || 'unknown')}</td>
         <td>${escapeHtml(shop.active_page_count || 0)} / ${escapeHtml(shop.page_count || 0)}</td>
         <td>${escapeHtml(shop.product_count || 0)}</td>
         <td>${escapeHtml(shop.asset_count || 0)}</td>
@@ -600,6 +969,8 @@ function renderShopsHtml(model = {}) {
 
 function renderShopCreateHtml({ values = {}, error = '' } = {}) {
   const status = String(values.status || 'active');
+  const packageName = String(values.package || values.shop_package || 'basic');
+  const lifecycle = String(values.lifecycle || 'draft');
   const botMode = String(values.bot_mode || 'menu_code_handoff');
   const statusOptions = ['active', 'paused', 'archived']
     .map(value => `<option value="${escapeHtml(value)}"${status === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
@@ -611,6 +982,16 @@ function renderShopCreateHtml({ values = {}, error = '' } = {}) {
     ['disabled', 'Disabled']
   ]
     .map(([value, label]) => `<option value="${escapeHtml(value)}"${botMode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const packageOptions = [
+    ['basic', 'Gói Cơ Bản'],
+    ['sales_flow', 'Gói Tự Động'],
+    ['self_closing_addons', 'Gói Chốt Đơn / add-ons']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${packageName === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const lifecycleOptions = ['draft', 'configuring', 'ready', 'live', 'paused', 'archived']
+    .map(value => `<option value="${escapeHtml(value)}"${lifecycle === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
     .join('');
   const body = `
     <p><a href="/admin/shops">Back to shops</a></p>
@@ -624,6 +1005,12 @@ function renderShopCreateHtml({ values = {}, error = '' } = {}) {
       </label>
       <label>Status
         <select name="status">${statusOptions}</select>
+      </label>
+      <label>Package
+        <select name="package">${packageOptions}</select>
+      </label>
+      <label>Lifecycle
+        <select name="lifecycle">${lifecycleOptions}</select>
       </label>
       <label>Bot mode
         <select name="bot_mode">${botModeOptions}</select>
@@ -680,25 +1067,34 @@ function renderProductAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
     <h3>Add product</h3>
-    <label>Product code <span class="required">required</span><input name="code" maxlength="80" required aria-required="true" autocomplete="off"></label>
+    <label>Product code <span class="required">required</span>
+      <input name="code" maxlength="80" required aria-required="true" autocomplete="off">
+      <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+      <span class="help">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
+      <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
+    </label>
     <label>Name / title <span class="required">required</span><input name="name" maxlength="180" required aria-required="true"></label>
     <label>Price text<input name="price_text" maxlength="120" placeholder="150k"></label>
     <label>Sort order<input name="sort_order" type="number" value="0"></label>
-    <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
+    <label>Status
+      <select name="status"><option value="active">active</option><option value="hidden">hidden</option></select>
+      <span class="help">Ở trạng thái active, bot có thể tự động trả lời thông tin sản phẩm này.</span>
+    </label>
     <label>Category<input name="category" maxlength="80"></label>
     <label>Tags<input name="tags" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000"></textarea></label>
-    <div class="form-actions"><button type="submit">Add product</button><span class="meta">Required fields: code and name/title.</span></div>
+    <div class="form-actions"><button type="submit" class="js-product-save-btn">Tạo sản phẩm (Lưu mới)</button><button type="button" class="js-cancel-drawer secondary-button">Hủy bỏ</button><span class="meta">Required fields: code and name/title.</span></div>
   </form>`;
 }
 
 function renderProductBulkImportForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/import`;
+  const storageKey = productImportStorageKey(shopId);
   const sample = [
     'code,name,price_text,description,image_url,category,tags,metadata_json,status,sort_order',
     'M7,Demo Product M7,150k,Demo product,https://example.com/m7.png,demo,"hot,new","{""size"":""M""}",active,1'
   ].join('\n');
-  return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}">
+  return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}" data-product-import-form data-product-import-storage-key="${escapeHtml(storageKey)}">
     <h3>Bulk import products</h3>
     <div class="import-help">
       <p><strong>Required columns:</strong> <code>code</code>, <code>name</code></p>
@@ -714,9 +1110,8 @@ function renderProductBulkImportForm(shopId = '') {
       <div class="import-preview-scroll" data-product-import-preview-table></div>
     </div>
     <div class="form-actions">
-      <button type="submit" name="validate_only" value="true" class="secondary-button">Validate only</button>
-      <button type="submit">Import products</button>
-      <span class="meta">Upserts by product code. Optional image_url creates or updates product_image assets.</span>
+      <button type="submit" name="validate_only" value="true" class="secondary-button" data-product-import-server-preview>Xem trước CSV</button>
+      <span class="meta">Bản xem trước server phân loại tạo mới, cập nhật, mã đã lưu trữ, trùng trong tệp và lỗi. Nhập chính thức chỉ mở sau khi không có lỗi chặn.</span>
     </div>
   </form>`;
 }
@@ -739,39 +1134,196 @@ function renderProductImportErrorsTable(errors = []) {
   });
 }
 
+function renderProductImportPreviewStatus(value = '') {
+  const status = String(value || '').trim().toLowerCase();
+  const label = {
+    create: 'Tạo mới',
+    update: 'Cập nhật',
+    archived_conflict: 'Trùng mã đã lưu trữ',
+    duplicate_in_csv: 'Trùng trong tệp',
+    error: 'Lỗi'
+  }[status] || 'Lỗi';
+  const css = {
+    create: 'status status-success',
+    update: 'status status-neutral',
+    archived_conflict: 'status status-danger',
+    duplicate_in_csv: 'status status-warning',
+    error: 'status status-danger'
+  }[status] || 'status status-danger';
+  return `<span class="${css}">${escapeHtml(label)}</span>`;
+}
+
+function renderProductImportSummaryBand(result = {}) {
+  const ignoredColumns = Array.isArray(result?.ignored_columns) ? result.ignored_columns : [];
+  const items = [{
+    label: 'Sẽ tạo',
+    value: Number(result?.create_count || 0)
+  }, {
+    label: 'Sẽ cập nhật',
+    value: Number(result?.update_count || 0)
+  }, {
+    label: 'Trùng mã đã lưu trữ',
+    value: Number(result?.archived_conflict_count || 0)
+  }, {
+    label: 'Trùng trong tệp',
+    value: Number(result?.duplicate_count || 0)
+  }, {
+    label: 'Lỗi',
+    value: Number(result?.error_count || 0)
+  }, {
+    label: 'Cột bị bỏ qua',
+    value: ignoredColumns.length,
+    title: ignoredColumns.join(', ')
+  }];
+  return `<div class="import-summary-band">
+    ${items.map(item => `<div class="import-summary-item"${item.title ? ` title="${escapeHtml(item.title)}"` : ''}><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
+  </div>`;
+}
+
+function safeCount(value = 0) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function renderProductImportFinalSummaryBand(result = {}) {
+  const createdCount = safeCount(result?.created_count ?? result?.create_count ?? result?.products_created);
+  const updatedCount = safeCount(result?.updated_count ?? result?.update_count ?? result?.products_updated);
+  const explicitSkipped = result?.unchanged_skipped_count
+    ?? result?.unchanged_or_skipped_count
+    ?? result?.unchanged_count
+    ?? result?.skipped_count
+    ?? result?.products_unchanged
+    ?? result?.products_skipped;
+  const totalProcessed = safeCount(result?.total_processed ?? result?.rows_processed ?? result?.rows_received);
+  const skippedCount = explicitSkipped == null
+    ? Math.max(0, totalProcessed - createdCount - updatedCount)
+    : safeCount(explicitSkipped);
+  const items = [{
+    label: 'Đã tạo mới',
+    value: createdCount
+  }, {
+    label: 'Đã cập nhật',
+    value: updatedCount
+  }, {
+    label: 'Bỏ qua / Không đổi',
+    value: skippedCount
+  }, {
+    label: 'Tổng dòng xử lý',
+    value: totalProcessed
+  }];
+  return `<div class="import-summary-band" aria-label="Product import result summary">
+    ${items.map(item => `<div class="import-summary-item"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
+  </div>`;
+}
+
 function renderProductImportPreviewTable(rows = []) {
   const previewRows = Array.isArray(rows) ? rows : [];
   if (!previewRows.length) return '<div class="empty">No preview rows were returned.</div>';
-  return renderTable(['row', 'code', 'name', 'status', 'sort_order', 'image', 'metadata keys'], previewRows, row => `
+  return renderTable(['row', 'status', 'code', 'name', 'product status', 'sort_order', 'image', 'message'], previewRows, row => `
     <tr>
       <td>${escapeHtml(row.row || 0)}</td>
-      <td><code>${escapeHtml(row.code || '')}</code></td>
-      <td>${escapeHtml(row.name || '')}</td>
-      <td>${renderStatus(row.status || '')}</td>
+      <td>${renderProductImportPreviewStatus(row.status || '')}</td>
+      <td><code>${escapePreviewHtml(row.code || '')}</code></td>
+      <td>${escapePreviewHtml(row.name || '')}</td>
+      <td>${row.product_status ? renderStatus(row.product_status) : '<span class="meta">not shown</span>'}</td>
       <td>${escapeHtml(row.sort_order || 0)}</td>
       <td>${escapeHtml(row.has_image_url ? 'yes' : 'no')}</td>
-      <td>${escapeHtml(Array.isArray(row.metadata_keys) ? row.metadata_keys.join(', ') : '')}</td>
+      <td>${escapePreviewHtml(row.message || '')}</td>
     </tr>
   `);
 }
 
+function renderProductImportConfirmForm(shopId = '', result = {}) {
+  const hasBlocking = Boolean(result?.blocking || result?.blocking_error_count > 0);
+  if (!result?.validate_only || hasBlocking) return '';
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/products/import`;
+  const storageKey = productImportStorageKey(shopId);
+  return `
+    <form class="import-confirm-form" method="post" action="${escapeHtml(action)}" data-product-import-confirm data-product-import-storage-key="${escapeHtml(storageKey)}">
+      <textarea name="csv" hidden aria-hidden="true"></textarea>
+      <button type="submit" disabled>Nhập chính thức</button>
+      <span class="meta">Import sẽ được kiểm tra lại ở server và vẫn là all-or-nothing.</span>
+      <span class="meta" data-product-import-confirm-missing hidden>Không tìm thấy CSV đã xem trước trong trình duyệt này. Quay lại form nhập CSV để xem trước lại.</span>
+    </form>
+    <script>
+      (() => {
+        const form = document.querySelector('[data-product-import-confirm]');
+        if (!form) return;
+        const field = form.querySelector('textarea[name="csv"]');
+        const button = form.querySelector('button[type="submit"]');
+        const missing = form.querySelector('[data-product-import-confirm-missing]');
+        const key = ${jsString(storageKey)};
+        let csv = '';
+        try {
+          csv = window.sessionStorage.getItem(key) || '';
+        } catch (_) {}
+        if (csv && field) {
+          field.value = csv;
+          if (button) button.disabled = false;
+          if (missing) missing.hidden = true;
+        } else {
+          if (button) button.disabled = true;
+          if (missing) missing.hidden = false;
+        }
+        form.addEventListener('submit', (event) => {
+          if (!field || !field.value) {
+            event.preventDefault();
+            if (button) button.disabled = true;
+            if (missing) missing.hidden = false;
+          }
+        });
+      })();
+    </script>
+  `;
+}
+
+function renderProductImportNextActions(shopId = '') {
+  const productHref = `/admin/shops/${encodeRoutePart(shopId)}#products`;
+  const assetHref = `/admin/shops/${encodeRoutePart(shopId)}#assets`;
+  const readinessAction = `/admin/shops/${encodeRoutePart(shopId)}/readiness-check`;
+  return `<section class="checklist-card" aria-label="Product import next actions">
+    <h2>Tiếp theo</h2>
+    <div class="import-confirm-form">
+      <a class="button-link" href="${escapeHtml(productHref)}">Quay lại Danh mục sản phẩm</a>
+      <a class="button-link secondary-button" href="${escapeHtml(assetHref)}">Kiểm tra sản phẩm thiếu ảnh</a>
+      <form method="post" action="${escapeHtml(readinessAction)}" style="margin: 0;">
+        <button type="submit" class="button-link secondary-button">Chạy kiểm tra hoàn tất nếu cần</button>
+      </form>
+    </div>
+  </section>`;
+}
+
 function renderProductImportResultHtml({ shopId = '', result = null, error = null } = {}) {
   const backHref = `/admin/shops/${encodeRoutePart(shopId)}#products`;
+  const resultHasBlocking = Boolean(result?.blocking || result?.blocking_error_count > 0);
+  const resultIsPreview = Boolean(result?.validate_only);
   const body = error
     ? `
-      <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
-      <div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Product import validation failed.')}</div>
+      <p><a href="${escapeHtml(backHref)}">Quay lại Danh mục sản phẩm</a></p>
+      <div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Product import validation failed.')} Import chưa được áp dụng. Không có sản phẩm nào được tạo mới hoặc cập nhật.</div>
       <p class="meta">Rows received: ${escapeHtml(error.rows_received || 0)}${Array.isArray(error.ignored_columns) && error.ignored_columns.length ? ` | ignored columns: ${escapeHtml(error.ignored_columns.join(', '))}` : ''}</p>
       ${renderProductImportErrorsTable(error.errors || [])}
     `
+    : !resultIsPreview
+      ? `
+      <p><a href="${escapeHtml(backHref)}">Quay lại Danh mục sản phẩm</a></p>
+      <div class="banner banner-success" role="status">Nhập sản phẩm CSV đã hoàn tất. Import được áp dụng theo cơ chế all-or-nothing.</div>
+      ${renderProductImportFinalSummaryBand(result || {})}
+      <p class="meta">Ảnh đã tạo/cập nhật: ${escapeHtml(result?.image_assets_touched || 0)} | Dòng không có ảnh: ${escapeHtml(result?.product_images_skipped || 0)}</p>
+      ${Array.isArray(result?.ignored_columns) && result.ignored_columns.length ? `<p class="meta">Ignored columns: ${escapeHtml(result.ignored_columns.join(', '))}</p>` : ''}
+      ${renderProductImportNextActions(shopId)}
+    `
     : `
-      <p><a href="${escapeHtml(backHref)}">Back to products</a></p>
-      <div class="banner banner-success" role="status">${escapeHtml(result?.validate_only ? 'Validation passed. No products were written.' : 'Product import completed.')}</div>
+      <p><a href="${escapeHtml(backHref)}">Quay lại Danh mục sản phẩm</a></p>
+      <div class="banner ${resultHasBlocking ? 'banner-warning' : 'banner-success'}" role="status">${escapeHtml(result?.validate_only ? (resultHasBlocking ? 'CSV preview found blocking rows. No products were written.' : 'CSV preview passed. No products were written.') : 'Product import completed.')}</div>
       <p class="meta">Rows received: ${escapeHtml(result?.rows_received || 0)} | products created: ${escapeHtml(result?.products_created || 0)} | products updated: ${escapeHtml(result?.products_updated || 0)} | image assets touched: ${escapeHtml(result?.image_assets_touched || 0)}</p>
+      ${renderProductImportSummaryBand(result || {})}
       ${Array.isArray(result?.ignored_columns) && result.ignored_columns.length ? `<p class="meta">Ignored columns: ${escapeHtml(result.ignored_columns.join(', '))}</p>` : ''}
       <h2>Server Preview</h2>
-      <p class="meta">Preview is sanitized and limited to the first 10 rows.</p>
+      <p class="meta">Preview is read-only, sanitized, and capped at the CSV import row limit. Final import revalidates server-side.</p>
       ${renderProductImportPreviewTable(result?.preview_rows || [])}
+      ${resultHasBlocking ? renderProductImportErrorsTable(result?.errors || []) : ''}
+      ${renderProductImportConfirmForm(shopId, result || {})}
     `;
   return renderLayout('Product Import', body);
 }
@@ -806,24 +1358,356 @@ function renderBulkMenuImageImportResultHtml({ shopId = '', error = null } = {})
 function renderPageMappingAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
-    <h3>Add page mapping</h3>
-    <label>Page ID <span class="required">required</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"><span class="page-id-help">The numeric Facebook Page ID. Find it in <strong>Facebook Page Settings &rarr; About</strong> or in the page URL. Handle this value carefully &mdash; it connects the bot to a specific Facebook page.</span></label>
-    <label>Page name<input name="page_name" maxlength="180"></label>
-    <div class="form-actions"><button type="submit">Add mapping</button><span class="meta">Creates an active page mapping only. Credentials are added separately below.</span></div>
+    <h3>Thêm kết nối Fanpage (Page Mapping)</h3>
+    <label>ID Trang (Page ID) <span class="required">bắt buộc</span><input name="page_id" maxlength="120" required aria-required="true" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}"><span class="page-id-help">ID Trang Facebook dạng số. Bạn có thể tìm thấy tại <strong>Cài đặt Trang Facebook &rarr; Giới thiệu</strong> hoặc trong URL của trang. Bảo mật giá trị này cẩn thận &mdash; nó liên kết bot với một trang cụ thể.</span></label>
+    <label>Tên Trang (Không bắt buộc)<input name="page_name" maxlength="180"></label>
+    <div class="form-actions"><button type="submit">Thêm liên kết Trang</button><span class="meta">Chỉ tạo liên kết định danh. Mã Token gửi tin sẽ được điền riêng ở cột bên phải bên dưới.</span></div>
   </form>`;
 }
 
-function renderPageCredentialForm(shopId = '', page = {}) {
+function renderCredentialReplacementSafetyList() {
+  const items = [
+    'Không dán token staging vào production.',
+    'Token sẽ được mã hóa bằng khóa của môi trường hiện tại.',
+    'Token không hiển thị lại sau khi lưu.',
+    'Thay token có thể ảnh hưởng khả năng bot trả lời nếu token sai môi trường, hết quyền, hoặc không thuộc Page này.',
+    'Không tự động gọi Meta Graph API hoặc chạy kiểm tra sức khỏe token khi lưu.',
+    'Sau khi thay token, hãy chạy lại kiểm tra hoàn tất.'
+  ];
+  return `<ul class="credential-safety-list">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+}
+
+function renderPageCredentialForm(shopId = '', page = {}, shop = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/credentials`;
+  const isReplacing = Number(page.active_credential_count || 0) > 0;
+  const expectedShopSlug = String(shop.slug || shop.id || shopId || '').trim();
+  const credentialSafetyList = renderCredentialReplacementSafetyList();
+
+  if (isReplacing) {
+    const warningText = 'Bạn đang chuẩn bị thay thế mã Token đang hoạt động của Fanpage. Không dán token staging vào production.';
+    const consequenceText = 'Token sẽ được mã hóa bằng khóa của môi trường hiện tại. Token không hiển thị lại sau khi lưu. Không có Meta/token health check tự động; bot có thể mất khả năng trả lời nếu token không đúng. Sau khi thay token, hãy chạy lại kiểm tra hoàn tất.';
+    return `<div class="credential-replace-panel" data-credential-replacement="true">
+      <h4>Thay thế Quyền gửi tin (Token)</h4>
+      <p>Đây là thay đổi nhạy cảm với môi trường. Token mới chỉ được lưu mã hóa và không được hiển thị lại.</p>
+      ${credentialSafetyList}
+      <form class="product-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-danger-confirm-scope="credential-replacement" data-action-title="Thay thế Quyền gửi tin (Token)" data-warning-text="${escapeHtml(warningText)}" data-consequence-text="${escapeHtml(consequenceText)}" data-checkbox-text="Tôi hiểu thay token có thể ảnh hưởng khả năng bot trả lời và hệ thống không chạy kiểm tra Meta tự động." data-countdown-seconds="3" data-submit-label="Thay thế mã Token" data-expected-confirm-text="ROTATE" data-shop-slug="${escapeHtml(expectedShopSlug)}">
+      <input type="hidden" name="credential_type" value="fb_page_token">
+      <input type="hidden" name="rotate" value="true">
+      <div class="credential-confirm-grid">
+        <label>Mã Token mới <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="new-password"></label>
+        <label class="credential-js-fallback-control">Nhập mã cửa hàng <code>${escapeHtml(expectedShopSlug)}</code> <span class="required">bắt buộc</span>
+          <input name="shop_slug_confirmation" maxlength="160" required aria-required="true" autocomplete="off" pattern="${escapeHtml(escapeHtmlPattern(expectedShopSlug))}" title="Nhập đúng shop slug để xác nhận." data-js-confirm-fallback="true">
+        </label>
+        <label>Xác nhận bằng chữ ROTATE <span class="required">bắt buộc</span>
+          <input name="confirmation_text" placeholder="ROTATE" maxlength="20" required aria-required="true" autocomplete="off" pattern="ROTATE" data-confirm-text-input="true">
+        </label>
+        <label class="checkbox-label credential-js-fallback-control">
+          <input type="checkbox" name="operator_ack" value="credential-replace-risk" required aria-required="true" data-js-confirm-fallback="true">
+          Tôi hiểu token phải nhập đúng môi trường và việc thay token có thể làm bot không trả lời được.
+        </label>
+      </div>
+      <p class="credential-no-js-note">Khi bật JavaScript, bước cuối sẽ mở hộp xác nhận yêu cầu checkbox, nhập shop slug và chờ 3 giây trước khi gửi. Không có kiểm tra Meta tự động trong thao tác này.</p>
+      <div class="form-actions"><button type="submit">Thay thế mã Token</button></div>
+    </form>
+    </div>`;
+  }
+
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
     <input type="hidden" name="credential_type" value="fb_page_token">
-    <label>Credential <span class="required">required</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="off"></label>
+    <label>Mã Token kết nối <span class="required">bắt buộc</span><input name="token" type="password" minlength="20" maxlength="5000" required aria-required="true" autocomplete="new-password"></label>
     <label class="checkbox-label">
       <input type="checkbox" name="rotate" value="true">
-      Rotate existing active credential
+      Thay thế (Rotate) mã Token cũ đang hoạt động
     </label>
-    <div class="form-actions"><button type="submit">Save credential</button></div>
+    <div class="form-actions"><button type="submit">Lưu mã Token</button></div>
   </form>`;
+}
+
+function isPageSetupPreviewMode(shop = {}) {
+  const isDemoShop = [shop.id, shop.slug]
+    .map(value => String(value || '').trim().toLowerCase())
+    .includes('demo-shop');
+  return isDemoShop
+    && String(shop.lifecycle || '').trim().toLowerCase() === 'configuring'
+    && shop.live_enabled === false;
+}
+
+function renderPageSetupPreviewSection(shopId = '') {
+  const pageAction = `/admin/shops/${encodeRoutePart(shopId)}/pages/preview`;
+  const credentialAction = `/admin/shops/${encodeRoutePart(shopId)}/page-credentials/preview`;
+  return `<section class="checklist-card" id="page-setup-preview" aria-label="Page setup preview">
+    <h2>Page Setup Preview</h2>
+    <p class="meta">Validate demo-shop setup inputs without creating mappings, saving credentials, running token health checks, or sending Messenger messages.</p>
+    <div class="ops-grid">
+      <form class="product-form" method="post" action="${escapeHtml(pageAction)}">
+        <h3>Page Mapping Preview</h3>
+        <input type="hidden" name="validate_only" value="true">
+        <label>Page ID <span class="required">required</span><input name="page_id" maxlength="64" required aria-required="true" autocomplete="off" inputmode="numeric" pattern="[0-9]{5,32}"></label>
+        <label>Page name<input name="page_name" maxlength="180"></label>
+        <div class="form-actions"><button type="submit">Preview mapping</button><span class="meta">Returns a hashed page reference and duplicate status only.</span></div>
+      </form>
+      <form class="product-form" method="post" action="${escapeHtml(credentialAction)}">
+        <h3>Credential Prerequisites Preview</h3>
+        <input type="hidden" name="validate_only" value="true">
+        <label>Credential type
+          <select name="credential_type"><option value="fb_page_token" selected>fb_page_token</option></select>
+        </label>
+        <div class="form-actions"><button type="submit">Preview credential</button><span class="meta">No token field is accepted in preview mode.</span></div>
+      </form>
+    </div>
+  </section>`;
+}
+
+function renderPageCredentialPreviewDisabled() {
+  return '<span class="meta">Credential writes are disabled in preview mode.</span>';
+}
+
+function resolveAdminEnvironmentBadge(env = process.env) {
+  const values = [
+    env.ADMIN_ENV,
+    env.RAILWAY_ENVIRONMENT,
+    env.RAILWAY_ENVIRONMENT_NAME,
+    env.NODE_ENV
+  ].map(value => String(value || '').trim().toLowerCase());
+  if (values.some(value => value.includes('prod'))) return { label: 'production', className: 'env-production' };
+  if (values.some(value => value.includes('staging'))) return { label: 'staging', className: 'env-staging' };
+  return { label: 'local', className: 'env-local' };
+}
+
+function isAdultShopView(shop = {}) {
+  return [shop.id, shop.slug]
+    .map(value => String(value || '').trim().toLowerCase())
+    .includes('adult-shop');
+}
+
+function pageStatus(page = {}) {
+  return String(page.status || '').trim().toLowerCase();
+}
+
+function isShopReadinessStale(shop = {}) {
+  return String(shop.last_readiness_status || '').trim().toLowerCase() === 'unknown'
+    && !shop.last_readiness_checked_at;
+}
+
+function renderPageCredentialCount(page = {}) {
+  if (page.active_credential_count == null) return '<span class="meta">unknown</span>';
+  return escapeHtml(Number(page.active_credential_count || 0));
+}
+
+function renderPageArchiveForm(shopId = '', page = {}, shop = {}) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/pages/${encodeRoutePart(page.id)}/archive`;
+  return `<form class="product-form compact inline-action danger" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Lưu trữ liên kết Fanpage" data-warning-text="Hành động này sẽ ngắt kết nối Fanpage khỏi cửa hàng." data-consequence-text="Bot sẽ không nhận được tin nhắn và không thể gửi tin nhắn tự động qua trang này nữa. Credentials liên kết cũng sẽ bị lưu trữ." data-submit-label="Lưu trữ liên kết Fanpage" data-expected-confirm-text="ARCHIVE MAPPING" data-shop-slug="${escapeHtml(shop.slug || '')}">
+    <input type="hidden" name="source" value="admin_ui">
+    <label>Nhập từ khóa xác nhận
+      <input name="confirmation_text" maxlength="80" required aria-required="true" autocomplete="off" placeholder="ARCHIVE MAPPING" data-confirm-text-input="true">
+    </label>
+    <div class="form-actions"><button type="submit" onclick="return confirm('Archive this mapping? It will archive active credentials for this mapping, not delete anything.');">Archive mapping</button></div>
+  </form>`;
+}
+
+function renderActivePageMappingsTable({
+  shopId = '',
+  pages = [],
+  pageSetupPreviewMode = false,
+  archiveEnabled = false,
+  shop = {}
+} = {}) {
+  const headers = ['page ref', 'name', 'status', 'active credentials', 'updated', 'credential action'];
+  if (archiveEnabled) headers.push('archive');
+  return renderTable(headers, pages, page => `
+    <tr>
+      <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
+      <td>${escapeHtml(page.page_name)}</td>
+      <td>${renderStatus(page.status)}</td>
+      <td>${renderPageCredentialCount(page)}</td>
+      <td>${escapeHtml(formatDate(page.updated_at))}</td>
+      <td>${pageSetupPreviewMode ? renderPageCredentialPreviewDisabled() : renderPageCredentialForm(shopId, page, shop)}</td>
+      ${archiveEnabled ? `<td>${renderPageArchiveForm(shopId, page, shop)}</td>` : ''}
+    </tr>
+  `);
+}
+
+function renderReadOnlyPageMappingsTable(pages = []) {
+  return renderTable(['page ref', 'name', 'status', 'active credentials', 'updated'], pages, page => `
+    <tr>
+      <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
+      <td>${escapeHtml(page.page_name)}</td>
+      <td>${renderStatus(page.status)}</td>
+      <td>${renderPageCredentialCount(page)}</td>
+      <td>${escapeHtml(formatDate(page.updated_at))}</td>
+    </tr>
+  `);
+}
+
+function resolveActiveCredentialCount(model = {}, activeMappings = []) {
+  const counts = activeMappings
+    .map(page => page.active_credential_count)
+    .filter(value => value != null)
+    .map(value => Number(value || 0));
+  if (counts.length) return counts.reduce((sum, value) => sum + value, 0);
+  if (model.onboarding?.counts?.active_credential_count != null) {
+    return Number(model.onboarding.counts.active_credential_count || 0);
+  }
+  if (model.credentials?.active_fb_page_token_count != null) {
+    return Number(model.credentials.active_fb_page_token_count || 0);
+  }
+  return 0;
+}
+
+function resolveFanpageConnectionState({ activeMappingCount = 0, activeCredentialCount = 0 } = {}) {
+  if (activeMappingCount > 1 || activeCredentialCount > 1) {
+    return {
+      code: 'S6',
+      label: 'XUNG ĐỘT KẾT NỐI',
+      className: 'state-danger',
+      help: 'Có nhiều liên kết hoặc nhiều quyền gửi tin đang hoạt động. Cần kỹ thuật kiểm tra trước khi vận hành.'
+    };
+  }
+  if (activeMappingCount === 0) {
+    return {
+      code: 'S0',
+      label: 'CHƯA KẾT NỐI',
+      className: 'state-danger',
+      help: 'Shop chưa có Page Mapping đang hoạt động nên bot chưa biết tin nhắn từ Page nào thuộc shop này.'
+    };
+  }
+  if (activeMappingCount === 1 && activeCredentialCount === 0) {
+    return {
+      code: 'S1',
+      label: 'THIẾU QUYỀN GỬI TIN',
+      className: 'state-warning',
+      help: 'Shop đã biết Page nhận tin nhưng chưa có token được mã hóa để bot trả lời khách.'
+    };
+  }
+  if (activeMappingCount === 1 && activeCredentialCount === 1) {
+    return {
+      code: 'S2',
+      label: 'ĐÃ KẾT NỐI',
+      className: 'state-ok',
+      help: 'Shop có đúng một Page Mapping và một quyền gửi tin đang hoạt động.'
+    };
+  }
+  return {
+    code: 'UNKNOWN',
+    label: 'CẦN KIỂM TRA',
+    className: 'state-neutral',
+    help: 'Trạng thái hiện tại không khớp mẫu vận hành chuẩn. Cần kiểm tra dữ liệu trước khi chạy thật.'
+  };
+}
+
+function renderFanpageConnectionCard(model = {}) {
+  const shop = model.shop || {};
+  const pages = Array.isArray(model.pages) ? model.pages : [];
+  const activeMappings = pages.filter(page => pageStatus(page) === 'active');
+  const activeCredentialCount = resolveActiveCredentialCount(model, activeMappings);
+  const state = resolveFanpageConnectionState({
+    activeMappingCount: activeMappings.length,
+    activeCredentialCount
+  });
+  const envBadge = resolveAdminEnvironmentBadge();
+  const activeRefs = activeMappings
+    .map(page => page.page_ref || (page.page_id ? pageRef(page.page_id) : ''))
+    .filter(Boolean);
+  const primaryRef = activeRefs.length === 1 ? activeRefs[0] : '';
+  const tokenCta = activeMappings.length === 1
+    ? '<a class="button-link" href="#page-credential-actions">Thay thế Token</a>'
+    : '<button type="button" class="connection-action-disabled" disabled>Thay thế Token</button>';
+
+  return `
+    <section class="connection-card" aria-label="Current Fanpage connection">
+      <div class="connection-card-header">
+        <div>
+          <h3>Current Connection / Kết nối hiện tại</h3>
+          <p class="meta">Kết nối Fanpage = cho ZenBot biết tin nhắn từ Page nào thuộc shop này.</p>
+        </div>
+        <span class="environment-badge ${escapeHtml(envBadge.className)}">Môi trường: ${escapeHtml(envBadge.label)}</span>
+      </div>
+      <div class="connection-state-row">
+        <span class="connection-state-label ${escapeHtml(state.className)}">${escapeHtml(state.label)}</span>
+        <span class="meta">${escapeHtml(state.code)} - ${escapeHtml(state.help)}</span>
+      </div>
+      ${isShopReadinessStale(shop) ? '<p class="meta">Cần chạy lại kiểm tra hoàn tất</p>' : ''}
+      <div class="connection-summary-grid">
+        <div class="connection-summary-item">
+          <span>Active mapping</span>
+          <strong>${escapeHtml(activeMappings.length)}</strong>
+          <span class="meta">${primaryRef ? `Page ref ${escapeHtml(primaryRef)}` : 'Không hiển thị Page ID thô'}</span>
+        </div>
+        <div class="connection-summary-item">
+          <span>Quyền gửi tin</span>
+          <strong>${escapeHtml(activeCredentialCount)}</strong>
+          <span class="meta">Token được mã hóa để bot trả lời khách.</span>
+        </div>
+        <div class="connection-summary-item">
+          <span>Token visibility</span>
+          <strong>Không hiển thị lại</strong>
+          <span class="meta">Token không bao giờ hiển thị lại sau khi lưu.</span>
+        </div>
+      </div>
+      ${activeRefs.length > 1 ? `
+        <div class="empty">
+          <strong>Page refs đang active:</strong>
+          ${activeRefs.map(ref => `<code>${escapeHtml(ref)}</code>`).join(' ')}
+        </div>
+      ` : ''}
+      <ul class="connection-notes">
+        <li>Token phải nhập đúng môi trường vì staging/prod keys khác nhau.</li>
+        <li>Không tự động kiểm tra Meta trong màn hình này.</li>
+      </ul>
+      <div class="connection-actions" id="connection-actions">
+        ${tokenCta}
+        <button type="button" class="connection-action-disabled" disabled title="Chưa triển khai thay thế Trang trong tác vụ này">Thay thế Trang</button>
+        <span class="meta">Các nút thay thế là lối vào UX; tác vụ này không đổi hành vi thay thế.</span>
+      </div>
+    </section>
+  `;
+}
+
+function renderPageMappingsSection({
+  shop = {},
+  pages = [],
+  pageSetupPreviewMode = false,
+  archiveEnabled = false
+} = {}) {
+  const activeMappings = (pages || []).filter(page => pageStatus(page) === 'active');
+  const archivedMappings = (pages || []).filter(page => pageStatus(page) === 'archived');
+  const otherMappings = (pages || []).filter(page => !['active', 'archived'].includes(pageStatus(page)));
+  const canArchive = Boolean(archiveEnabled) && !isAdultShopView(shop);
+  return `
+    <section class="asset-group" id="page-credential-actions">
+      <h3>Active Mappings</h3>
+      ${renderActivePageMappingsTable({
+        shopId: shop.id,
+        pages: activeMappings,
+        pageSetupPreviewMode,
+        archiveEnabled: canArchive,
+        shop
+      })}
+    </section>
+    ${otherMappings.length ? `
+      <section class="asset-group">
+        <h3>Other Mappings</h3>
+        ${renderReadOnlyPageMappingsTable(otherMappings)}
+      </section>
+    ` : ''}
+    ${archivedMappings.length ? `<details class="collapsible-section">
+      <summary>Archived Mappings (${escapeHtml(archivedMappings.length)})</summary>
+      ${renderReadOnlyPageMappingsTable(archivedMappings)}
+    </details>` : ''}
+  `;
+}
+
+function renderPageSetupPreviewResultHtml({ shopId = '', title = 'Page Setup Preview', result = null, error = null } = {}) {
+  const backHref = `/admin/shops/${encodeRoutePart(shopId)}#page-setup-preview`;
+  const body = `
+    <p><a href="${escapeHtml(backHref)}">Back to page setup preview</a></p>
+    ${error ? `<div class="banner banner-error" role="alert">${escapeHtml(error.message || 'Preview failed.')}</div>` : ''}
+    ${result ? `
+      <div class="banner banner-success" role="status">Preview completed. No setup data was written.</div>
+      ${renderJsonBlock(result)}
+    ` : ''}
+  `;
+  return renderLayout(title, body);
 }
 
 function renderOnboardingChecklist(onboarding = {}) {
@@ -849,34 +1733,334 @@ function renderOnboardingChecklist(onboarding = {}) {
   </section>`;
 }
 
+function renderControlPlaneOptions(values = [], selected = '') {
+  const current = String(selected || '');
+  return values
+    .map(value => `<option value="${escapeHtml(value)}"${current === value ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+    .join('');
+}
+
+function renderReadinessIssues(title = '', rows = [], className = 'banner-error') {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return '';
+  return `<div class="banner ${escapeHtml(className)}" role="status">
+    <strong>${escapeHtml(title)}</strong>
+    <ul>
+      ${list.map(row => `<li><strong>${escapeHtml(row.label || row.key || '')}</strong>${row.detail ? ` - ${escapeHtml(row.detail)}` : ''}${row.next_action ? ` Next: ${escapeHtml(row.next_action)}` : ''}</li>`).join('')}
+    </ul>
+  </div>`;
+}
+
+function renderDryRunStatus(value) {
+  if (value === true) return renderStatus('true');
+  if (value === false) return renderStatus('false');
+  return renderStatus('unknown');
+}
+
+function renderDryRunControls(shop = {}) {
+  const shopId = String(shop.id || '');
+  const dryRun = shop.dry_run;
+  const readinessStatus = String(shop.last_readiness_status || '').toLowerCase();
+  const enableAction = `/admin/shops/${encodeRoutePart(shopId)}/dry-run/enable`;
+  const disableAction = `/admin/shops/${encodeRoutePart(shopId)}/dry-run/disable`;
+
+  const globalNote = '<p class="meta"><strong>Lưu ý:</strong> Chế độ an toàn toàn cục <code>MESSENGER_DRY_RUN=true</code> đang bật và sẽ luôn ngăn tất cả tin nhắn thật gửi đi, bất kể cấu hình riêng của shop này.</p>';
+
+  // dry_run=false → show warning and re-enable form
+  if (dryRun === false) {
+    return `
+      <div class="banner banner-warning" role="alert" id="dry-run-warning">
+        <strong>&#9888; Cửa hàng đang ở chế độ CHẠY THẬT (Gửi tin nhắn thật).</strong>
+        Chế độ chạy thử an toàn (dry-run) hiện đang <strong>TẮT</strong>. Tin nhắn có thể được gửi trực tiếp đến người dùng thật nếu hệ thống toàn cục cho phép.
+        Sử dụng biểu mẫu bên dưới để bật lại chế độ chạy thử an toàn.
+      </div>
+      ${globalNote}
+      <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run" data-danger-confirm="true" data-action-title="Bật lại chế độ test an toàn cho cửa hàng" data-warning-text="Bạn chuẩn bị bật lại chế độ test an toàn (Dry-Run: BẬT)." data-consequence-text="Bot sẽ chuyển sang chế độ test giả lập an toàn và không gửi tin nhắn Messenger thật đến khách hàng nữa." data-submit-label="Bật chế độ an toàn" data-expected-confirm-text="ENABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
+        <label>Nhập từ khóa xác nhận
+          <input name="confirmation_text" placeholder="ENABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
+        </label>
+        <div class="form-actions">
+          <button type="submit">Bật lại chế độ test an toàn cho cửa hàng</button>
+          <span class="meta">Nhập chính xác từ khóa <code>ENABLE DRY RUN</code> để xác nhận.</span>
+        </div>
+      </form>`;
+  }
+
+  // dry_run=true, readiness passed → show allow-real-send form
+  if (dryRun === true && readinessStatus === 'passed') {
+    return `
+      ${globalNote}
+      <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run" data-danger-confirm="true" data-action-title="Tắt chế độ test an toàn (Cho phép gửi thật)" data-warning-text="Bạn chuẩn bị tắt chế độ test an toàn (Dry-Run: TẮT)." data-consequence-text="Hành động này cho phép bot gửi tin nhắn Messenger thật cho cửa hàng này nếu chế độ an toàn toàn cục cũng tắt. Vui lòng kiểm tra kỹ cấu hình trước khi xác nhận." data-submit-label="Cho phép gửi tin thật" data-expected-confirm-text="DISABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
+        <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
+          <input name="confirmation_text" placeholder="DISABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="inline-action warning" onclick="return confirm('Hành động này cho phép gửi tin nhắn Messenger thật cho cửa hàng nếu công tắc toàn cục cũng tắt. Nhập DISABLE DRY RUN để xác nhận.');">Tắt chế độ test an toàn (Cho phép gửi thật)</button>
+          <span class="meta">Nhập chính xác <code>DISABLE DRY RUN</code>. Yêu cầu trạng thái kiểm tra sẵn sàng phải ĐẠT. Không tự động bật live_enabled hay chuyển lifecycle thành live.</span>
+        </div>
+      </form>`;
+  }
+
+  // dry_run=true, readiness not passed → informational only
+  return `
+    ${globalNote}
+    <p class="meta" id="dry-run-gate-note">Để tắt chế độ test an toàn, trạng thái kiểm tra sẵn sàng phải là <code>passed</code> (Đạt). Hiện tại: <strong>${escapeHtml(readinessStatus || 'unknown')}</strong>. Vui lòng chạy kiểm tra trước.</p>`;
+}
+
+function renderShopEmergencyControls(shop = {}) {
+  const status = String(shop.status || '').trim().toLowerCase();
+  const pauseAction = `/admin/shops/${encodeRoutePart(shop.id)}/pause`;
+  const resumeAction = `/admin/shops/${encodeRoutePart(shop.id)}/resume`;
+  const pauseForm = `
+    <form class="settings-form compact" method="post" action="${escapeHtml(pauseAction)}" data-danger-confirm="true" data-action-title="Tạm dừng hoạt động Bot" data-warning-text="Bạn đang thực hiện tạm dừng hoạt động của Bot cho cửa hàng này." data-consequence-text="Tạm dừng sẽ ngắt mọi phản hồi tự động của bot, kích hoạt lại test an toàn, tắt chạy thật và giữ nguyên toàn bộ dữ liệu." data-submit-label="Tạm dừng hoạt động Bot" data-expected-confirm-text="PAUSE SHOP" data-shop-slug="${escapeHtml(shop.slug || '')}">
+      <label>Nhập từ khóa xác nhận
+        <input name="confirmation_text" placeholder="PAUSE SHOP" maxlength="40" required aria-required="true" data-confirm-text-input="true">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Tạm dừng hoạt động Bot</button>
+        <span class="meta">Tạm dừng sẽ ngắt mọi phản hồi tự động của bot, kích hoạt lại test an toàn, tắt chạy thật và giữ nguyên toàn bộ dữ liệu.</span>
+      </div>
+    </form>`;
+  const resumeForm = `
+    <form class="settings-form compact" method="post" action="${escapeHtml(resumeAction)}" data-danger-confirm="true" data-action-title="Kích hoạt lại hoạt động Bot" data-warning-text="Bạn chuẩn bị kích hoạt lại hoạt động của Bot cho cửa hàng này." data-consequence-text="Kích hoạt lại sẽ đưa bot hoạt động trở lại ở chế độ test an toàn và tắt chạy thật." data-submit-label="Kích hoạt lại hoạt động Bot" data-expected-confirm-text="RESUME SHOP" data-shop-slug="${escapeHtml(shop.slug || '')}">
+      <label>Nhập từ khóa xác nhận
+        <input name="confirmation_text" placeholder="RESUME SHOP" maxlength="40" required aria-required="true" data-confirm-text-input="true">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Kích hoạt lại hoạt động Bot</button>
+        <span class="meta">Kích hoạt lại sẽ đưa bot hoạt động trở lại ở chế độ test an toàn và tắt chạy thật.</span>
+      </div>
+    </form>`;
+  if (status === 'active') return pauseForm;
+  if (status === 'paused') return resumeForm;
+  return '<p class="meta">Tính năng tạm dừng/kích hoạt lại khẩn cấp chỉ áp dụng cho shop đang hoạt động hoặc đang tạm dừng.</p>';
+}
+
+function isDeleteDraftShopEligible(shop = {}, model = {}) {
+  // Block if protected slugs
+  const protectedSlugs = ['adult-shop', 'demo-shop', 'nem-bui-xa'];
+  const slug = String(shop.slug || '').trim().toLowerCase();
+  const id = String(shop.id || '').trim().toLowerCase();
+  const isProtected = protectedSlugs.includes(slug)
+    || protectedSlugs.includes(id)
+    || slug.includes('production')
+    || slug.includes('prod')
+    || id.includes('production')
+    || id.includes('prod');
+
+  if (isProtected) {
+    return { eligible: false, reason: 'Shop này nằm trong danh sách bảo vệ hệ thống (chứa từ khóa nhạy cảm hoặc được bảo vệ).' };
+  }
+
+  // Block if live
+  const lifecycle = String(shop.lifecycle || '').trim().toLowerCase();
+  if (shop.live_enabled === true || lifecycle === 'live') {
+    return { eligible: false, reason: 'Shop đang ở trạng thái hoạt động (live_enabled hoặc lifecycle=live).' };
+  }
+
+  // Block if not in draft/configuring
+  if (lifecycle !== 'draft' && lifecycle !== 'configuring') {
+    return { eligible: false, reason: 'Chỉ có thể xóa shop đang ở trạng thái thiết lập (draft hoặc configuring).' };
+  }
+
+  // Block if active page mappings
+  const activeMappings = Array.isArray(model.pages) && model.pages.filter(page => pageStatus(page) === 'active');
+  if (activeMappings && activeMappings.length > 0) {
+    return { eligible: false, reason: 'Shop đã kết nối với Fanpage. Vui lòng gỡ liên kết trang trước.' };
+  }
+
+  // Block if credentials exist
+  const hasCredentials = Array.isArray(model.pages) && model.pages.some(page => Number(page.active_credential_count || 0) > 0);
+  if (hasCredentials) {
+    return { eligible: false, reason: 'Shop đã có cấu hình Quyền gửi tin (Facebook Page Token).' };
+  }
+
+  // Block if customer conversations/messages/orders exist
+  const health = model.health || {};
+  if (Number(health.active_handoffs || 0) > 0 || Number(health.queue_total || 0) > 0) {
+    return { eligible: false, reason: 'Shop có tiến trình hoạt động (active handoffs hoặc queue).' };
+  }
+
+  return { eligible: true };
+}
+
+function renderDeleteDraftShopSection(shop = {}, model = {}) {
+  const check = isDeleteDraftShopEligible(shop, model);
+  const action = `/admin/shops/${encodeRoutePart(shop.id)}/delete-draft`;
+
+  if (check.eligible) {
+    return `
+      <p class="meta" style="margin-bottom: 12px; color: var(--danger);">Cửa hàng nháp này đủ điều kiện xóa vì chưa từng hoạt động thật và không có dữ liệu quan trọng liên kết.</p>
+      <form class="settings-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Xóa vĩnh viễn Cửa hàng nháp" data-warning-text="Bạn đang chuẩn bị XÓA VĨNH VIỄN cửa hàng nháp này." data-consequence-text="Hành động này là hoàn toàn KHÔNG THỂ HOÀN TÁC. Toàn bộ thông tin cấu hình, sản phẩm nháp và thiết lập của cửa hàng sẽ bị xóa vĩnh viễn khỏi hệ thống." data-submit-label="Xóa vĩnh viễn Cửa hàng" data-expected-confirm-text="DELETE DRAFT" data-shop-slug="${escapeHtml(shop.slug || '')}">
+        <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
+          <input name="confirmation_text" placeholder="DELETE DRAFT" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
+        </label>
+        <div class="form-actions">
+          <button type="submit" style="background: var(--danger); border-color: var(--danger);">Xóa shop nháp</button>
+          <span class="meta">Nhập chính xác <code>DELETE DRAFT</code> để xác nhận hành động vĩnh viễn này.</span>
+        </div>
+      </form>
+    `;
+  } else {
+    return `
+      <p class="meta" style="margin-bottom: 12px; color: var(--muted);">Trạng thái xóa: <span class="status status-neutral">Không khả dụng (Blocked)</span></p>
+      <div class="banner banner-warning" style="margin: 8px 0 12px; padding: 8px 12px; font-size: 13px;">
+        ⚠️ <strong>Không thể xóa:</strong> ${escapeHtml(check.reason)}
+      </div>
+      <button type="button" class="button-link secondary-button" disabled style="cursor: not-allowed; opacity: 0.6; pointer-events: none;">Không thể xóa — chỉ có thể lưu trữ</button>
+      <p class="meta" style="margin-top: 8px;">Khuyến nghị: Bạn có thể thay đổi vòng đời của shop thành <strong>archived</strong> (lưu trữ) trong biểu mẫu Vòng đời hoạt động ở trên để ngắt hoàn toàn hoạt động của shop một cách an toàn.</p>
+    `;
+  }
+}
+
+function renderControlPlaneForm(shop = {}, model = {}) {
+  const onboarding = model.onboarding || {};
+  const action = `/admin/shops/${encodeRoutePart(shop.id)}/control-plane`;
+  const readinessAction = `/admin/shops/${encodeRoutePart(shop.id)}/readiness-check`;
+  const liveChecked = shop.live_enabled ? ' checked' : '';
+  const blockers = (onboarding.checklist || []).filter(row => !row.passed);
+  const hardBlockers = Array.isArray(onboarding.hard_blockers) ? onboarding.hard_blockers : [];
+  const warnings = Array.isArray(onboarding.warnings) ? onboarding.warnings : [];
+  return `<section class="checklist-card" id="control-plane" aria-label="Shop control plane" style="border: 0; padding: 0; background: transparent;">
+    <h2>Vận hành an toàn / Control Plane</h2>
+    <p class="meta">Bảng điều khiển nội bộ dành cho quản trị viên và vận hành viên hệ thống.</p>
+
+    <!-- SECTION 1: KIỂM TRA SẴN SÀNG VÀ TÌNH TRẠNG VẬN HÀNH -->
+    <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin-top: 0; color: #1e293b; font-size: 15px;">📋 Trạng thái sẵn sàng & Vận hành (Normal Checks)</h3>
+      <p class="meta" style="margin-bottom: 12px;">Thông tin tổng quan về trạng thái cấu hình và kiểm thử của cửa hàng.</p>
+      <table><tbody>
+        <tr><th>Trạng thái hiện tại</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
+        <tr><th>Gói dịch vụ (Package)</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
+        <tr><th>Vòng đời hoạt động (Lifecycle)</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
+        <tr><th>Chế độ test an toàn (dry_run)</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
+        <tr><th>Cho phép chạy thật (live_enabled)</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
+        <tr><th>Kiểm tra hoàn tất (Readiness)</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}${isShopReadinessStale(shop) ? '<br><span class="meta">Cần chạy lại kiểm tra hoàn tất</span>' : ''}</td></tr>
+        <tr><th>Lần kiểm tra hoàn tất cuối</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
+        <tr><th>Kiểm tra thủ công (Manual test)</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
+        <tr><th>Lần kiểm tra thủ công cuối</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
+        <tr><th>Người duyệt cuối</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
+      </tbody></table>
+      ${hardBlockers.length
+        ? renderReadinessIssues('Lỗi chặn chưa hoàn tất (Hard blockers)', hardBlockers, 'banner-error')
+        : (blockers.length ? `<div class="banner banner-error" role="status">Lỗi chặn chưa hoàn tất: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">Không có lỗi chặn nào hiện tại.</div>')}
+      ${warnings.length ? renderReadinessIssues('Cảnh báo (Warnings)', warnings, 'banner-warning') : ''}
+      <form class="settings-form compact" method="post" action="${escapeHtml(readinessAction)}" style="margin: 12px 0 0; padding: 0; border: 0; background: transparent;">
+        <div class="form-actions">
+          <button type="submit">Chạy lại kiểm tra hoàn tất</button>
+          <span class="meta">Chỉ cập nhật trạng thái kiểm tra sẵn sàng và thời gian kiểm tra.</span>
+        </div>
+      </form>
+    </div>
+
+    <!-- SECTION 2: CHẾ ĐỘ TEST AN TOÀN -->
+    <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin-top: 0; color: #b45309; font-size: 15px;">🛡️ Cấu hình Chế độ test an toàn (Dry-Run Controls)</h3>
+      <div class="banner banner-warning" style="margin: 8px 0 12px; padding: 8px 12px;">
+        ⚠️ <strong>Lưu ý:</strong> Chế độ test an toàn (Dry-run: BẬT) giúp bot chạy giả lập trong sandbox để tránh gửi nhầm tin nhắn cho khách hàng thật. Chỉ tắt chế độ này khi shop đã kết nối Fanpage đúng và sẵn sàng hoạt động.
+      </div>
+      ${renderDryRunControls(shop)}
+    </div>
+
+    <!-- SECTION 3: PHANH KHẨN CẤP VÀ VÒNG ĐỜI -->
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin-top: 0; color: #b91c1c; font-size: 15px;">🚨 Phanh khẩn cấp & Quyền quản trị (Emergency & Life-Cycle)</h3>
+      <div class="banner banner-error" style="margin: 8px 0 12px; padding: 8px 12px;">
+        🛑 <strong>CẢNH BÁO NGUY HIỂM:</strong> Các thao tác dưới đây ảnh hưởng trực tiếp đến trạng thái hoạt động thực tế của chatbot trên Fanpage. Tạm dừng (Pause) hoặc kích hoạt lại (Resume) bot ngay lập tức nếu phát hiện sự cố khẩn cấp.
+      </div>
+      ${renderShopEmergencyControls(shop)}
+
+      <hr style="border: 0; border-top: 1px solid #fecaca; margin: 16px 0;">
+      <h4 style="margin: 0 0 10px; color: #991b1b; font-size: 14px;">Quản lý Vòng đời & Cho phép chạy thật (Go-Live)</h4>
+
+      <form class="settings-form" method="post" action="${escapeHtml(action)}" style="padding: 0; border: 0; background: transparent;">
+        <label>Gói dịch vụ (Package)
+          <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>
+        </label>
+        <label>Vòng đời hoạt động (Lifecycle)
+          <select name="lifecycle">${renderControlPlaneOptions(['draft', 'configuring', 'ready', 'live', 'paused', 'archived'], shop.lifecycle || 'draft')}</select>
+        </label>
+        <input type="hidden" name="live_enabled" value="false">
+        <label class="checkbox-label">
+          <input type="checkbox" name="live_enabled" value="true"${liveChecked}>
+          live_enabled (Cho phép chạy thật)
+        </label>
+        <label>Trạng thái kiểm tra thủ công
+          <select name="manual_test_status">${renderControlPlaneOptions(['unknown', 'passed', 'failed'], shop.last_manual_test_status || 'unknown')}</select>
+        </label>
+        <label class="checkbox-label" style="grid-column: 1 / -1; margin-top: 6px;">
+          <input type="checkbox" name="confirm_live" value="true">
+          <strong>Xác nhận cho phép chạy thật / thay đổi vòng đời chạy thật</strong>
+        </label>
+        <label class="checkbox-label" style="grid-column: 1 / -1;">
+          <input type="checkbox" name="override_readiness" value="true">
+          Bỏ qua các lỗi chặn kiểm tra sẵn sàng (Chỉ dành cho Quản trị viên)
+        </label>
+        <label class="checkbox-label" style="grid-column: 1 / -1;">
+          <input type="checkbox" name="confirm_pause_archive" value="true">
+          Xác nhận tạm dừng / lưu trữ vòng đời hoạt động
+        </label>
+        <div class="form-actions" style="margin-top: 12px;">
+          <button type="submit" style="background: var(--danger); border-color: var(--danger);">Lưu cấu hình vận hành</button>
+          <span class="meta">Các thay đổi quan trọng đều được ghi nhận vào nhật ký hệ thống. Biểu mẫu này không kích hoạt các tính năng chưa hoàn thiện.</span>
+        </div>
+      </form>
+    </div>
+
+    <!-- SECTION 4: XÓA SHOP NHÁP -->
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin-top: 0; color: #b91c1c; font-size: 15px;">🗑️ Xóa cửa hàng nháp (Draft Shop Deletion)</h3>
+      <div class="banner banner-error" style="margin: 8px 0 12px; padding: 8px 12px;">
+        🛑 <strong>Hành động cực kỳ nguy hiểm:</strong> Chỉ cho phép xóa các cửa hàng nháp chưa từng đi vào hoạt động thật (Go-Live) và không có dữ liệu khách hàng quan trọng. Đối với các shop đã chạy thật, bạn chỉ có thể Lưu trữ (Archive) shop.
+      </div>
+      ${renderDeleteDraftShopSection(shop, model)}
+    </div>
+  </section>`;
+}
+
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
-  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}">
-    <label>Code <span class="required">required</span><input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true"></label>
+  return `<form class="product-form compact" method="post" action="${escapeHtml(action)}" data-current-code="${escapeHtml(product.code || '')}">
+    <label>Code <span class="required">required</span>
+      <input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true">
+      <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+      <span class="help">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
+      <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
+    </label>
     <label>Name/title <span class="required">required</span><input name="name" value="${escapeHtml(product.name)}" maxlength="180" required aria-required="true"></label>
     <label>Price text<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
     <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
     <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
     <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
     <label>Description<textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea></label>
-    <div class="form-actions"><button type="submit">Save product</button></div>
+    <div class="form-actions"><button type="submit" class="js-product-save-btn">Lưu thay đổi (Cập nhật)</button><button type="button" class="js-cancel-drawer secondary-button">Hủy bỏ</button></div>
   </form>`;
 }
 
 function renderProductStatusActions(shopId = '', product = {}) {
-  const nextEnabled = String(product.status || '').toLowerCase() === 'active' ? 'false' : 'true';
-  const label = nextEnabled === 'true' ? 'Enable' : 'Disable';
+  const status = String(product.status || '').toLowerCase();
   const statusAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/status`;
   const archiveAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/archive`;
+
+  if (status === 'archived') {
+    // Disabled placeholders — full restore and draft-delete flows land in P1.2e3b2+.
+    return `
+      <button type="button" class="inline-action" disabled title="Sẽ khả dụng ở bước khôi phục sản phẩm.">Khôi phục</button>
+      <button type="button" class="inline-action" disabled title="Chỉ khả dụng cho sản phẩm nháp chưa có lịch sử, sẽ làm ở bước riêng.">Xóa nháp</button>
+    `;
+  }
+
+  const nextEnabled = status === 'active' ? 'false' : 'true';
+  const toggleLabel = status === 'active' ? 'Tạm ẩn' : 'Hiện lại';
   return `
     <form class="inline-action" method="post" action="${escapeHtml(statusAction)}">
       <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
-      <button type="submit">${escapeHtml(label)}</button>
+      <button type="submit">${escapeHtml(toggleLabel)}</button>
     </form>
-    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-confirm="Archive product">
-      <button type="submit" onclick="return confirm('Archive this product? It will be hidden from active use, not deleted.');">Archive product</button>
+    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-product-archive="true" data-product-name="${escapeHtml(product.name || '')}" data-product-code="${escapeHtml(product.code || '')}">
+      <button type="submit">Lưu trữ</button>
     </form>
-    <span class="meta">Archive is a soft archive, not a delete action.</span>
+    <span class="meta">Lưu trữ là thao tác mềm, giữ lịch sử đơn/chat, không xóa cứng.</span>
   `;
 }
 
@@ -932,6 +2116,38 @@ function renderBulkMenuImageImportForm(shopId = '') {
       <span class="meta">One public http/https URL per line. Optional format: URL,sort_order. Creates menu_image assets only.</span>
     </div>
   </form>`;
+}
+
+function activeProductsOnly(products = []) {
+  return (products || []).filter(product => String(product.status || '').toLowerCase() === 'active');
+}
+
+function renderImageUploadStatusOptions() {
+  return '<option value="active">active</option><option value="hidden">hidden</option>';
+}
+
+function renderAssetUploadForms(shopId = '', products = []) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/uploads`;
+  const uploadProducts = activeProductsOnly(products);
+  return `
+    <form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
+      <h3>Upload menu image</h3>
+      <input type="hidden" name="asset_type" value="menu_image">
+      <label>Image file <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
+      <label>Sort order<input name="sort_order" type="number" value="0"></label>
+      <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
+      <div class="form-actions"><button type="submit">Upload menu image</button><span class="meta">JPG, PNG, or WebP. Stored through the configured image provider.</span></div>
+    </form>
+    <form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
+      <h3>Upload product image</h3>
+      <input type="hidden" name="asset_type" value="product_image">
+      <label>Product <span class="required">required</span><select name="product_id" required aria-required="true">${renderProductOptions(uploadProducts, '', { includeEmpty: true })}</select></label>
+      <label>Image file <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
+      <label>Sort order<input name="sort_order" type="number" value="0"></label>
+      <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
+      <div class="form-actions"><button type="submit">Upload product image</button><span class="meta">Product image uploads require an active product.</span></div>
+    </form>
+  `;
 }
 
 function renderAssetEditForm(shopId = '', asset = {}, products = []) {
@@ -1011,17 +2227,17 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
       <div class="settings-checkbox-grid">${toggleRows}</div>
       <span class="help">Per-shop switches that control specific bot features at runtime.</span>
     </fieldset>
-    <label class="wide">Handoff message
+    <label class="wide">Tin nhắn chuyển giao (Handoff message)
       <textarea name="handoff_message" maxlength="1000">${escapeHtml(settings?.handoff_message || '')}</textarea>
-      <span class="help">Sent when the bot hands a customer to staff.</span>
+      <span class="help">Sent when the bot hands a customer to staff. / Tin nhắn tự động gửi cho khách khi bot chuyển cuộc hội thoại cho nhân viên trực fanpage hỗ trợ (khi khách yêu cầu gặp nhân viên hoặc khi bot không hiểu câu hỏi của khách).</span>
     </label>
-    <label class="wide">Menu intro text
+    <label class="wide">Tin nhắn giới thiệu Menu (Menu intro text)
       <textarea name="menu_intro_text" maxlength="1000">${escapeHtml(settings?.menu_intro_text || '')}</textarea>
-      <span class="help">Shown before menu or product-list content.</span>
+      <span class="help">Shown before menu or product-list content. / Lời chào dẫn dắt gửi kèm hình ảnh thực đơn/danh mục khi khách gõ chữ "menu" hoặc khi khách muốn xem danh sách sản phẩm.</span>
     </label>
-    <label class="wide">Fallback text
+    <label class="wide">Tin nhắn dự phòng (Fallback text)
       <textarea name="fallback_text" maxlength="1000">${escapeHtml(settings?.fallback_text || '')}</textarea>
-      <span class="help">Used when the bot cannot confidently answer.</span>
+      <span class="help">Used when the bot cannot confidently answer. / Tin nhắn tự động gửi khi bot không nhận diện được câu hỏi của khách hàng (nhằm xin lỗi lịch sự và hướng dẫn khách gõ đúng mã sản phẩm).</span>
     </label>
     <div class="form-actions">
       <button type="submit">Save settings</button>
@@ -1175,6 +2391,234 @@ function renderShopDetailHtml(model = {}) {
   const assets = model.assets || {};
   const summary = assets.summary || {};
   const assetRows = Array.isArray(assets.rows) ? assets.rows : [];
+  const assetProducts = model.assetProducts || model.products || [];
+  const pageSetupPreviewMode = isPageSetupPreviewMode(shop);
+
+  const onboarding = model.onboarding || {};
+  const hasActiveMapping = Array.isArray(model.pages) && model.pages.some(page => pageStatus(page) === 'active');
+  const hasActiveCredential = Array.isArray(model.pages) && model.pages.some(page => pageStatus(page) === 'active' && Number(page.active_credential_count || 0) > 0);
+
+  // Status badges
+  const botStatusBadge = shop.lifecycle === 'paused'
+    ? '<span class="status status-danger">Tạm dừng (Paused)</span>'
+    : (shop.lifecycle === 'archived'
+      ? '<span class="status status-neutral">Đã lưu trữ (Archived)</span>'
+      : '<span class="status status-success">Hoạt động (Active)</span>');
+  const readinessBadge = onboarding.ready
+    ? '<span class="status status-success">SẴN SÀNG (Passed)</span>'
+    : '<span class="status status-danger">CHƯA ĐẠT (Incomplete)</span>';
+  const dryRunBadge = shop.dry_run
+    ? '<span class="status status-success">TEST AN TOÀN (Dry-Run)</span>'
+    : (shop.live_enabled
+      ? '<span class="status status-danger">CHẠY THẬT (Go-Live)</span>'
+      : '<span class="status status-warning">TẮT (Non-Live)</span>');
+  const connectionBadge = hasActiveMapping
+    ? '<span class="status status-success">ĐÃ KẾT NỐI (Connected)</span>'
+    : '<span class="status status-danger">CHƯA KẾT NỐI (No Mapping)</span>';
+
+  // Recommended next action
+  let recommendedTitle = '💡 Gợi ý hành động tiếp theo';
+  let recommendedDesc = '';
+  let recommendedButton = '';
+
+  if (shop.lifecycle === 'paused') {
+    recommendedDesc = 'Bot của cửa hàng hiện đang tạm dừng (Paused) và sẽ không phản hồi bất kỳ tin nhắn nào của khách hàng. Hãy kích hoạt lại bot để tiếp tục vận hành.';
+    recommendedButton = `<a href="#safety" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Kích hoạt lại Bot &rarr;</a>`;
+  } else if (!hasActiveMapping) {
+    recommendedDesc = 'Cửa hàng chưa kết nối với bất kỳ trang Facebook (Fanpage) nào. Bot sẽ không nhận được tin nhắn từ khách hàng. Vui lòng kết nối Fanpage để tiếp tục.';
+    recommendedButton = `<a href="#pages" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#pages\\']').click();">Kết nối Fanpage ngay &rarr;</a>`;
+  } else if (!hasActiveCredential) {
+    recommendedDesc = 'Cửa hàng đã kết nối Fanpage nhưng chưa cấu hình Quyền gửi tin (Facebook Page Token bảo mật). Bot không thể phản hồi tin nhắn tự động cho khách hàng.';
+    recommendedButton = `<a href="#pages" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#pages\\']').click();">Cấu hình Quyền gửi tin &rarr;</a>`;
+  } else if (!model.products || model.products.length === 0) {
+    recommendedDesc = 'Danh mục sản phẩm của cửa hàng hiện đang trống. Bot cần có ít nhất 1 sản phẩm hoạt động để có thể tự động tư vấn và bán hàng.';
+    recommendedButton = `<a href="#products" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#products\\']').click();">Thêm sản phẩm ngay &rarr;</a>`;
+  } else if (!onboarding.ready) {
+    recommendedDesc = 'Cấu hình cửa hàng hiện tại chưa đạt một số điều kiện sẵn sàng bắt buộc (Hard blockers). Hãy kiểm tra danh sách bên dưới và khắc phục lỗi chặn.';
+    recommendedButton = `<a href="#safety" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Khắc phục lỗi chặn &rarr;</a>`;
+  } else if (shop.dry_run) {
+    recommendedDesc = 'Cửa hàng đã hoàn thành cấu hình cơ bản ở chế độ test an toàn (Dry-Run: BẬT). Chatbot hiện đã sẵn sàng chạy thử nghiệm giả lập an toàn.';
+    recommendedButton = `<a href="#safety" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Chạy thử an toàn &rarr;</a>`;
+  } else {
+    recommendedDesc = 'Cửa hàng hiện đã ở chế độ CHẠY THẬT (Go-Live). Chatbot đang hoạt động trực tiếp để phản hồi tin nhắn của khách hàng thật trên Facebook.';
+    recommendedButton = `<a href="#safety" class="button-link secondary-button" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Quản lý Vận hành an toàn</a>`;
+  }
+
+  const overviewStatusGrid = `
+    <div class="counts" style="margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+      <div class="count">
+        <span>Trạng thái Bot (Bot Status)</span>
+        <strong>${botStatusBadge}</strong>
+      </div>
+      <div class="count">
+        <span>Kiểm tra Sẵn sàng (Readiness)</span>
+        <strong>${readinessBadge}</strong>
+      </div>
+      <div class="count">
+        <span>Chế độ gửi tin (Dry-Run/Live)</span>
+        <strong>${dryRunBadge}</strong>
+      </div>
+      <div class="count">
+        <span>Kết nối Fanpage (Fanpage State)</span>
+        <strong>${connectionBadge}</strong>
+      </div>
+    </div>
+  `;
+
+  const recommendedActionCard = renderGuidanceCard(recommendedTitle, recommendedDesc, recommendedButton);
+
+  const productsGuidanceCard = renderGuidanceCard(
+    '💡 Hướng dẫn cấu hình Sản phẩm & Kịch bản',
+    '• Kịch bản phản hồi Bot: Thiết lập phản hồi tự động khi chuyển giao cho nhân viên (Handoff), chào mừng menu (Menu intro), và trả lời khi không hiểu câu hỏi (Fallback).\n• Quản lý sản phẩm: Thêm danh mục sản phẩm hoạt động kèm mã code định danh (Ví dụ: M1, M2). Chatbot sẽ nhận diện các mã này trong tin nhắn khách để tư vấn chi tiết.'
+  );
+
+  const productMobileListHtml = (!model.products || model.products.length === 0)
+    ? ''
+    : `<div class="product-mobile-list" style="display: none;">
+        ${model.products.map(product => {
+          const isArchived = String(product.status || '').toLowerCase() === 'archived';
+          const style = isArchived ? 'opacity: 0.6; ' : '';
+          const productImage = assetRows.find(a =>
+            a.asset_type === 'product_image' &&
+            a.status === 'active' &&
+            (
+              (a.product_id && String(a.product_id) === String(product.id)) ||
+              (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
+            )
+          );
+          const hasImage = !!(productImage && productImage.public_url);
+          let imgHtml = '';
+          if (hasImage) {
+            imgHtml = `<img src="${escapeHtml(productImage.public_url)}" alt="${escapeHtml(product.name)}" style="width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div style="display: none; width: 64px; height: 64px; border-radius: 6px; background: #fee2e2; border: 1px solid var(--border); align-items: center; justify-content: center; text-align: center; font-size: 10px; color: var(--danger);" class="thumb-broken">Lỗi ảnh</div>`;
+          } else {
+            const isActive = String(product.status || '').toLowerCase() === 'active';
+            if (isActive) {
+              imgHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; text-align: center; box-sizing: border-box; padding: 4px;">
+                <span style="font-size: 16px;">⚠</span>
+                <span style="font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 2px;">Thiếu ảnh</span>
+              </div>`;
+            } else {
+              imgHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b;">
+                <span style="font-size: 18px;">🖼️</span>
+              </div>`;
+            }
+          }
+
+          return `
+            <article class="product-card-fallback" style="${style}background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; gap: 12px; margin-bottom: 12px;">
+              <div class="product-card-img" style="flex-shrink: 0;">${imgHtml}</div>
+              <div class="product-card-info" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                  <code style="font-size: 13px; font-weight: bold;">${escapeHtml(product.code)}</code>
+                  <span class="meta" style="font-size: 11px;">Mã khách nhắn</span>
+                </div>
+                <h4 style="margin: 0; font-size: 14px; color: #17202a; font-weight: bold;">${escapeHtml(product.name)}</h4>
+                <p style="margin: 0; font-size: 12px; color: var(--muted);">${escapeHtml(limitText(product.description, 80))}</p>
+                <div style="margin-top: 4px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+                  <strong style="color: var(--primary); font-size: 13px;">${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</strong>
+                  <div>${renderProductStatus(product.status)}</div>
+                </div>
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                  <span class="meta" style="font-size: 11px;">Thứ tự: ${escapeHtml(product.sort_order || 0)}</span>
+                  <div style="display: flex; gap: 6px;">
+                    ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 4px 8px; font-size: 12px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
+                    ${renderProductStatusActions(shop.id, product)}
+                  </div>
+                </div>
+                <div class="js-fallback-form-container" style="display: none; margin-top: 8px;">
+                  ${renderProductEditForm(shop.id, product)}
+                </div>
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>`;
+
+  const productsListHtml = (!model.products || model.products.length === 0)
+    ? renderEmptyState('📦', 'Chưa có sản phẩm nào / Empty Catalog', 'Danh mục sản phẩm của shop đang trống. Hãy kéo xuống dưới để sử dụng form "Thêm sản phẩm thủ công" hoặc "Nhập sản phẩm từ CSV" nhằm khởi tạo dữ liệu.')
+    : renderTable(['code', 'Ảnh', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products, product => {
+        const isArchived = String(product.status || '').toLowerCase() === 'archived';
+        const rowStyle = isArchived ? ' style="opacity: 0.6;"' : '';
+        const productImage = assetRows.find(a =>
+          a.asset_type === 'product_image' &&
+          a.status === 'active' &&
+          (
+            (a.product_id && String(a.product_id) === String(product.id)) ||
+            (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
+          )
+        );
+        const hasImage = !!(productImage && productImage.public_url);
+        let imageHtml = '';
+        if (hasImage) {
+          imageHtml = `
+            <div style="position: relative; width: 48px; height: 48px;">
+              <img src="${escapeHtml(productImage.public_url)}" alt="${escapeHtml(product.name)}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+              <div style="display: none; width: 48px; height: 48px; border-radius: 6px; background: #fee2e2; border: 1px solid var(--border); align-items: center; justify-content: center; text-align: center; font-size: 9px; color: var(--danger);" class="thumb-broken">Lỗi ảnh</div>
+            </div>
+          `;
+        } else {
+          const isActive = String(product.status || '').toLowerCase() === 'active';
+          if (isActive) {
+            imageHtml = `
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 56px; min-height: 56px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; padding: 4px; box-sizing: border-box; text-align: center;" title="Thiếu ảnh">
+                <span style="font-size: 14px;">⚠</span>
+                <span style="font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 2px;">Thiếu ảnh</span>
+              </div>
+            `;
+          } else {
+            imageHtml = `
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b;" title="Chưa có ảnh">
+                <span style="font-size: 16px;">🖼️</span>
+              </div>
+            `;
+          }
+        }
+        return `
+          <tr${rowStyle}>
+            <td><code>${escapeHtml(product.code)}</code><br><span class="meta" style="font-size: 11px; display: block; margin-top: 2px; font-weight: normal; text-transform: none; line-height: 1.3;">Mã khách nhắn cho bot</span></td>
+            <td>${imageHtml}</td>
+            <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
+            <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
+            <td>${renderProductStatus(product.status)}</td>
+            <td>${escapeHtml(product.sort_order || 0)}</td>
+            <td>${escapeHtml(formatDate(product.updated_at))}</td>
+            <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
+            <td>
+              ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
+              <div class="js-fallback-form-container">
+                ${renderProductEditForm(shop.id, product)}
+              </div>
+            </td>
+          </tr>
+        `;
+      }) + productMobileListHtml;
+
+  const assetsGuidanceCard = renderGuidanceCard(
+    '💡 Phân biệt các loại hình ảnh',
+    '• Menu Images (Ảnh thực đơn): Hiển thị khi khách gõ "menu", "xem thực đơn" hoặc yêu cầu xem danh mục. Cần có ít nhất 1 ảnh thực đơn hoạt động để bot hoạt động trọn vẹn.\n• Product Images (Ảnh sản phẩm): Gắn với từng sản phẩm thông qua mã code (e.g. M1). Hiển thị chi tiết khi khách xem sản phẩm cụ thể.'
+  );
+
+  const assetsHtml = (assetRows.length === 0)
+    ? renderEmptyState('🖼️', 'Chưa có hình ảnh nào', 'Cửa hàng hiện chưa có hình ảnh sản phẩm hoặc hình ảnh thực đơn nào. Vui lòng thêm hình ảnh bên dưới để nâng cao hiệu quả tư vấn.')
+    : renderAssetGroups(assetRows, shop.id, model.products || []);
+
+  const pagesGuidanceCard = renderGuidanceCard(
+    '💡 Hướng dẫn kết nối Fanpage & Mã Token',
+    '• Kết nối Fanpage (Page Mapping): Liên kết trang Facebook (Fanpage) của bạn với cửa hàng thông qua Page ID. Bước này chỉ cấu hình định danh liên kết.\n• Quyền gửi tin (Credentials): Điền mã bảo mật Facebook Page Token để bot có quyền gửi tin nhắn phản hồi tự động. Token được mã hóa AES-256-GCM bảo mật và không hiển thị lại sau khi lưu.'
+  );
+
+  const pagesHtml = (!model.pages || model.pages.length === 0)
+    ? renderEmptyState('🔗', 'Chưa có kết nối Fanpage', 'Shop này hiện chưa được liên kết với trang Facebook (Fanpage) nào. Hãy thực hiện kết nối bằng cách điền thông tin ID Trang phía bên dưới.')
+    : renderPageMappingsSection({
+        shop,
+        pages: model.pages,
+        pageSetupPreviewMode,
+        archiveEnabled: Boolean(model.pageArchiveEnabled)
+      });
+
+  const safetyHtml = renderControlPlaneForm(shop, model);
+
   const body = `
     <p><a href="/admin/shops">Back to shops</a></p>
     ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
@@ -1183,95 +2627,220 @@ function renderShopDetailHtml(model = {}) {
       <p class="meta">Shop <code>${escapeHtml(shop.id)}</code> | slug <code>${escapeHtml(shop.slug)}</code> | updated ${escapeHtml(formatDate(shop.updated_at))}</p>
 
       <nav class="tabs">
-        <a href="#overview" class="active">Overview</a>
-        <a href="#pages">Pages &amp; Credentials</a>
-        <a href="#settings">Chat Behavior</a>
-        <a href="#products">Products</a>
-        <a href="#assets">Images / Assets</a>
+        <a href="#overview" class="active">Overview / Tổng quan</a>
+        <a href="#products">Products &amp; Menu / Sản phẩm &amp; Menu</a>
+        <a href="#assets">Images / Hình ảnh</a>
+        <a href="#pages">Fanpage Connection / Kết nối Fanpage</a>
+        <a href="#safety">Safety / Vận hành an toàn</a>
       </nav>
 
       <div id="overview" class="tab-section active">
-        ${renderOnboardingChecklist(model.onboarding || {})}
+        ${renderProductFlash(model.controlFlash || {})}
+        ${overviewStatusGrid}
+        ${recommendedActionCard}
+        ${renderOnboardingChecklist(onboarding)}
         ${renderHealthCard(model.health)}
-        <h2 id="metadata">Metadata</h2>
+        <h2 id="metadata">Thông tin cơ bản / Metadata</h2>
         <table><tbody>
-          <tr><th>Name</th><td>${escapeHtml(shop.name)}</td></tr>
-          <tr><th>Status</th><td>${renderStatus(shop.status)}</td></tr>
-          <tr><th>Locale</th><td>${escapeHtml(shop.default_locale)}</td></tr>
-          <tr><th>Timezone</th><td>${escapeHtml(shop.timezone)}</td></tr>
-          <tr><th>Created</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
+          <tr><th>Tên Cửa Hàng (Name)</th><td>${escapeHtml(shop.name)}</td></tr>
+          <tr><th>Trạng thái (Status)</th><td>${renderStatus(shop.status)}</td></tr>
+          <tr><th>Ngôn ngữ mặc định (Locale)</th><td>${escapeHtml(shop.default_locale)}</td></tr>
+          <tr><th>Múi giờ (Timezone)</th><td>${escapeHtml(shop.timezone)}</td></tr>
+          <tr><th>Ngày khởi tạo (Created)</th><td>${escapeHtml(formatDate(shop.created_at))}</td></tr>
         </tbody></table>
       </div>
 
-      <div id="pages" class="tab-section">
-        <h2 id="page-mappings">Page Mappings</h2>
-        ${renderProductFlash(model.pageFlash || {})}
-        ${renderProductFlash(model.credentialFlash || {})}
-        ${renderPageMappingAddForm(shop.id)}
-        ${renderTable(['page ref', 'name', 'status', 'updated', 'credential action'], model.pages || [], page => `
-          <tr>
-            <td><code>${escapeHtml(page.page_ref || pageRef(page.page_id))}</code></td>
-            <td>${escapeHtml(page.page_name)}</td>
-            <td>${renderStatus(page.status)}</td>
-            <td>${escapeHtml(formatDate(page.updated_at))}</td>
-            <td>${renderPageCredentialForm(shop.id, page)}</td>
-          </tr>
-        `)}
-      </div>
-
-      <div id="settings" class="tab-section">
-        ${renderProductFlash(model.productFlash || {})}
-        <h2 id="settings-heading">Chat Behavior Settings</h2>
-        ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
-        <details class="collapsible-section">
-          <summary>Advanced: Current settings values &amp; raw JSON</summary>
-          <table><tbody>
-            <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
-            <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
-            <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
-            <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
-            <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
-            <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
-              ...(model.settings?.settings_json?.botMode || {}),
-              ...(model.settings?.settings_json?.ruleToggles || {})
-            })))}</td></tr>
-            <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
-          </tbody></table>
-          ${renderJsonBlock(model.settings?.settings_json || {})}
-        </details>
-      </div>
-
       <div id="products" class="tab-section">
-        <section class="product-section">
-          <div class="product-toolbar">
-            <h2 id="products-heading">Products</h2>
-            <p class="meta">Manage catalog rows only. Product archive is soft and keeps the row.</p>
+        ${renderProductFlash(model.productFlash || {})}
+        ${productsGuidanceCard}
+
+        <div style="background: #ffffff; padding: 20px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px;">
+          <h2 id="settings" style="margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 12px; color: var(--primary);">⚙️ Kịch bản phản hồi của Bot (Chat Behavior Settings)</h2>
+          <p class="meta" style="margin-bottom: 16px; font-weight: normal; text-transform: none;">Thiết lập chế độ hoạt động và nội dung tin nhắn tự động chatbot gửi cho khách hàng.</p>
+          ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
+
+          <details class="collapsible-section" style="margin-top: 14px;">
+            <summary>Advanced: Current settings values &amp; raw JSON / Cấu hình chi tiết JSON</summary>
+            <table><tbody>
+              <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
+              <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
+              <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
+              <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
+              <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+              <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
+                ...(model.settings?.settings_json?.botMode || {}),
+                ...(model.settings?.settings_json?.ruleToggles || {})
+              })))}</td></tr>
+              <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
+            </tbody></table>
+            ${renderJsonBlock(model.settings?.settings_json || {})}
+          </details>
+        </div>
+
+        <section class="product-section" style="margin-top: 32px; padding-top: 24px; border-top: 2px solid var(--border);">
+          <div class="product-toolbar" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+            <div>
+              <h2 id="products-heading" style="margin: 0; color: var(--primary);">📦 Danh mục sản phẩm / Product Catalog</h2>
+              <p class="meta" style="margin: 4px 0 0; font-weight: normal; text-transform: none;">Quản lý mã định danh chatbot tư vấn, tên hiển thị, giá bán và hình ảnh sản phẩm.</p>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <a href="#add-product-section" class="button-link" style="background: var(--primary); color: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; text-decoration: none;">+ Thêm sản phẩm</a>
+              <a href="#csv-import-section" class="button-link secondary-button" style="border: 1px solid var(--border); color: var(--neutral); background: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; text-decoration: none;">Nhập sản phẩm CSV</a>
+            </div>
           </div>
+
+          <div class="guidance-card" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 13px; color: #1e3a5f; display: block; width: auto;">
+            <strong>💡 Hướng dẫn Vận hành Danh mục sản phẩm:</strong>
+            <ul style="margin: 6px 0 0; padding-left: 20px; line-height: 1.5;">
+              <li><strong>Mã Code:</strong> Là mã định danh chatbot dùng để nhận diện (Ví dụ khách gõ <code>M10</code> bot sẽ gửi thông tin chi tiết).</li>
+              <li><strong>Hình ảnh:</strong> Mỗi sản phẩm đang hoạt động nên được gán ít nhất 1 hình ảnh trực quan. Việc thiếu ảnh chỉ hiển thị cảnh báo (Warning), không chặn chatbot tư vấn thông tin chữ.</li>
+              <li><strong>Lưu trữ (Archive):</strong> Ưu tiên chuyển trạng thái hoặc lưu trữ (soft-archive) sản phẩm thay vì xóa cứng để đảm bảo tính toàn vẹn dữ liệu đơn hàng lịch sử.</li>
+            </ul>
+          </div>
+
+          ${(() => {
+            if (!model.products || model.products.length === 0) return '';
+            const activeProducts = (model.products || []).filter(p => p.status === 'active');
+            const inactiveProducts = (model.products || []).filter(p => p.status !== 'active');
+
+            // Calculate active products missing images
+            const productCodesWithImages = new Set(
+              assetRows
+                .filter(a => a.asset_type === 'product_image' && a.status === 'active')
+                .map(a => String(a.product_code || '').trim().toLowerCase())
+            );
+
+            const activeProductsMissingImages = activeProducts.filter(p => {
+              const code = String(p.code || '').trim().toLowerCase();
+              return !productCodesWithImages.has(code);
+            });
+
+            const missingImagesCount = activeProductsMissingImages.length;
+
+            return `
+              <div class="counts" style="margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                <div class="count" style="border-left: 4px solid var(--success); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm hoạt động</span>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #111827;">${escapeHtml(activeProducts.length)}</strong>
+                </div>
+                <div class="count" style="border-left: 4px solid ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'}; padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm thiếu ảnh</span>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'};">${escapeHtml(missingImagesCount)}</strong>
+                  ${missingImagesCount > 0
+                    ? '<span class="meta" style="color: var(--warning); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">⚠ Hãy bổ sung ảnh ở tab "Hình ảnh" để tư vấn tốt hơn</span>'
+                    : '<span class="meta" style="color: var(--success); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">✓ Tất cả sản phẩm đều có ảnh minh họa</span>'
+                  }
+                </div>
+                <div class="count" style="border-left: 4px solid var(--neutral); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm ẩn/lưu trữ</span>
+                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #4b5563;">${escapeHtml(inactiveProducts.length)}</strong>
+                </div>
+              </div>
+            `;
+          })()}
+
           ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
-          ${renderProductAddForm(shop.id)}
-          ${renderProductBulkImportForm(shop.id)}
-          ${renderTable(['code', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products || [], product => `
-          <tr>
-            <td><code>${escapeHtml(product.code)}</code></td>
-            <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
-            <td>${escapeHtml(product.price_text || [product.price, product.currency].filter(Boolean).join(' '))}</td>
-            <td>${renderStatus(product.status)}</td>
-            <td>${escapeHtml(product.sort_order || 0)}</td>
-            <td>${escapeHtml(formatDate(product.updated_at))}</td>
-            <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
-            <td>${renderProductEditForm(shop.id, product)}</td>
-          </tr>
-        `)}
+
+          <div style="background: var(--surface-muted); padding: 20px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; display: grid; gap: 20px;">
+            <div id="add-product-section" style="padding-bottom: 20px; border-bottom: 1px solid var(--border);">
+              <h3 style="margin-top: 0; font-size: 15px; color: #1e3a5f;">➕ Thêm sản phẩm thủ công / Add Product Manual</h3>
+              <p class="meta" style="margin-bottom: 12px; font-weight: normal; text-transform: none;">Thêm sản phẩm đơn lẻ vào danh mục tư vấn của chatbot.</p>
+              ${renderProductAddForm(shop.id)}
+            </div>
+
+            <div id="csv-import-section">
+              <h3 style="margin-top: 0; font-size: 15px; color: #1e3a5f;">📥 Nhập sản phẩm từ CSV / Bulk Import CSV</h3>
+              <p class="meta" style="margin-bottom: 12px; font-weight: normal; text-transform: none;">Nhập hàng loạt nhanh danh mục sản phẩm từ tập tin CSV.</p>
+              ${renderProductBulkImportForm(shop.id)}
+            </div>
+          </div>
+
+          ${productsListHtml}
         </section>
       </div>
 
       <div id="assets" class="tab-section">
-        <h2 id="assets-heading">Assets</h2>
+        <h2 id="assets-heading">Images / Hình ảnh &amp; Tài sản</h2>
         ${renderProductFlash(model.assetFlash || {})}
+        ${assetsGuidanceCard}
         ${renderCounts(summary)}
+        ${model.adminImageUploadEnabled ? renderAssetUploadForms(shop.id, assetProducts) : ''}
         ${renderAssetAddForm(shop.id, model.products || [])}
         ${renderBulkMenuImageImportForm(shop.id)}
-        ${renderAssetGroups(assetRows, shop.id, model.products || [])}
+        ${assetsHtml}
+      </div>
+
+      <div id="pages" class="tab-section">
+        <h2 id="page-mappings">Fanpage Connection / Kết nối Fanpage</h2>
+        ${renderProductFlash(model.pageFlash || {})}
+        ${renderProductFlash(model.credentialFlash || {})}
+        ${renderFanpageConnectionCard(model)}
+        ${pagesGuidanceCard}
+        ${pageSetupPreviewMode ? renderPageSetupPreviewSection(shop.id) : renderPageMappingAddForm(shop.id)}
+        ${pagesHtml}
+      </div>
+
+      <div id="safety" class="tab-section">
+        ${safetyHtml}
+      </div>
+
+      <!-- Standardized Red Danger Confirmation Modal -->
+      <div id="danger-confirm-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-container">
+          <div class="modal-header">
+            <span style="font-size: 20px;">🚨</span>
+            <h3 id="modal-title">Xác nhận thao tác nguy hiểm</h3>
+          </div>
+          <div class="modal-body">
+            <div id="modal-warning" class="modal-warning-box"></div>
+            <div id="modal-consequence" class="modal-consequence"></div>
+
+            <div>
+              <label for="modal-slug-input" class="modal-slug-label">Nhập mã cửa hàng (Shop Slug) <code id="modal-expected-slug" style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: bold;"></code> để xác nhận:</label>
+              <input type="text" id="modal-slug-input" class="modal-slug-input" autocomplete="off" placeholder="Nhập slug cửa hàng...">
+            </div>
+
+            <label class="modal-checkbox-label">
+              <input type="checkbox" id="modal-checkbox">
+              <span id="modal-checkbox-copy">Tôi hiểu rõ đây là hành động có thể ảnh hưởng trực tiếp đến hoạt động của bot và hoàn toàn chịu trách nhiệm.</span>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="modal-cancel-btn" class="modal-btn-cancel">Hủy bỏ</button>
+            <button type="button" id="modal-submit-btn" class="modal-btn-confirm" disabled>Xác nhận (3s)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Product Archive Confirmation Modal (replaces bare confirm()) -->
+      <div id="product-archive-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="product-archive-title">
+        <div class="modal-container">
+          <div class="modal-header">
+            <span style="font-size: 20px;">🗄️</span>
+            <h3 id="product-archive-title">Lưu trữ sản phẩm</h3>
+          </div>
+          <div class="modal-body">
+            <p id="product-archive-message" class="modal-consequence"></p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="product-archive-cancel" class="modal-btn-cancel">Hủy</button>
+            <button type="button" id="product-archive-confirm" class="modal-btn-confirm">Lưu trữ</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registry of all rendered product codes (incl. archived) for client-side duplicate hints -->
+      <div id="product-codes-registry" hidden aria-hidden="true">${(model.products || []).map(product => `<span data-code="${escapeHtml(String(product.code || '').trim().toLowerCase())}"></span>`).join('')}</div>
+
+      <!-- Reusable Product Add/Edit Drawer -->
+      <div id="product-drawer" class="drawer-backdrop" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+        <div class="drawer-panel">
+          <div class="drawer-header">
+            <h3 id="drawer-title">Thêm sản phẩm</h3>
+            <button type="button" id="drawer-close-btn" class="drawer-close-btn" aria-label="Close">&times;</button>
+          </div>
+          <div class="drawer-body" id="drawer-body-container"></div>
+        </div>
       </div>
 
       <script>
@@ -1296,6 +2865,126 @@ function renderShopDetailHtml(model = {}) {
           }
           window.addEventListener('hashchange', () => activateTab(window.location.hash));
           activateTab(window.location.hash);
+
+          // Standardized Danger Confirmation Modal Client Interceptor
+          const modalBackdrop = document.getElementById('danger-confirm-modal');
+          const modalTitle = document.getElementById('modal-title');
+          const modalWarning = document.getElementById('modal-warning');
+          const modalConsequence = document.getElementById('modal-consequence');
+          const modalExpectedSlug = document.getElementById('modal-expected-slug');
+          const modalSlugInput = document.getElementById('modal-slug-input');
+          const modalCheckbox = document.getElementById('modal-checkbox');
+          const modalCheckboxCopy = document.getElementById('modal-checkbox-copy');
+          const modalCancelBtn = document.getElementById('modal-cancel-btn');
+          const modalSubmitBtn = document.getElementById('modal-submit-btn');
+          const defaultModalCheckboxCopy = modalCheckboxCopy ? modalCheckboxCopy.textContent : '';
+
+          let activeForm = null;
+          let countdownInterval = null;
+          let countdownSeconds = 0;
+
+          document.querySelectorAll('[data-js-confirm-fallback="true"]').forEach(input => {
+            input.disabled = true;
+            input.required = false;
+            input.setAttribute('aria-required', 'false');
+          });
+
+          function updateSubmitButtonState() {
+            const expectedSlug = modalExpectedSlug.textContent.trim().toLowerCase();
+            const typedSlug = modalSlugInput.value.trim().toLowerCase();
+            const checkboxChecked = modalCheckbox.checked;
+
+            const isSlugMatched = (expectedSlug === typedSlug);
+            const isCountdownDone = (countdownSeconds <= 0);
+
+            modalSubmitBtn.disabled = !(isSlugMatched && checkboxChecked && isCountdownDone);
+          }
+
+          function startCountdown(seconds) {
+            countdownSeconds = seconds;
+            if (countdownInterval) clearInterval(countdownInterval);
+
+            function updateBtnLabel() {
+              if (countdownSeconds > 0) {
+                modalSubmitBtn.textContent = 'Xác nhận (' + countdownSeconds + 's)';
+              } else {
+                modalSubmitBtn.textContent = 'Xác nhận';
+              }
+              updateSubmitButtonState();
+            }
+
+            updateBtnLabel();
+
+            countdownInterval = setInterval(() => {
+              countdownSeconds -= 1;
+              updateBtnLabel();
+              if (countdownSeconds <= 0) {
+                clearInterval(countdownInterval);
+              }
+            }, 1000);
+          }
+
+          document.addEventListener('submit', (e) => {
+            const form = e.target;
+            if (form && form.dataset.dangerConfirm === 'true') {
+              if (form.dataset.confirmed === 'true') {
+                return;
+              }
+
+              e.preventDefault();
+              activeForm = form;
+
+              modalTitle.textContent = form.dataset.actionTitle || 'Xác nhận thao tác';
+              modalWarning.textContent = form.dataset.warningText || 'Hành động này có độ rủi ro cao.';
+              modalConsequence.textContent = form.dataset.consequenceText || '';
+              modalExpectedSlug.textContent = form.dataset.shopSlug || '';
+              if (modalCheckboxCopy) {
+                modalCheckboxCopy.textContent = form.dataset.checkboxText || defaultModalCheckboxCopy;
+              }
+
+              modalSlugInput.value = '';
+              modalCheckbox.checked = false;
+              modalSubmitBtn.disabled = true;
+
+              modalBackdrop.classList.add('visible');
+
+              const seconds = parseInt(form.dataset.countdownSeconds || '3', 10);
+              startCountdown(seconds);
+            }
+          });
+
+          function closeModal() {
+            modalBackdrop.classList.remove('visible');
+            if (countdownInterval) {
+              clearInterval(countdownInterval);
+              countdownInterval = null;
+            }
+            activeForm = null;
+          }
+
+          modalCancelBtn.addEventListener('click', closeModal);
+          modalBackdrop.addEventListener('click', (e) => {
+            if (e.target === modalBackdrop) {
+              closeModal();
+            }
+          });
+
+          modalSlugInput.addEventListener('input', updateSubmitButtonState);
+          modalCheckbox.addEventListener('change', updateSubmitButtonState);
+
+          modalSubmitBtn.addEventListener('click', () => {
+            if (!activeForm) return;
+
+            const confirmInput = activeForm.querySelector('[data-confirm-text-input="true"]');
+            if (confirmInput) {
+              confirmInput.value = activeForm.dataset.expectedConfirmText || '';
+            }
+
+            activeForm.dataset.confirmed = 'true';
+            const formToSubmit = activeForm;
+            closeModal();
+            formToSubmit.submit();
+          });
 
           function parsePreviewCsv(text) {
             const rows = [];
@@ -1415,6 +3104,210 @@ function renderShopDetailHtml(model = {}) {
             importTextarea.addEventListener('input', renderImportPreview);
             renderImportPreview();
           }
+          const importForm = document.querySelector('[data-product-import-form]');
+          if (importForm && importTextarea) {
+            importForm.addEventListener('submit', (event) => {
+              const submitter = event.submitter || document.activeElement;
+              if (!submitter || submitter.getAttribute('name') !== 'validate_only') return;
+              const key = importForm.getAttribute('data-product-import-storage-key') || '';
+              if (!key) return;
+              try {
+                window.sessionStorage.setItem(key, importTextarea.value || '');
+              } catch (_) {}
+            });
+          }
+
+          // Product Archive Confirmation Modal (replaces bare confirm())
+          const productArchiveModal = document.getElementById('product-archive-modal');
+          const productArchiveMessage = document.getElementById('product-archive-message');
+          const productArchiveCancel = document.getElementById('product-archive-cancel');
+          const productArchiveConfirm = document.getElementById('product-archive-confirm');
+          let pendingArchiveForm = null;
+
+          function closeArchiveModal() {
+            if (productArchiveModal) productArchiveModal.classList.remove('visible');
+            pendingArchiveForm = null;
+          }
+
+          if (productArchiveModal) {
+            document.addEventListener('submit', (e) => {
+              const form = e.target;
+              if (!form || form.dataset.productArchive !== 'true') return;
+              if (form.dataset.archiveConfirmed === 'true') return;
+              e.preventDefault();
+              pendingArchiveForm = form;
+              const name = form.dataset.productName || '';
+              const code = form.dataset.productCode || '';
+              productArchiveMessage.textContent = "Lưu trữ '" + name + ' (' + code + ")'? Bot sẽ ngừng tư vấn sản phẩm này. Lịch sử đơn/chat cũ vẫn giữ nguyên. Bạn có thể khôi phục sau.";
+              productArchiveModal.classList.add('visible');
+            });
+            productArchiveCancel.addEventListener('click', closeArchiveModal);
+            productArchiveModal.addEventListener('click', (e) => {
+              if (e.target === productArchiveModal) closeArchiveModal();
+            });
+            productArchiveConfirm.addEventListener('click', () => {
+              if (!pendingArchiveForm) return;
+              const formToSubmit = pendingArchiveForm;
+              formToSubmit.dataset.archiveConfirmed = 'true';
+              closeArchiveModal();
+              formToSubmit.submit();
+            });
+          }
+
+          // Client-side duplicate product code hint (best-effort; backend is source of truth).
+          // The registry includes archived codes so reusing a retired code is flagged early.
+          const productCodeRegistry = Array.prototype.slice
+            .call(document.querySelectorAll('#product-codes-registry [data-code]'))
+            .map(node => (node.getAttribute('data-code') || '').trim().toLowerCase())
+            .filter(Boolean);
+
+          function checkDuplicateCode(form) {
+            if (!form) return;
+            const codeInput = form.querySelector('input[name="code"]');
+            const hint = form.querySelector('.js-duplicate-code-hint');
+            const saveBtn = form.querySelector('.js-product-save-btn');
+            if (!codeInput || !hint) return;
+            const typed = String(codeInput.value || '').trim();
+            const value = typed.toLowerCase();
+            const currentCode = String(form.dataset.currentCode || '').trim().toLowerCase();
+            let matches = productCodeRegistry.filter(code => code === value).length;
+            // The product being edited is in the registry too; do not flag its own code.
+            if (currentCode && value === currentCode && matches > 0) matches -= 1;
+            const isDuplicate = Boolean(value) && matches > 0;
+            if (isDuplicate) {
+              hint.textContent = "⚠ Mã '" + typed + "' đã tồn tại trong shop này, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.";
+              hint.classList.add('visible');
+              if (saveBtn) saveBtn.disabled = true;
+            } else {
+              hint.textContent = '';
+              hint.classList.remove('visible');
+              if (saveBtn) saveBtn.disabled = false;
+            }
+          }
+
+          document.addEventListener('input', (e) => {
+            const target = e.target;
+            if (target && target.name === 'code' && target.closest('.product-form')) {
+              checkDuplicateCode(target.closest('.product-form'));
+            }
+          });
+
+          // Progressive Enhancement Drawer Controller
+          document.body.classList.add('js-enabled');
+
+          const drawerBackdrop = document.getElementById('product-drawer');
+          const drawerTitle = document.getElementById('drawer-title');
+          const drawerBody = document.getElementById('drawer-body-container');
+          const drawerCloseBtn = document.getElementById('drawer-close-btn');
+
+          let activeDrawerFormParent = null;
+          let activeDrawerForm = null;
+          let drawerInitialState = '';
+
+          function serializeDrawerForm(form) {
+            if (!form) return '';
+            const parts = [];
+            const elements = form.querySelectorAll('input, textarea, select');
+            Array.prototype.forEach.call(elements, el => {
+              if (!el.name) return;
+              if (el.type === 'checkbox' || el.type === 'radio') {
+                parts.push(el.name + '=' + (el.checked ? '1' : '0'));
+              } else {
+                parts.push(el.name + '=' + el.value);
+              }
+            });
+            return parts.join('&');
+          }
+
+          function openDrawer(form, titleText) {
+            if (activeDrawerForm && activeDrawerFormParent) {
+              activeDrawerFormParent.appendChild(activeDrawerForm);
+            }
+            activeDrawerForm = form;
+            activeDrawerFormParent = form.parentElement;
+
+            drawerTitle.textContent = titleText;
+            drawerBody.appendChild(form);
+            drawerBackdrop.classList.add('visible');
+            drawerInitialState = serializeDrawerForm(form);
+            checkDuplicateCode(form);
+          }
+
+          function closeDrawer() {
+            if (activeDrawerForm && activeDrawerFormParent) {
+              activeDrawerFormParent.appendChild(activeDrawerForm);
+              activeDrawerForm = null;
+              activeDrawerFormParent = null;
+            }
+            drawerInitialState = '';
+            drawerBackdrop.classList.remove('visible');
+          }
+
+          function requestCloseDrawer() {
+            if (activeDrawerForm && serializeDrawerForm(activeDrawerForm) !== drawerInitialState) {
+              if (!window.confirm('Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi?')) {
+                return;
+              }
+            }
+            closeDrawer();
+          }
+
+          if (drawerCloseBtn) {
+            drawerCloseBtn.addEventListener('click', requestCloseDrawer);
+          }
+          if (drawerBackdrop) {
+            drawerBackdrop.addEventListener('click', (e) => {
+              if (e.target === drawerBackdrop) {
+                requestCloseDrawer();
+              }
+            });
+          }
+
+          document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && drawerBackdrop && drawerBackdrop.classList.contains('visible')) {
+              requestCloseDrawer();
+            }
+          });
+
+          // Explicit "Hủy bỏ" button inside the drawer form
+          document.addEventListener('click', (e) => {
+            if (e.target && e.target.closest('.js-cancel-drawer')) {
+              e.preventDefault();
+              requestCloseDrawer();
+            }
+          });
+
+          // Intercept "+ Thêm sản phẩm"
+          const addProductBtn = document.querySelector('a[href="#add-product-section"]');
+          if (addProductBtn) {
+            addProductBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              const addSection = document.getElementById('add-product-section');
+              if (addSection) {
+                const form = addSection.querySelector('.product-form');
+                if (form) {
+                  openDrawer(form, 'Thêm sản phẩm');
+                }
+              }
+            });
+          }
+
+          // Intercept "Sửa" buttons in row
+          document.addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.js-edit-product-btn');
+            if (editBtn) {
+              e.preventDefault();
+              const parentTd = editBtn.closest('td');
+              if (parentTd) {
+                const form = parentTd.querySelector('.product-form');
+                const row = editBtn.closest('tr');
+                const productCode = row ? row.querySelector('td:first-child code').textContent : '';
+                if (form) {
+                  openDrawer(form, 'Sửa sản phẩm: ' + productCode);
+                }
+              }
+            }
+          });
         });
       </script>
     ` : ''}
@@ -1432,7 +3325,7 @@ function renderUserDetailHtml(model) {
   const profile = model.profile || {};
   const conversation = model.conversation || {};
   const body = `
-    <p><a href="/admin/dashboard${dashboardQueryString(model.filters || {})}">Back to dashboard</a></p>
+    <p><a href="${escapeHtml(`/admin/dashboard${dashboardQueryString(model.filters || {})}`)}">Back to dashboard</a></p>
     <p class="meta">Sender <code>${escapeHtml(model.senderId)}</code> | detail limits: ${escapeHtml(model.limits.detailOrders)} orders, ${escapeHtml(model.limits.detailMessages)} messages, ${escapeHtml(model.limits.detailEvents)} events.</p>
 
     <h2>Profile</h2>
@@ -1498,6 +3391,7 @@ module.exports = {
   renderDashboardHtml,
   renderLoginHtml,
   renderProductImportResultHtml,
+  renderPageSetupPreviewResultHtml,
   renderShopCreateHtml,
   renderShopDetailHtml,
   renderShopsHtml,

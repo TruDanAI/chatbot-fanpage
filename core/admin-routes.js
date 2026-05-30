@@ -6,9 +6,15 @@ const {
 const { createPostgresAuditLogger } = require('./admin/audit');
 const {
   presentAssetWriteApi,
+  presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageCutoverWriteApi,
+  presentPageMappingArchiveApi,
+  presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
   presentProductWriteApi,
+  presentShopControlWriteApi,
+  presentShopReadinessCheckApi,
   presentShopSettingsWriteApi,
   presentShopWriteApi
 } = require('./admin/api-presenter');
@@ -21,6 +27,12 @@ const {
   createPostgresAssetWriteService,
   isMissingAssetWriteSchemaError
 } = require('./admin/asset-writes');
+const {
+  createPostgresAssetUploadService,
+  isAdminImageUploadEnabled,
+  isMissingAssetUploadSchemaError,
+  resolveImageUploadPolicy
+} = require('./admin/asset-uploads');
 const {
   createPostgresProductImportService,
   isMissingProductImportSchemaError,
@@ -36,9 +48,30 @@ const {
   isMissingPageCredentialWriteSchemaError
 } = require('./admin/page-credential-writes');
 const {
+  PAGE_CUTOVER_ACTION,
+  createPostgresPageCutoverWriteService,
+  isMissingPageCutoverWriteSchemaError
+} = require('./admin/page-cutover-writes');
+const {
   createPostgresPageMappingWriteService,
+  isStagingRuntime,
   isMissingPageMappingWriteSchemaError
 } = require('./admin/page-mapping-writes');
+const {
+  PAGE_SETUP_PREVIEW_ACTIONS,
+  createPostgresPageSetupPreviewService,
+  isMissingPageSetupPreviewSchemaError
+} = require('./admin/page-setup-preview');
+const {
+  createPostgresShopControlWriteService,
+  isMissingShopControlWriteSchemaError,
+  SHOP_DRY_RUN_DISABLE_ACTION,
+  SHOP_DRY_RUN_ENABLE_ACTION
+} = require('./admin/shop-control-writes');
+const {
+  createPostgresShopReadinessCheckService,
+  isMissingShopReadinessCheckSchemaError
+} = require('./admin/shop-readiness-check');
 const {
   createPostgresShopSettingsWriteService,
   isMissingShopSettingsWriteSchemaError
@@ -47,6 +80,9 @@ const {
   createPostgresShopWriteService,
   isMissingShopWriteSchemaError
 } = require('./admin/shop-writes');
+const {
+  createPostgresShopDeleteService
+} = require('./admin/shop-delete-writes');
 const { createAdminLegacyHandlers } = require('./admin/legacy-routes');
 const {
   assertReadOnlySql,
@@ -66,6 +102,7 @@ const {
   maskAddress,
   maskPhone,
   renderBulkMenuImageImportResultHtml,
+  renderPageSetupPreviewResultHtml,
   renderProductImportResultHtml,
   renderShopCreateHtml
 } = require('./admin/views');
@@ -94,6 +131,70 @@ function setAdminNoStoreHeaders(_req, res, next) {
   setResponseHeader(res, 'Referrer-Policy', 'no-referrer');
   if (typeof next === 'function') return next();
   return undefined;
+}
+
+function loadMulter() {
+  try {
+    return require('multer');
+  } catch (_) {
+    const err = new Error('Package "multer" is required for admin image uploads.');
+    err.code = 'feature_not_configured';
+    err.statusCode = 503;
+    throw err;
+  }
+}
+
+function getUploadedImageFile(req = {}) {
+  if (req.file) return req.file;
+  const files = req.files || {};
+  if (Array.isArray(files.image) && files.image[0]) return files.image[0];
+  if (Array.isArray(files.file) && files.file[0]) return files.file[0];
+  if (Array.isArray(files.upload) && files.upload[0]) return files.upload[0];
+  return null;
+}
+
+function createAssetUploadParser(policy = resolveImageUploadPolicy()) {
+  const multer = loadMulter();
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: Number(policy.maxBytes || 5242880),
+      files: 1,
+      fields: 12,
+      parts: 16
+    }
+  }).fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+    { name: 'upload', maxCount: 1 }
+  ]);
+}
+
+function parseAssetUploadRequest(req, res, assetUploads) {
+  if (getUploadedImageFile(req)) return Promise.resolve();
+  const policy = typeof assetUploads?.getPolicy === 'function'
+    ? assetUploads.getPolicy()
+    : resolveImageUploadPolicy();
+  const parser = createAssetUploadParser(policy);
+  return new Promise((resolve, reject) => {
+    parser(req, res, err => {
+      if (!err) {
+        resolve();
+        return;
+      }
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        err.code = 'file_too_large';
+        err.statusCode = 413;
+      } else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        err.code = 'invalid_file_field';
+        err.statusCode = 400;
+      } else {
+        err.code = 'upload_parse_failed';
+        err.statusCode = 400;
+      }
+      reject(err);
+    });
+  });
 }
 
 function getRequestHeader(req, name) {
@@ -253,9 +354,10 @@ function presentProductWriteError(err) {
     invalid_product_code: ['invalid_product_input', 'Product code is required.', 400],
     invalid_product_name: ['invalid_product_input', 'Product name is required.', 400],
     invalid_product_status: ['invalid_product_input', 'Product status is invalid.', 400],
-    duplicate_product_code: ['duplicate_product_code', 'Product code already exists in this shop.', 409],
+    duplicate_product_code: ['duplicate_product_code', 'Mã sản phẩm này đã tồn tại trong shop, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.', 409],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     product_not_found: ['product_not_found', 'Product was not found.', 404],
+    product_not_archived: ['product_not_archived', 'Only archived products can be restored.', 409],
     permission_denied: ['permission_denied', 'Product write permission is required.', 403],
     database_url_required: ['product_write_unavailable', 'Product writes are unavailable.', 503],
     product_commit_failed: ['product_commit_failed', 'Product write could not be committed.', 500]
@@ -467,6 +569,8 @@ function presentShopWriteError(err) {
     invalid_shop_id: ['invalid_shop_input', 'Shop id/slug is invalid.', 400],
     invalid_shop_name: ['invalid_shop_input', 'Display name is required.', 400],
     invalid_shop_status: ['invalid_shop_status', 'Shop status is invalid.', 400],
+    invalid_shop_package: ['invalid_shop_package', 'Shop package is invalid.', 400],
+    invalid_shop_lifecycle: ['invalid_shop_lifecycle', 'Shop lifecycle is invalid.', 400],
     invalid_shop_locale: ['invalid_shop_input', 'Shop locale is invalid.', 400],
     invalid_shop_timezone: ['invalid_shop_input', 'Shop timezone is invalid.', 400],
     invalid_bot_mode: ['invalid_bot_mode', 'Bot mode is invalid.', 400],
@@ -509,6 +613,132 @@ function presentShopWriteTextError(err) {
   };
 }
 
+function presentShopControlWriteError(err) {
+  if (isMissingShopControlWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    invalid_shop_package: ['invalid_shop_package', 'Shop package is invalid.', 400],
+    invalid_shop_lifecycle: ['invalid_shop_lifecycle', 'Shop lifecycle is invalid.', 400],
+    invalid_manual_test_status: ['invalid_manual_test_status', 'Manual test status is invalid.', 400],
+    live_confirmation_required: ['live_confirmation_required', 'Live enable requires explicit confirmation.', 400],
+    pause_archive_confirmation_required: ['pause_archive_confirmation_required', 'Pause/archive requires explicit confirmation.', 400],
+    pause_confirmation_required: ['pause_confirmation_required', 'Pause confirmation is required.', 400],
+    resume_confirmation_required: ['resume_confirmation_required', 'Resume confirmation is required.', 400],
+    dry_run_enable_confirmation_required: ['dry_run_enable_confirmation_required', 'Enable dry-run confirmation is required.', 400],
+    dry_run_disable_confirmation_required: ['dry_run_disable_confirmation_required', 'Disable dry-run requires typing the exact confirmation text.', 400],
+    dry_run_disable_readiness_required: ['dry_run_disable_readiness_required', 'Readiness check must be passed before disabling dry-run.', 409],
+    dry_run_disable_shop_not_active: ['dry_run_disable_shop_not_active', 'Only active shops can disable dry-run mode.', 409],
+    dry_run_disable_live_enabled: ['dry_run_disable_live_enabled', 'Dry-run cannot be disabled while live_enabled is true.', 409],
+    readiness_blockers_present: ['readiness_blockers_present', 'Readiness hard blockers must pass before live enable.', 400],
+    adult_shop_protected: ['adult_shop_protected', 'This shop is protected from emergency pause/resume.', 403],
+    staging_only: ['staging_only', 'Shop emergency controls are available only in staging.', 403],
+    shop_archived: ['shop_archived', 'Archived shops cannot be paused or resumed.', 409],
+    shop_not_paused: ['shop_not_paused', 'Only paused shops can be resumed.', 409],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    permission_denied: ['permission_denied', 'Shop control write permission is required.', 403],
+    database_url_required: ['shop_control_unavailable', 'Shop control writes are unavailable.', 503],
+    shop_control_commit_failed: ['shop_control_commit_failed', 'Shop control changes could not be committed.', 500],
+    shop_control_persist_failed: ['shop_control_failed', 'Shop control changes could not be saved.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1],
+        ...(Array.isArray(err?.details?.blockers) ? { blockers: err.details.blockers } : {})
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'shop_control_write_failed',
+      message: 'Shop control write could not be completed.'
+    }
+  };
+}
+
+function presentShopControlWriteTextError(err) {
+  const response = presentShopControlWriteError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Shop control write could not be completed.'
+  };
+}
+
+function presentShopReadinessCheckError(err) {
+  if (isMissingShopReadinessCheckSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    shop_archived: ['shop_archived', 'Archived shops cannot be readiness checked.', 409],
+    permission_denied: ['permission_denied', 'Shop readiness check permission is required.', 403],
+    database_url_required: ['shop_readiness_check_unavailable', 'Shop readiness checks are unavailable.', 503],
+    invalid_readiness_status: ['invalid_readiness_status', 'Readiness status is invalid.', 500],
+    readiness_check_commit_failed: ['readiness_check_commit_failed', 'Readiness check could not be committed.', 500],
+    readiness_check_persist_failed: ['readiness_check_failed', 'Readiness check could not be saved.', 500]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'shop_readiness_check_failed',
+      message: 'Shop readiness check could not be completed.'
+    }
+  };
+}
+
+function presentShopReadinessCheckTextError(err) {
+  const response = presentShopReadinessCheckError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Shop readiness check could not be completed.'
+  };
+}
+
 function presentPageMappingWriteError(err) {
   if (isMissingPageMappingWriteSchemaError(err)) {
     return {
@@ -526,12 +756,20 @@ function presentPageMappingWriteError(err) {
   const safe = {
     invalid_page_id: ['invalid_page_id', 'Page id is invalid.', 400],
     invalid_page_mapping_status: ['invalid_page_mapping_status', 'Page mapping status is invalid.', 400],
+    page_id_not_accepted: ['page_id_not_accepted', 'Page id is not accepted for this action.', 400],
+    archive_confirmation_required: ['archive_confirmation_required', 'Archive confirmation is required.', 400],
     duplicate_active_page_id: ['duplicate_active_page_id', 'Page id already has an active mapping.', 409],
+    page_setup_preview_only: ['page_setup_preview_only', 'Demo-shop page setup is preview-only while configuring/non-live.', 409],
+    staging_only: ['staging_only', 'Page mapping archive is available only in staging.', 403],
+    adult_shop_protected: ['adult_shop_protected', 'This shop is protected from page mapping archive.', 403],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    page_mapping_not_found: ['page_mapping_not_found', 'Page mapping was not found for this shop.', 404],
+    page_mapping_not_active: ['page_mapping_not_active', 'Page mapping is not active.', 409],
     permission_denied: ['permission_denied', 'Page mapping write permission is required.', 403],
     database_url_required: ['page_mapping_write_unavailable', 'Page mapping writes are unavailable.', 503],
     page_mapping_commit_failed: ['page_mapping_commit_failed', 'Page mapping write could not be committed.', 500],
-    page_mapping_persist_failed: ['page_mapping_create_failed', 'Page mapping could not be created.', 500]
+    page_mapping_persist_failed: ['page_mapping_create_failed', 'Page mapping could not be created.', 500],
+    page_mapping_archive_failed: ['page_mapping_archive_failed', 'Page mapping could not be archived.', 500]
   }[code];
   if (safe) {
     return {
@@ -585,6 +823,7 @@ function presentPageCredentialWriteError(err) {
     credential_token_invalid: ['credential_token_invalid', 'Credential token is invalid.', 400],
     credential_master_key_missing: ['credential_write_unavailable', 'Credential writes are unavailable.', 503],
     active_credential_exists: ['active_credential_exists', 'An active credential already exists. Use rotate mode to replace it.', 409],
+    page_setup_preview_only: ['page_setup_preview_only', 'Demo-shop page setup is preview-only while configuring/non-live.', 409],
     shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
     page_mapping_not_found: ['page_mapping_not_found', 'Page mapping was not found for this shop.', 404],
     permission_denied: ['permission_denied', 'Page credential write permission is required.', 403],
@@ -621,6 +860,128 @@ function presentPageCredentialWriteTextError(err) {
   return {
     statusCode: response.statusCode,
     text: response.body?.message || 'Page credential write could not be completed.'
+  };
+}
+
+function presentPageCutoverWriteError(err) {
+  if (isMissingPageCutoverWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    page_cutover_not_allowed_in_production: ['page_cutover_not_allowed_in_production', 'Page cutover is not allowed in production.', 403],
+    page_cutover_confirmation_required: ['page_cutover_confirmation_required', 'Page cutover confirmation is required.', 400],
+    shop_slug_confirmation_required: ['shop_slug_confirmation_required', 'Shop slug confirmation is required.', 400],
+    shop_slug_confirmation_mismatch: ['shop_slug_confirmation_mismatch', 'Shop slug confirmation does not match.', 400],
+    invalid_page_id: ['invalid_page_id', 'Page id is invalid.', 400],
+    credential_token_missing: ['credential_token_missing', 'Credential token is required.', 400],
+    credential_token_invalid: ['credential_token_invalid', 'Credential token is invalid.', 400],
+    credential_master_key_missing: ['credential_write_unavailable', 'Credential writes are unavailable.', 503],
+    protected_shop_cutover_blocked: ['protected_shop_cutover_blocked', 'This shop is protected from page cutover.', 403],
+    shop_not_staging_test_safe: ['shop_not_staging_test_safe', 'Page cutover is allowed only for non-live staging test shops.', 409],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    active_page_mapping_required: ['active_page_mapping_required', 'Exactly one active page mapping is required.', 409],
+    active_page_mapping_ambiguous: ['active_page_mapping_ambiguous', 'Exactly one active page mapping is required.', 409],
+    active_page_credential_required: ['active_page_credential_required', 'Exactly one active page credential is required.', 409],
+    active_page_credential_ambiguous: ['active_page_credential_ambiguous', 'Exactly one active page credential is required.', 409],
+    same_page_id: ['same_page_id', 'New page id must differ from the current active page id.', 409],
+    duplicate_active_page_id: ['duplicate_active_page_id', 'Page id already has an active mapping.', 409],
+    stale_page_mapping: ['stale_page_mapping', 'Current page mapping changed before cutover.', 409],
+    stale_page_ref: ['stale_page_ref', 'Current page reference changed before cutover.', 409],
+    page_cutover_commit_failed: ['page_cutover_commit_failed', 'Page cutover could not be committed.', 500],
+    page_cutover_mapping_persist_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_credential_persist_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_encryption_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_old_credential_archive_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_old_mapping_archive_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_postcondition_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    database_url_required: ['page_cutover_unavailable', 'Page cutover writes are unavailable.', 503],
+    permission_denied: ['permission_denied', 'Page cutover write permission is required.', 403]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'page_cutover_failed',
+      message: 'Page cutover could not be completed.'
+    }
+  };
+}
+
+function presentPageSetupPreviewError(err) {
+  if (isMissingPageSetupPreviewSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    page_id_required: ['page_id_required', 'Page id is required for preview.', 400],
+    credential_token_not_accepted_in_preview: ['credential_token_not_accepted_in_preview', 'Credential token is not accepted in preview.', 400],
+    setup_preview_not_allowed: ['setup_preview_not_allowed', 'Page setup preview is not available for this shop state.', 403],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    permission_denied: ['permission_denied', 'Page setup preview permission is required.', 403],
+    database_url_required: ['page_setup_preview_unavailable', 'Page setup preview is unavailable.', 503]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'page_setup_preview_failed',
+      message: 'Page setup preview could not be completed.'
+    }
+  };
+}
+
+function presentPageSetupPreviewTextError(err) {
+  const response = presentPageSetupPreviewError(err);
+  return {
+    statusCode: response.statusCode,
+    body: response.body
   };
 }
 
@@ -684,6 +1045,54 @@ function presentAssetWriteTextError(err) {
   };
 }
 
+function presentAssetUploadError(err) {
+  if (isMissingAssetUploadSchemaError(err)) {
+    return presentAssetWriteError(err);
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    feature_disabled: ['feature_disabled', 'Image upload is disabled.', 404],
+    feature_not_configured: ['feature_not_configured', 'Image upload storage is not configured.', 503],
+    missing_file: ['missing_file', 'Image file is required.', 400],
+    file_too_large: ['file_too_large', 'Image file is too large.', 413],
+    invalid_file_field: ['invalid_file_input', 'Image file field is invalid.', 400],
+    invalid_file_extension: ['invalid_file_input', 'Image extension is not allowed.', 400],
+    invalid_file_type: ['invalid_file_input', 'Image MIME type is not allowed.', 400],
+    invalid_file_signature: ['invalid_file_input', 'Image file signature is not allowed.', 400],
+    file_type_mismatch: ['invalid_file_input', 'Image file type does not match its extension or MIME type.', 400],
+    svg_not_allowed: ['invalid_file_input', 'SVG uploads are not allowed.', 400],
+    product_code_not_supported: ['invalid_asset_input', 'Product code is not accepted for image upload.', 400],
+    insecure_upload_url: ['upload_failed', 'Image upload could not be completed.', 502],
+    cloudinary_upload_failed: ['upload_failed', 'Image upload could not be completed.', 502],
+    upload_parse_failed: ['invalid_file_input', 'Image upload request is invalid.', 400],
+    asset_upload_commit_failed: ['asset_commit_failed', 'Asset upload could not be committed.', 500],
+    asset_persist_failed: ['asset_write_failed', 'Asset write could not be completed.', 500]
+  }[code];
+
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  return presentAssetWriteError(err);
+}
+
+function presentAssetUploadTextError(err) {
+  const response = presentAssetUploadError(err);
+  return {
+    statusCode: response.statusCode,
+    text: response.body?.message || 'Image upload could not be completed.'
+  };
+}
+
 function sanitizeBulkMenuImageErrors(errors = []) {
   return (Array.isArray(errors) ? errors : []).slice(0, 200).map(error => ({
     row: Number(error?.row || 0),
@@ -732,13 +1141,19 @@ function registerAdminRoutes(app, {
   getClientIp,
   dashboardReader,
   internalNoteService,
+  assetUploadService,
   assetWriteService,
+  pageSetupPreviewService,
   pageCredentialWriteService,
+  pageCutoverWriteService,
   pageMappingWriteService,
   productImportService,
   productWriteService,
+  shopControlWriteService,
+  shopReadinessCheckService,
   shopSettingsWriteService,
   shopWriteService,
+  shopDeleteWriteService,
   dashboardDatabaseUrl = process.env.DATABASE_URL,
   tenantId = process.env.TENANT_ID || 'default',
   pageId = process.env.PAGE_ID || '',
@@ -756,8 +1171,11 @@ function registerAdminRoutes(app, {
   adminLoginRateLimitMax = parsePositiveInteger(process.env.ADMIN_LOGIN_RATE_LIMIT_MAX, 10),
   auditLogger,
   adminAuditLogEnabled = process.env.ADMIN_AUDIT_LOG_ENABLED === 'true',
-  adminAuditFailClosed = false
+  adminAuditFailClosed = false,
+  adminImageUploadEnabled = isAdminImageUploadEnabled(process.env.ADMIN_IMAGE_UPLOAD_ENABLED),
+  adminPageArchiveEnabled = isStagingRuntime(process.env)
 }) {
+  const imageUploadEnabled = isAdminImageUploadEnabled(adminImageUploadEnabled);
   const reader = dashboardReader || createPostgresDashboardReader({
     databaseUrl: dashboardDatabaseUrl,
     tenantId,
@@ -775,7 +1193,17 @@ function registerAdminRoutes(app, {
   const assetWrites = assetWriteService || createPostgresAssetWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
+  const assetUploads = assetUploadService || createPostgresAssetUploadService({
+    enabled: imageUploadEnabled,
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const pageSetupPreviews = pageSetupPreviewService || createPostgresPageSetupPreviewService({
+    databaseUrl: dashboardDatabaseUrl
+  });
   const pageCredentialWrites = pageCredentialWriteService || createPostgresPageCredentialWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const pageCutoverWrites = pageCutoverWriteService || createPostgresPageCutoverWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const pageMappingWrites = pageMappingWriteService || createPostgresPageMappingWriteService({
@@ -787,10 +1215,19 @@ function registerAdminRoutes(app, {
   const productWrites = productWriteService || createPostgresProductWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
+  const shopControlWrites = shopControlWriteService || createPostgresShopControlWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const shopReadinessChecks = shopReadinessCheckService || createPostgresShopReadinessCheckService({
+    databaseUrl: dashboardDatabaseUrl
+  });
   const shopSettingsWrites = shopSettingsWriteService || createPostgresShopSettingsWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const shopWrites = shopWriteService || createPostgresShopWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const shopDeleteWrites = shopDeleteWriteService || createPostgresShopDeleteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const sessionManager = adminSessionManager || createAdminSessionManager({
@@ -859,6 +1296,8 @@ function registerAdminRoutes(app, {
     internalNoteService: notes,
     tenantId,
     pageId,
+    adminImageUploadEnabled: imageUploadEnabled,
+    adminPageArchiveEnabled,
     authorizeAdminRequest,
     recordAdminAudit
   });
@@ -985,6 +1424,399 @@ function registerAdminRoutes(app, {
     }
   }
 
+  function shopControlRedirect(shopId = '', message = '') {
+    const base = `/admin/shops/${encodeURIComponent(shopId)}`;
+    const safeMessage = String(message || '').trim();
+    return safeMessage ? `${base}?controlMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  async function checkShopReadinessApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'shop.readiness.checked',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopReadinessChecks.checkReadiness({
+        principal,
+        shopId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopReadinessCheckApi(result));
+    } catch (err) {
+      const response = presentShopReadinessCheckError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function checkShopReadinessHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'shop.readiness.checked',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopReadinessChecks.checkReadiness({
+        principal,
+        shopId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'readiness-checked'));
+    } catch (err) {
+      const response = presentShopReadinessCheckTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function updateShopControlApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'shop.control_plane.updated',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.updateControlPlane({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function updateShopControlHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'shop.control_plane.updated',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.updateControlPlane({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'updated'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function pauseShopApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.pause',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.pauseShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function resumeShopApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.resume',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.resumeShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function pauseShopHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.pause',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.pauseShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'paused'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function resumeShopHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.resume',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.resumeShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'resumed'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function enableShopDryRunApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_ENABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.enableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function disableShopDryRunApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_DISABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await shopControlWrites.disableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentShopControlWriteApi(result));
+    } catch (err) {
+      const response = presentShopControlWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function enableShopDryRunHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_ENABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.enableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'dry-run-enabled'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function disableShopDryRunHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: SHOP_DRY_RUN_DISABLE_ACTION,
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      await shopControlWrites.disableDryRun({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopControlRedirect(shopId, 'dry-run-disabled'));
+    } catch (err) {
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function deleteDraftShopHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop.delete_draft',
+      resourceType: 'shop',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const result = await shopDeleteWrites.deleteDraftShop({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Xóa cửa hàng thành công</title>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+            .card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px; max-width: 480px; width: 100%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); text-align: center; }
+            .icon { font-size: 48px; margin-bottom: 16px; }
+            h1 { font-size: 20px; color: #1e3a8a; margin: 0 0 12px; }
+            p { font-size: 14px; color: #64748b; line-height: 1.5; margin: 0 0 24px; }
+            .btn { display: inline-block; background: #2563eb; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500; transition: background 0.2s; }
+            .btn:hover { background: #1d4ed8; }
+          </style>
+          <meta http-equiv="refresh" content="3;url=/admin/shops">
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">✅</div>
+            <h1>Xóa cửa hàng thành công</h1>
+            <p>Cửa hàng <strong>${result.slug}</strong> đã được xóa hoàn toàn và vĩnh viễn khỏi hệ thống.</p>
+            <p style="font-size: 12px; color: #94a3b8;">Đang tự động chuyển hướng về danh sách cửa hàng sau 3 giây...</p>
+            <a href="/admin/shops" class="btn">Quay lại danh sách cửa hàng</a>
+          </div>
+        </body>
+        </html>
+      `;
+      return res.status(200).type('html').send(html);
+    } catch (err) {
+      if (err.code === 'shop_deletion_blocked') {
+        const reasonsLi = (err.details?.reasons || []).map(r => `<li>${r}</li>`).join('');
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Thao tác bị chặn</title>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff5f5; color: #1e293b; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+              .card { background: white; border: 1px solid #fee2e2; border-radius: 12px; padding: 32px; max-width: 580px; width: 100%; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+              .header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; border-bottom: 1px solid #fee2e2; padding-bottom: 16px; }
+              .icon { font-size: 32px; }
+              h1 { font-size: 20px; color: #991b1b; margin: 0; }
+              p { font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0 0 16px; }
+              ul { margin: 0 0 24px; padding-left: 20px; font-size: 14px; color: #b91c1c; line-height: 1.6; }
+              li { margin-bottom: 8px; }
+              .actions { display: flex; gap: 12px; }
+              .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500; text-align: center; }
+              .btn-primary { background: #dc2626; color: white; }
+              .btn-primary:hover { background: #b91c1c; }
+              .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+              .btn-secondary:hover { background: #e5e7eb; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="header">
+                <span class="icon">🛑</span>
+                <h1>Thao tác bị chặn</h1>
+              </div>
+              <p>Yêu cầu xóa cửa hàng nháp đã bị hệ thống chặn vì lý do an toàn tuyệt đối. Cửa hàng không đủ điều kiện để thực hiện thao tác xóa cứng do phát hiện các lỗi sau:</p>
+              <ul>
+                ${reasonsLi}
+              </ul>
+              <p><strong>Khuyến nghị:</strong> Đối với các cửa hàng đã từng phát sinh dữ liệu, đã kết nối Fanpage hoặc cấu hình Page Token, bạn <strong>chỉ có thể Lưu trữ (Archive)</strong> cửa hàng này để ngắt kết nối an toàn, không thể xóa vĩnh viễn.</p>
+              <div class="actions">
+                <a href="/admin/shops/${encodeURIComponent(shopId)}" class="btn btn-secondary">Quay lại chi tiết cửa hàng</a>
+                <a href="/admin/shops" class="btn btn-secondary">Quay lại danh sách</a>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+        return res.status(409).type('html').send(html);
+      }
+
+      const response = presentShopControlWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   function shopProductRedirect(shopId = '', message = '') {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
@@ -1001,6 +1833,160 @@ function registerAdminRoutes(app, {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
     return safeMessage ? `${base}?credentialMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  function pageSetupPreviewAuditMetadata(result = {}, credentialType = '') {
+    return {
+      shop_ref: result.shop_ref || '',
+      page_ref: result.page_ref || '',
+      credential_type: credentialType || result.credential_type || '',
+      validate_only: true,
+      token_accepted: false,
+      health_check: false,
+      messenger_send: false
+    };
+  }
+
+  async function recordPageSetupPreviewAudit(req, { principal, action, result, credentialType = '' } = {}) {
+    await recordAdminAudit(req, {
+      principal,
+      action,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: result?.shop_ref || '',
+      outcome: 'success',
+      metadata: pageSetupPreviewAuditMetadata(result || {}, credentialType),
+      includeAuthMethod: false
+    });
+  }
+
+  async function previewPageMappingApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewPageMapping({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+        result
+      });
+      return res.json(presentPageMappingPreviewApi(result));
+    } catch (err) {
+      const response = presentPageSetupPreviewError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function previewPageMappingHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewPageMapping({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_MAPPING,
+        result
+      });
+      return res.type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Page Mapping Preview',
+        result: presentPageMappingPreviewApi(result)
+      }));
+    } catch (err) {
+      const response = presentPageSetupPreviewTextError(err);
+      return res.status(response.statusCode).type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Page Mapping Preview',
+        error: response.body
+      }));
+    }
+  }
+
+  async function previewPageCredentialApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewCredentialPrerequisites({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+        result,
+        credentialType: result.credential_type
+      });
+      return res.json(presentPageCredentialPreviewApi(result));
+    } catch (err) {
+      const response = presentPageSetupPreviewError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function previewPageCredentialHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+      resourceType: 'shop_page_setup_preview',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageSetupPreviews.previewCredentialPrerequisites({
+        principal,
+        shopId,
+        body: req.body || {}
+      });
+      await recordPageSetupPreviewAudit(req, {
+        principal,
+        action: PAGE_SETUP_PREVIEW_ACTIONS.PAGE_CREDENTIAL,
+        result,
+        credentialType: result.credential_type
+      });
+      return res.type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Credential Prerequisites Preview',
+        result: presentPageCredentialPreviewApi(result)
+      }));
+    } catch (err) {
+      const response = presentPageSetupPreviewTextError(err);
+      return res.status(response.statusCode).type('html').send(renderPageSetupPreviewResultHtml({
+        shopId,
+        title: 'Credential Prerequisites Preview',
+        error: response.body
+      }));
+    }
   }
 
   async function createPageMappingApi(req, res) {
@@ -1048,6 +2034,82 @@ function registerAdminRoutes(app, {
     } catch (err) {
       const response = presentPageMappingWriteTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function archivePageMappingApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_page.archive',
+      resourceType: 'shop_page',
+      resourceId: pageMappingId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageMappingWrites.archivePageMapping({
+        principal,
+        shopId,
+        pageMappingId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentPageMappingArchiveApi(result));
+    } catch (err) {
+      const response = presentPageMappingWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function archivePageMappingHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_page.archive',
+      resourceType: 'shop_page',
+      resourceId: pageMappingId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageMappingWrites.archivePageMapping({
+        principal,
+        shopId,
+        pageMappingId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopPageMappingRedirect(shopId, result.already_archived ? 'already-archived' : 'archived'));
+    } catch (err) {
+      const response = presentPageMappingWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function cutoverPageApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_CUTOVER_ACTION,
+      resourceType: 'shop_page_cutover',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageCutoverWrites.cutoverPage({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentPageCutoverWriteApi(result));
+    } catch (err) {
+      const response = presentPageCutoverWriteError(err);
+      return res.status(response.statusCode).json(response.body);
     }
   }
 
@@ -1238,6 +2300,31 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function restoreProductApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.restore',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      const result = await productWrites.restoreProduct({
+        principal,
+        shopId,
+        productId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentProductWriteApi(result));
+    } catch (err) {
+      const response = presentProductWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function updateShopSettingsApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const principal = await authorizeAdminRequest(req, res, {
@@ -1282,6 +2369,35 @@ function registerAdminRoutes(app, {
       return res.status(201).json(presentAssetWriteApi(result));
     } catch (err) {
       const response = presentAssetWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
+  async function createAssetUploadApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.upload',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+
+    try {
+      const featureError = getAssetUploadFeatureError();
+      if (featureError) throw featureError;
+      await parseAssetUploadRequest(req, res, assetUploads);
+      const result = await assetUploads.createUploadedAsset({
+        principal,
+        shopId,
+        body: req.body || {},
+        file: getUploadedImageFile(req),
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.status(201).json(presentAssetWriteApi(result));
+    } catch (err) {
+      const response = presentAssetUploadError(err);
       return res.status(response.statusCode).json(response.body);
     }
   }
@@ -1438,7 +2554,10 @@ function registerAdminRoutes(app, {
           result: presentProductImportApi(result)
         }));
       }
-      return res.redirect(303, shopProductRedirect(shopId, 'imported'));
+      return res.status(200).type('html').send(renderProductImportResultHtml({
+        shopId,
+        result: presentProductImportApi(result)
+      }));
     } catch (err) {
       const response = presentProductImportError(err);
       return res.status(response.statusCode).type('html').send(renderProductImportResultHtml({
@@ -1526,10 +2645,54 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function restoreProductHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const productId = String(req.params.productId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.product.restore',
+      resourceType: 'shop_product',
+      resourceId: productId
+    });
+    if (!principal) return;
+    try {
+      await productWrites.restoreProduct({
+        principal,
+        shopId,
+        productId,
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopProductRedirect(shopId, 'restored'));
+    } catch (err) {
+      const response = presentProductWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
   function shopAssetRedirect(shopId = '', message = '') {
     const base = `/admin/shops/${encodeURIComponent(shopId)}`;
     const safeMessage = String(message || '').trim();
     return safeMessage ? `${base}?assetMessage=${encodeURIComponent(safeMessage)}` : base;
+  }
+
+  function getAssetUploadFeatureError() {
+    if (typeof assetUploads.isEnabled === 'function' && !assetUploads.isEnabled()) {
+      const err = new Error('Image upload is disabled.');
+      err.code = 'feature_disabled';
+      err.statusCode = 404;
+      return err;
+    }
+    if (typeof assetUploads.getCloudinaryConfig === 'function') {
+      const config = assetUploads.getCloudinaryConfig();
+      if (config && config.ok === false) {
+        const err = new Error('Image upload storage is not configured.');
+        err.code = 'feature_not_configured';
+        err.statusCode = 503;
+        return err;
+      }
+    }
+    return null;
   }
 
   async function importMenuImagesHtml(req, res) {
@@ -1579,6 +2742,34 @@ function registerAdminRoutes(app, {
       return res.redirect(303, shopAssetRedirect(shopId, 'created'));
     } catch (err) {
       const response = presentAssetWriteTextError(err);
+      return res.status(response.statusCode).type('text').send(response.text);
+    }
+  }
+
+  async function createAssetUploadHtml(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: 'admin.shop_asset.upload',
+      resourceType: 'shop_asset',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const featureError = getAssetUploadFeatureError();
+      if (featureError) throw featureError;
+      await parseAssetUploadRequest(req, res, assetUploads);
+      await assetUploads.createUploadedAsset({
+        principal,
+        shopId,
+        body: req.body || {},
+        file: getUploadedImageFile(req),
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.redirect(303, shopAssetRedirect(shopId, 'uploaded'));
+    } catch (err) {
+      const response = presentAssetUploadTextError(err);
       return res.status(response.statusCode).type('text').send(response.text);
     }
   }
@@ -1699,14 +2890,27 @@ function registerAdminRoutes(app, {
   app.get('/admin/api/shops/:shopId', sendShopDetailApi);
   app.get('/admin/api/shops/:shopId/health', sendShopHealthApi);
   app.get('/admin/api/shops/:shopId/settings', sendShopSettingsApi);
+  app.post('/admin/api/shops/:shopId/readiness-check', checkShopReadinessApi);
+  app.post('/admin/api/shops/:shopId/pause', pauseShopApi);
+  app.post('/admin/api/shops/:shopId/resume', resumeShopApi);
+  app.post('/admin/api/shops/:shopId/dry-run/enable', enableShopDryRunApi);
+  app.post('/admin/api/shops/:shopId/dry-run/disable', disableShopDryRunApi);
+  app.post('/admin/api/shops/:shopId/control-plane', updateShopControlApi);
+  app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
+  app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
   app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
+  app.post('/admin/api/shops/:shopId/pages/cutover', cutoverPageApi);
+  app.post('/admin/api/shops/:shopId/pages/:pageMappingId/archive', archivePageMappingApi);
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
   app.post('/admin/api/shops/:shopId/products/import', importProductsApi);
+  app.post('/admin/api/shops/:shopId/products/:productId/restore', restoreProductApi);
   app.post('/admin/api/shops/:shopId/assets', createAssetApi);
+  app.post('/admin/api/shops/:shopId/assets/uploads', createAssetUploadApi);
   app.post('/admin/api/shops/:shopId/assets/menu-images/import', importMenuImagesApi);
   app.post('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
   if (typeof app.patch === 'function') {
+    app.patch('/admin/api/shops/:shopId/control-plane', updateShopControlApi);
     app.patch('/admin/api/shops/:shopId/settings', updateShopSettingsApi);
     app.patch('/admin/api/shops/:shopId/products/:productId', updateProductApi);
     app.patch('/admin/api/shops/:shopId/products/:productId/status', setProductStatusApi);
@@ -1729,7 +2933,17 @@ function registerAdminRoutes(app, {
   app.get('/admin/shops/new', sendNewShopForm);
   app.post('/admin/shops', createShopHtml);
   app.get('/admin/shops/:shopId', sendShopDetail);
+  app.post('/admin/shops/:shopId/readiness-check', checkShopReadinessHtml);
+  app.post('/admin/shops/:shopId/pause', pauseShopHtml);
+  app.post('/admin/shops/:shopId/resume', resumeShopHtml);
+  app.post('/admin/shops/:shopId/dry-run/enable', enableShopDryRunHtml);
+  app.post('/admin/shops/:shopId/dry-run/disable', disableShopDryRunHtml);
+  app.post('/admin/shops/:shopId/delete-draft', deleteDraftShopHtml);
+  app.post('/admin/shops/:shopId/control-plane', updateShopControlHtml);
+  app.post('/admin/shops/:shopId/pages/preview', previewPageMappingHtml);
+  app.post('/admin/shops/:shopId/page-credentials/preview', previewPageCredentialHtml);
   app.post('/admin/shops/:shopId/pages', createPageMappingHtml);
+  app.post('/admin/shops/:shopId/pages/:pageMappingId/archive', archivePageMappingHtml);
   app.post('/admin/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialHtml);
   app.post('/admin/shops/:shopId/settings', updateShopSettingsHtml);
   app.post('/admin/shops/:shopId/products', createProductHtml);
@@ -1737,7 +2951,9 @@ function registerAdminRoutes(app, {
   app.post('/admin/shops/:shopId/products/:productId', updateProductHtml);
   app.post('/admin/shops/:shopId/products/:productId/status', setProductStatusHtml);
   app.post('/admin/shops/:shopId/products/:productId/archive', archiveProductHtml);
+  app.post('/admin/shops/:shopId/products/:productId/restore', restoreProductHtml);
   app.post('/admin/shops/:shopId/assets', createAssetHtml);
+  app.post('/admin/shops/:shopId/assets/uploads', createAssetUploadHtml);
   app.post('/admin/shops/:shopId/assets/menu-images/import', importMenuImagesHtml);
   app.post('/admin/shops/:shopId/assets/:assetId', updateAssetHtml);
   app.post('/admin/shops/:shopId/assets/:assetId/status', setAssetStatusHtml);
@@ -1763,12 +2979,17 @@ module.exports = {
   createAdminLoginRateLimiter,
   createAdminReadHandlers,
   createPostgresAuditLogger,
+  createPostgresAssetUploadService,
   createPostgresAssetWriteService,
   createPostgresDashboardReader,
   createPostgresPageCredentialWriteService,
+  createPostgresPageCutoverWriteService,
   createPostgresPageMappingWriteService,
+  createPostgresPageSetupPreviewService,
   createPostgresProductImportService,
   createPostgresProductWriteService,
+  createPostgresShopControlWriteService,
+  createPostgresShopReadinessCheckService,
   createPostgresShopSettingsWriteService,
   createPostgresShopWriteService,
   createAdminRouteAuthorizer,

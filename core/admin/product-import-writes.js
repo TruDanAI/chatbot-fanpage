@@ -11,7 +11,17 @@ const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
 
 const PRODUCT_IMPORT_ACTION = 'admin.product.import';
 const PRODUCT_IMPORT_MAX_ROWS = 100;
+const PRODUCT_IMPORT_PREVIEW_MAX_ROWS = PRODUCT_IMPORT_MAX_ROWS;
 const PRODUCT_IMPORT_METADATA_JSON_SUPPORTED = true;
+const ARCHIVED_PRODUCT_CODE_PREVIEW_MESSAGE = 'Mã này thuộc một sản phẩm đã lưu trữ và đang được giữ chỗ. Hãy khôi phục sản phẩm đó từ danh mục, hoặc dùng mã khác.';
+const PREVIEW_HIDDEN_VALUE = '[not shown]';
+const PRODUCT_IMPORT_PREVIEW_STATUSES = Object.freeze(new Set([
+  'create',
+  'update',
+  'archived_conflict',
+  'duplicate_in_csv',
+  'error'
+]));
 
 const PRODUCT_STATUSES = Object.freeze(new Set(['active', 'hidden', 'archived']));
 const KNOWN_COLUMNS = Object.freeze(new Set([
@@ -57,6 +67,8 @@ const SAFE_STATUS_ECHO_PATTERN = /^[a-z]{1,16}$/i;
 const SENSITIVE_VALUE_PATTERN = /(?:token|secret|password|bearer|authorization|metadata_json|phone|tel|sdt|sđt|address|dia chi|địa chỉ|pageid|pageref|customerid|senderid|userid|psid|fbid)/i;
 const URL_LIKE_VALUE_PATTERN = /(?:[a-z][a-z0-9+.-]*:\/\/|www\.)/i;
 const JSON_LIKE_VALUE_PATTERN = /(?:^\s*[\[{]|[\]}]\s*$|":|'\s*:)/;
+const SECRET_LIKE_VALUE_PATTERN = /\b(?:sk|ghp|github_pat|xox[baprs]|bearer|ea[a-z0-9])[-_a-z0-9]{12,}\b/i;
+const LONG_OPAQUE_VALUE_PATTERN = /\b[a-z0-9_-]{32,}\b/i;
 
 function loadPgClient() {
   try {
@@ -86,6 +98,15 @@ function normalizeHeader(value = '') {
     .toLowerCase()
     .replace(/[\s-]+/g, '_')
     .slice(0, 80);
+}
+
+function escapePreviewHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&(?!(?:amp|lt|gt|quot|#39);)/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function hasOwn(object = {}, key = '') {
@@ -174,6 +195,48 @@ function safeSubmittedValue(field = '', value = '') {
   return undefined;
 }
 
+function compactPreviewIdentifier(value = '') {
+  return String(value || '').toLowerCase().replace(/[\s._:-]+/g, '_');
+}
+
+function looksSensitivePreviewValue(value = '') {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  if (SENSITIVE_VALUE_PATTERN.test(text)) return true;
+  if (URL_LIKE_VALUE_PATTERN.test(text)) return true;
+  if (JSON_LIKE_VALUE_PATTERN.test(text)) return true;
+  if (SECRET_LIKE_VALUE_PATTERN.test(text)) return true;
+  if (LONG_OPAQUE_VALUE_PATTERN.test(text)) return true;
+  if ((text.match(/\d/g) || []).length >= 8) return true;
+
+  const compact = compactPreviewIdentifier(text);
+  if (text.toLowerCase().startsWith('p:')) return true;
+  return /(^|_)(page|customer|cust|sender|user|uid|psid|fbid)(_|$|\d)/i.test(compact);
+}
+
+function safePreviewProductCode(value = '') {
+  const text = normalizeText(value, 80);
+  if (!text) return '';
+  if (!SAFE_CODE_PATTERN.test(text)) return '';
+  if (looksSensitivePreviewValue(text)) return '';
+  return escapePreviewHtml(text);
+}
+
+function safePreviewProductStatus(value = '') {
+  const text = normalizeText(value, 40).toLowerCase();
+  if (!text) return '';
+  if (looksSensitivePreviewValue(text)) return '';
+  if (!SAFE_STATUS_ECHO_PATTERN.test(text)) return '';
+  return escapePreviewHtml(text);
+}
+
+function safePreviewProductName(value = '') {
+  const text = normalizeText(value, 80);
+  if (!text) return '';
+  if (looksSensitivePreviewValue(text)) return PREVIEW_HIDDEN_VALUE;
+  return escapePreviewHtml(text);
+}
+
 function suggestedFixForImportError(code = '') {
   return {
     csv_required: 'Paste CSV text with a header row and at least one product.',
@@ -183,6 +246,7 @@ function suggestedFixForImportError(code = '') {
     missing_required_column: 'Add the required column to the header row.',
     invalid_product_code: 'Use a short code starting with a letter or number; allowed punctuation is dot, underscore, colon, and hyphen.',
     duplicate_product_code_in_csv: 'Keep one row for each product code or merge the duplicated rows.',
+    archived_product_code: 'This code belongs to an archived product. Restore that product from the catalog instead of importing, or use a different code.',
     invalid_product_name: 'Add a product name.',
     invalid_product_status: 'Use active, hidden, archived, enabled, or disabled.',
     invalid_sort_order: 'Use a whole number between -100000 and 100000.',
@@ -431,37 +495,268 @@ function parseImportInput(body = {}) {
   };
 }
 
+function hasImportError(errors = [], code = '') {
+  return (Array.isArray(errors) ? errors : []).some(error => String(error?.code || '') === code);
+}
+
+function createDuplicatePreviewError(row = {}, relatedRows = []) {
+  const rows = relatedRows
+    .map(item => Number(item || 0))
+    .filter(item => Number.isInteger(item) && item > 0);
+  return safeRowError(
+    row.rowNumber,
+    'code',
+    'duplicate_product_code_in_csv',
+    rows.length
+      ? `Product code is duplicated in this CSV with rows ${rows.join(', ')}.`
+      : 'Product code is duplicated in this CSV.',
+    row.code,
+    { related_rows: rows }
+  );
+}
+
+function createArchivedPreviewError(row = {}) {
+  const error = safeRowError(
+    row.rowNumber,
+    'code',
+    'archived_product_code',
+    ARCHIVED_PRODUCT_CODE_PREVIEW_MESSAGE,
+    row.code
+  );
+  error.suggested_fix = 'Khôi phục sản phẩm đã lưu trữ từ danh mục, hoặc dùng mã khác.';
+  return error;
+}
+
+function parseImportPreviewInput(body = {}) {
+  let parsed;
+  try {
+    parsed = parseCsvText(body.csv ?? body.csv_text ?? body.csvText ?? '');
+  } catch (err) {
+    if (String(err?.code || '') !== 'product_import_validation_failed') throw err;
+    return {
+      rows: [],
+      rowsReceived: Number(err?.rows_received || 0),
+      ignoredColumns: Array.isArray(err?.ignored_columns) ? err.ignored_columns : [],
+      globalErrors: Array.isArray(err?.errors) ? err.errors : []
+    };
+  }
+
+  const globalErrors = [];
+  if (parsed.rows.length > PRODUCT_IMPORT_MAX_ROWS) {
+    globalErrors.push(safeRowError(0, 'csv', 'too_many_rows', `CSV import supports at most ${PRODUCT_IMPORT_MAX_ROWS} rows.`));
+  }
+
+  const rows = [];
+  const duplicateCandidates = new Map();
+  for (const rawRow of parsed.rows.slice(0, PRODUCT_IMPORT_MAX_ROWS)) {
+    const normalized = normalizeImportRow(rawRow);
+    const item = {
+      row: normalized.row,
+      errors: normalized.errors,
+      duplicateError: null
+    };
+    const codeKey = normalized.row.code.toLowerCase();
+    if (codeKey) {
+      if (!duplicateCandidates.has(codeKey)) duplicateCandidates.set(codeKey, []);
+      duplicateCandidates.get(codeKey).push(item);
+    }
+    rows.push(item);
+  }
+
+  for (const group of duplicateCandidates.values()) {
+    if (group.length <= 1) continue;
+    const relatedRows = group.map(item => item.row.rowNumber);
+    for (const item of group) {
+      item.duplicateError = createDuplicatePreviewError(item.row, relatedRows);
+    }
+  }
+
+  return {
+    rows,
+    rowsReceived: parsed.rows.length,
+    ignoredColumns: parsed.ignoredColumns,
+    globalErrors
+  };
+}
+
+function buildProductImportPreviewSummary({
+  shopId = '',
+  input = {},
+  existingRows = []
+} = {}) {
+  const existingByCode = new Map();
+  for (const row of Array.isArray(existingRows) ? existingRows : []) {
+    const key = String(row?.code || '').toLowerCase();
+    if (key && !existingByCode.has(key)) existingByCode.set(key, row);
+  }
+
+  const previewRows = [];
+  const errors = [...(Array.isArray(input.globalErrors) ? input.globalErrors : [])];
+
+  for (const item of Array.isArray(input.rows) ? input.rows : []) {
+    const row = item.row || {};
+    const rowErrors = Array.isArray(item.errors) ? item.errors : [];
+    const key = String(row.code || '').toLowerCase();
+    const existing = key ? existingByCode.get(key) : null;
+    let status = 'create';
+    let message = 'Sẽ tạo sản phẩm mới.';
+    let blocking = false;
+    let statusErrors = [];
+
+    if (rowErrors.length) {
+      status = 'error';
+      message = 'Dòng này có lỗi cần sửa trước khi nhập.';
+      blocking = true;
+      statusErrors = rowErrors;
+    } else if (item.duplicateError) {
+      status = 'duplicate_in_csv';
+      message = 'Mã sản phẩm bị trùng trong tệp CSV. Hãy giữ một dòng cho mỗi mã.';
+      blocking = true;
+      statusErrors = [item.duplicateError];
+    } else if (existing && String(existing.status || '').toLowerCase() === 'archived') {
+      status = 'archived_conflict';
+      message = ARCHIVED_PRODUCT_CODE_PREVIEW_MESSAGE;
+      blocking = true;
+      statusErrors = [createArchivedPreviewError(row)];
+    } else if (existing?.id) {
+      status = 'update';
+      message = 'Sẽ cập nhật sản phẩm hiện có.';
+    }
+
+    errors.push(...statusErrors);
+    previewRows.push({
+      row: row.rowNumber,
+      status,
+      blocking,
+      code: row.code,
+      name: row.name,
+      product_status: row.status,
+      sort_order: row.sortOrder,
+      has_image_url: Boolean(row.imageUrl),
+      metadata_keys: Object.keys(jsonObject(row.metadataPatch)).sort().slice(0, 20),
+      message,
+      errors: statusErrors
+    });
+  }
+
+  const countByStatus = previewRows.reduce((counts, row) => {
+    counts[row.status] = (counts[row.status] || 0) + 1;
+    return counts;
+  }, {});
+  const errorCount = Number(countByStatus.error || 0) + (Array.isArray(input.globalErrors) ? input.globalErrors.length : 0);
+  const archivedConflictCount = Number(countByStatus.archived_conflict || 0);
+  const duplicateCount = Number(countByStatus.duplicate_in_csv || 0);
+  const blockingErrorCount = archivedConflictCount + duplicateCount + errorCount;
+
+  return presentImportSummary({
+    shop_id: normalizeText(shopId, 160),
+    rows_received: Number(input.rowsReceived || 0),
+    products_created: 0,
+    products_updated: 0,
+    product_images_created: 0,
+    product_images_updated: 0,
+    product_images_skipped: Number(input.rowsReceived || 0) - previewRows.filter(row => row.has_image_url).length,
+    image_assets_touched: 0,
+    ignored_columns: input.ignoredColumns,
+    errors,
+    validate_only: true,
+    preview_rows: previewRows,
+    create_count: Number(countByStatus.create || 0),
+    update_count: Number(countByStatus.update || 0),
+    archived_conflict_count: archivedConflictCount,
+    duplicate_count: duplicateCount,
+    error_count: errorCount,
+    blocking_error_count: blockingErrorCount,
+    blocking: blockingErrorCount > 0
+  });
+}
+
 function isValidateOnly(body = {}) {
   return /^(1|true|yes|on|validate_only)$/i.test(String(body?.validate_only ?? body?.validateOnly ?? '').trim());
 }
 
-function presentImportPreview(rows = []) {
-  return rows.slice(0, 10).map(row => ({
-    row: Number(row.rowNumber || 0),
-    code: safeSubmittedValue('code', row.code) || '',
-    name: safeSubmittedValue('name', row.name) || '',
-    status: safeSubmittedValue('status', row.status) || '',
-    sort_order: Number(row.sortOrder || 0),
-    has_image_url: Boolean(row.imageUrl),
-    metadata_keys: Object.keys(jsonObject(row.metadataPatch)).sort().slice(0, 20)
+function normalizePreviewStatus(value = '') {
+  const status = normalizeText(value, 40).toLowerCase();
+  return PRODUCT_IMPORT_PREVIEW_STATUSES.has(status) ? status : 'error';
+}
+
+function previewStatusLabel(status = '') {
+  return {
+    create: 'Tạo mới',
+    update: 'Cập nhật',
+    archived_conflict: 'Trùng mã đã lưu trữ',
+    duplicate_in_csv: 'Trùng trong tệp',
+    error: 'Lỗi'
+  }[normalizePreviewStatus(status)] || 'Lỗi';
+}
+
+function previewStatusBlocksImport(status = '') {
+  return ['archived_conflict', 'duplicate_in_csv', 'error'].includes(normalizePreviewStatus(status));
+}
+
+function presentImportSummaryErrors(errors = []) {
+  return (Array.isArray(errors) ? errors : []).slice(0, 100).map(error => {
+    const field = normalizeHeader(error?.field || '');
+    const safeValue = typeof error?.value === 'string'
+      ? safeSubmittedValue(field, error.value)
+      : undefined;
+    const row = Number(error?.row || 0);
+    return {
+      row: Number.isInteger(row) && row >= 0 ? row : 0,
+      field,
+      code: normalizeText(error?.code || 'invalid_row', 120),
+      message: normalizeText(error?.message || 'Row is invalid.', 240),
+      suggested_fix: normalizeText(error?.suggested_fix || suggestedFixForImportError(error?.code), 240),
+      ...(safeValue !== undefined ? { value: safeValue } : {}),
+      related_rows: Array.isArray(error?.related_rows)
+        ? error.related_rows.map(item => Number(item || 0)).filter(item => Number.isInteger(item) && item > 0).slice(0, 10)
+        : []
+    };
+  });
+}
+
+function presentPreviewRowErrors(errors = []) {
+  return presentImportSummaryErrors(errors).map(error => ({
+    row: error.row,
+    field: error.field,
+    code: error.code,
+    message: error.message,
+    suggested_fix: error.suggested_fix,
+    related_rows: error.related_rows
   }));
 }
 
 function presentImportPreviewRows(rows = []) {
-  return (Array.isArray(rows) ? rows : []).slice(0, 10).map(row => ({
-    row: Number(row?.row || row?.rowNumber || 0),
-    code: safeSubmittedValue('code', row?.code) || '',
-    name: safeSubmittedValue('name', row?.name) || '',
-    status: safeSubmittedValue('status', row?.status) || '',
-    sort_order: Number(row?.sort_order ?? row?.sortOrder ?? 0),
-    has_image_url: Boolean(row?.has_image_url ?? row?.imageUrl),
-    metadata_keys: Array.isArray(row?.metadata_keys)
-      ? row.metadata_keys.map(key => normalizeText(key, 80)).filter(Boolean).slice(0, 20)
-      : []
-  }));
+  return (Array.isArray(rows) ? rows : []).slice(0, PRODUCT_IMPORT_PREVIEW_MAX_ROWS).map(row => {
+    const status = normalizePreviewStatus(row?.status || row?.preview_status || row?.classification_status);
+    return {
+      row: Number(row?.row || row?.rowNumber || 0),
+      status,
+      status_label: previewStatusLabel(status),
+      blocking: row?.blocking == null ? previewStatusBlocksImport(status) : Boolean(row.blocking),
+      code: safePreviewProductCode(row?.code),
+      name: safePreviewProductName(row?.name),
+      product_status: safePreviewProductStatus(row?.product_status ?? row?.productStatus),
+      sort_order: Number(row?.sort_order ?? row?.sortOrder ?? 0),
+      has_image_url: Boolean(row?.has_image_url ?? row?.imageUrl),
+      metadata_keys: Array.isArray(row?.metadata_keys)
+        ? row.metadata_keys.map(key => normalizeText(key, 80)).filter(Boolean).slice(0, 20)
+        : Object.keys(jsonObject(row?.metadataPatch)).sort().slice(0, 20),
+      message: normalizeText(row?.message || '', 240),
+      errors: presentPreviewRowErrors(row?.errors || [])
+    };
+  });
 }
 
 function presentImportSummary(summary = {}) {
+  const createCount = Number(summary.create_count ?? summary.products_created ?? 0);
+  const updateCount = Number(summary.update_count ?? summary.products_updated ?? 0);
+  const unchangedCount = Number(summary.unchanged_count ?? summary.products_unchanged ?? 0);
+  const skippedCount = Number(summary.skipped_count ?? summary.products_skipped ?? 0);
+  const archivedConflictCount = Number(summary.archived_conflict_count || 0);
+  const duplicateCount = Number(summary.duplicate_count || 0);
+  const errorCount = Number(summary.error_count || 0);
+  const blockingErrorCount = Number(summary.blocking_error_count ?? (archivedConflictCount + duplicateCount + errorCount));
   return {
     shop_id: summary.shop_id || summary.shopId || '',
     rows_received: Number(summary.rows_received || 0),
@@ -474,7 +769,21 @@ function presentImportSummary(summary = {}) {
     ignored_columns: Array.isArray(summary.ignored_columns)
       ? summary.ignored_columns.map(column => normalizeText(column, 80)).filter(Boolean)
       : [],
-    errors: Array.isArray(summary.errors) ? summary.errors : [],
+    ignored_columns_count: Array.isArray(summary.ignored_columns)
+      ? summary.ignored_columns.map(column => normalizeText(column, 80)).filter(Boolean).length
+      : Number(summary.ignored_columns_count || 0),
+    create_count: createCount,
+    update_count: updateCount,
+    unchanged_count: unchangedCount,
+    skipped_count: skippedCount,
+    unchanged_or_skipped_count: Number(summary.unchanged_or_skipped_count ?? summary.unchanged_skipped_count ?? (unchangedCount + skippedCount)),
+    total_processed: Number(summary.total_processed ?? summary.rows_processed ?? summary.rows_received ?? 0),
+    archived_conflict_count: archivedConflictCount,
+    duplicate_count: duplicateCount,
+    error_count: errorCount,
+    blocking_error_count: blockingErrorCount,
+    blocking: summary.blocking == null ? blockingErrorCount > 0 : Boolean(summary.blocking),
+    errors: presentImportSummaryErrors(summary.errors),
     validate_only: Boolean(summary.validate_only),
     preview_rows: presentImportPreviewRows(summary.preview_rows),
     metadata_json_supported: PRODUCT_IMPORT_METADATA_JSON_SUPPORTED
@@ -671,6 +980,19 @@ function createPostgresProductImportService({
   Client,
   repository = createProductImportRepository()
 } = {}) {
+  async function withReadOnlyClient(fn) {
+    if (!databaseUrl) {
+      throw createProductImportError('database_url_required', 'DATABASE_URL is required for product imports.', 503);
+    }
+    const client = new (Client || loadPgClient())({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end();
+    }
+  }
+
   async function withTransaction(fn) {
     if (!databaseUrl) {
       throw createProductImportError('database_url_required', 'DATABASE_URL is required for product imports.', 503);
@@ -713,23 +1035,29 @@ function createPostgresProductImportService({
 
   async function importProducts({ principal, shopId, body = {}, requestContext = {} } = {}) {
     assertWritePermission(principal);
-    const input = parseImportInput(body);
     if (isValidateOnly(body)) {
-      return presentImportSummary({
-        shop_id: normalizeText(shopId, 160),
-        rows_received: input.rowsReceived,
-        products_created: 0,
-        products_updated: 0,
-        product_images_created: 0,
-        product_images_updated: 0,
-        product_images_skipped: input.rowsReceived - input.rows.filter(row => row.imageUrl).length,
-        image_assets_touched: 0,
-        ignored_columns: input.ignoredColumns,
-        errors: [],
-        validate_only: true,
-        preview_rows: presentImportPreview(input.rows)
+      const input = parseImportPreviewInput(body);
+      const codeKeys = [...new Set(input.rows
+        .filter(item => !hasImportError(item.errors, 'invalid_product_code'))
+        .map(item => String(item.row?.code || '').toLowerCase())
+        .filter(Boolean))];
+      if (!codeKeys.length) {
+        return buildProductImportPreviewSummary({
+          shopId,
+          input
+        });
+      }
+      return withReadOnlyClient(async client => {
+        const shop = await repository.resolveShop(client, shopId);
+        const existingRows = await repository.getProductsByCodes(client, shop.id, codeKeys);
+        return buildProductImportPreviewSummary({
+          shopId: shop.id,
+          input,
+          existingRows
+        });
       });
     }
+    const input = parseImportInput(body);
     return withTransaction(async client => {
       const shop = await repository.resolveShop(client, shopId);
       const codeKeys = [...new Set(input.rows.map(row => row.code.toLowerCase()))];
@@ -738,6 +1066,30 @@ function createPostgresProductImportService({
       for (const row of existingRows) {
         const key = String(row.code || '').toLowerCase();
         if (!existingByCode.has(key)) existingByCode.set(key, row);
+      }
+
+      // Archived product codes stay reserved within the shop. Until a dedicated CSV
+      // strategy handles archived restore/update intentionally, fail safely so an
+      // import can never silently overwrite or resurrect an archived product.
+      const archivedCodeErrors = [];
+      for (const row of input.rows) {
+        const existing = existingByCode.get(row.code.toLowerCase());
+        if (existing && String(existing.status || '').toLowerCase() === 'archived') {
+          archivedCodeErrors.push(safeRowError(
+            row.rowNumber,
+            'code',
+            'archived_product_code',
+            'Product code belongs to an archived product and is reserved.',
+            row.code
+          ));
+        }
+      }
+      if (archivedCodeErrors.length) {
+        throw createValidationError({
+          rowsReceived: input.rowsReceived,
+          ignoredColumns: input.ignoredColumns,
+          errors: archivedCodeErrors
+        });
       }
 
       const persistedByRow = [];
@@ -875,5 +1227,6 @@ module.exports = {
   isMissingProductImportSchemaError: isMissingMultiShopSchemaError,
   parseImportInput,
   presentImportSummary,
+  safePreviewProductName,
   safeSubmittedValue
 };

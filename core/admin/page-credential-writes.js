@@ -5,10 +5,15 @@ const {
   hasPermission
 } = require('../admin-auth');
 const { DEFAULT_CREDENTIAL_TYPE, encryptCredential } = require('../credentials/page-credentials');
+const { envFlagEnabled, isProductionRuntime } = require('../storage-config');
 const { insertAuditLogEntry } = require('./audit');
 const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
+const { assertPageSetupDirectWriteAllowed } = require('./page-setup-preview');
 const { pageRef } = require('../utils/log-refs');
 
+const DEMO_SHOP_CREDENTIAL_WRITE_UNLOCK_ENV = 'DEMO_SHOP_CREDENTIAL_WRITE_ENABLED';
+const DEMO_SHOP_ID = 'demo-shop';
+const DEMO_SHOP_CREDENTIAL_WRITE_LIFECYCLES = Object.freeze(new Set(['configuring', 'ready']));
 const PAGE_CREDENTIAL_WRITE_ACTIONS = Object.freeze({
   CREATE: 'admin.shop_page_credential.create',
   ROTATE: 'admin.shop_page_credential.rotate'
@@ -34,6 +39,59 @@ function text(value = '') {
 
 function boolFlag(value) {
   return /^(1|true|yes|on|rotate)$/i.test(normalizeText(value, 20));
+}
+
+function normalizeEnvName(value = '') {
+  return normalizeText(value, 80).toLowerCase();
+}
+
+function isStagingRuntime(env = process.env) {
+  if (isProductionRuntime(env)) return false;
+  return [
+    env.NODE_ENV,
+    env.RAILWAY_ENVIRONMENT,
+    env.RAILWAY_ENVIRONMENT_NAME
+  ].some(value => normalizeEnvName(value) === 'staging');
+}
+
+function isDemoShop(shop = {}) {
+  return [shop.id, shop.slug]
+    .map(value => normalizeText(value, 160).toLowerCase())
+    .includes(DEMO_SHOP_ID);
+}
+
+function isDemoShopCredentialWriteProtected(shop = {}) {
+  return isDemoShop(shop)
+    && DEMO_SHOP_CREDENTIAL_WRITE_LIFECYCLES.has(normalizeText(shop.lifecycle, 80).toLowerCase())
+    && shop.live_enabled === false;
+}
+
+function isActiveMappedPageForShop(shop = {}, mapping = {}) {
+  return Boolean(mapping.id)
+    && mapping.shop_id === shop.id
+    && Boolean(normalizeText(mapping.page_id, 120))
+    && normalizeText(mapping.status, 40).toLowerCase() === 'active';
+}
+
+function isDemoShopCredentialWriteUnlockAllowed(shop = {}, mapping = {}, env = process.env) {
+  return envFlagEnabled(env[DEMO_SHOP_CREDENTIAL_WRITE_UNLOCK_ENV])
+    && isStagingRuntime(env)
+    && isDemoShopCredentialWriteProtected(shop)
+    && envFlagEnabled(env.MESSENGER_DRY_RUN)
+    && isActiveMappedPageForShop(shop, mapping);
+}
+
+function assertPageCredentialDirectWriteAllowed(shop = {}, mapping = {}, env = process.env) {
+  if (!isDemoShopCredentialWriteProtected(shop)) {
+    assertPageSetupDirectWriteAllowed(shop);
+    return;
+  }
+  if (isDemoShopCredentialWriteUnlockAllowed(shop, mapping, env)) return;
+  throw createPageCredentialWriteError(
+    'page_setup_preview_only',
+    'Demo-shop page setup is preview-only while configuring/non-live.',
+    409
+  );
 }
 
 function createPageCredentialWriteError(code, message, statusCode = 400) {
@@ -89,7 +147,7 @@ function createPageCredentialWriteRepository() {
     const normalized = normalizeText(shopId, 160);
     if (!normalized) throw createPageCredentialWriteError('shop_not_found', 'Shop was not found.', 404);
     const result = await client.query(`
-      SELECT id, slug
+      SELECT id, slug, lifecycle, live_enabled
       FROM shops
       WHERE id = $1 OR slug = $1
       ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
@@ -184,6 +242,19 @@ function createPageCredentialWriteRepository() {
     return Number(result.rows[0]?.count || 0);
   }
 
+  async function markShopReadinessStale(client, shopId) {
+    const result = await client.query(`
+      UPDATE shops
+      SET last_readiness_status = 'unknown',
+          last_readiness_checked_at = NULL,
+          last_ready_by = '',
+          updated_at = now()
+      WHERE id = $1
+      RETURNING id, last_readiness_status, last_readiness_checked_at, last_ready_by
+    `, [shopId]);
+    return result.rows[0] || null;
+  }
+
   async function insertAudit(client, {
     principal,
     action,
@@ -214,6 +285,7 @@ function createPageCredentialWriteRepository() {
     insertAudit,
     insertCredential,
     listActiveCredentialsForUpdate,
+    markShopReadinessStale,
     resolvePageMapping,
     resolveShop
   };
@@ -223,7 +295,8 @@ function createPostgresPageCredentialWriteService({
   databaseUrl = process.env.DATABASE_URL,
   Client,
   repository = createPageCredentialWriteRepository(),
-  getCredentialMasterKey = () => process.env.CREDENTIAL_MASTER_KEY
+  getCredentialMasterKey = () => process.env.CREDENTIAL_MASTER_KEY,
+  env = process.env
 } = {}) {
   async function withTransaction(fn) {
     if (!databaseUrl) {
@@ -280,14 +353,19 @@ function createPostgresPageCredentialWriteService({
     const masterKey = getCredentialMasterKey();
     validatePageCredentialInput(input, { masterKey });
     const token = text(input.token).trim();
-    const encryptedValue = encryptCredential(token, masterKey);
 
     return withTransaction(async client => {
       const shop = await repository.resolveShop(client, shopId);
+      if (isDemoShopCredentialWriteProtected(shop) && !envFlagEnabled(env[DEMO_SHOP_CREDENTIAL_WRITE_UNLOCK_ENV])) {
+        assertPageCredentialDirectWriteAllowed(shop, {}, env);
+      } else if (!isDemoShopCredentialWriteProtected(shop)) {
+        assertPageSetupDirectWriteAllowed(shop);
+      }
       const mapping = await repository.resolvePageMapping(client, {
         shopId: shop.id,
         pageMappingId
       });
+      assertPageCredentialDirectWriteAllowed(shop, mapping, env);
       const activeCredentials = await repository.listActiveCredentialsForUpdate(client, {
         shopId: shop.id,
         pageMappingId: mapping.id,
@@ -304,6 +382,7 @@ function createPostgresPageCredentialWriteService({
           credentialType: input.credentialType
         })
         : 0;
+      const encryptedValue = encryptCredential(token, masterKey);
       const credentialId = createCredentialId();
       const row = await repository.insertCredential(client, {
         shopId: shop.id,
@@ -320,6 +399,7 @@ function createPostgresPageCredentialWriteService({
         pageMappingId: mapping.id,
         credentialType: input.credentialType
       });
+      await repository.markShopReadinessStale(client, shop.id);
       await repository.insertAudit(client, {
         principal,
         action: input.rotate ? PAGE_CREDENTIAL_WRITE_ACTIONS.ROTATE : PAGE_CREDENTIAL_WRITE_ACTIONS.CREATE,
@@ -356,10 +436,12 @@ module.exports = {
   DEFAULT_CREDENTIAL_TYPE,
   MAX_PAGE_TOKEN_LENGTH,
   MIN_PAGE_TOKEN_LENGTH,
+  DEMO_SHOP_CREDENTIAL_WRITE_UNLOCK_ENV,
   PAGE_CREDENTIAL_WRITE_ACTIONS,
   createPageCredentialWriteError,
   createPageCredentialWriteRepository,
   createPostgresPageCredentialWriteService,
+  isDemoShopCredentialWriteUnlockAllowed,
   isMissingPageCredentialWriteSchemaError: isMissingMultiShopSchemaError,
   normalizePageCredentialInput,
   presentPageCredential,

@@ -130,6 +130,12 @@ function createDashboardRepository({
           s.slug,
           s.name,
           s.status,
+          s.package,
+          s.lifecycle,
+          s.dry_run,
+          s.live_enabled,
+          s.last_readiness_status,
+          s.last_manual_test_status,
           COALESCE(pages.page_count, 0)::int AS page_count,
           COALESCE(pages.active_page_count, 0)::int AS active_page_count,
           COALESCE(products.product_count, 0)::int AS product_count,
@@ -183,7 +189,10 @@ function createDashboardRepository({
 
     try {
       const shopResult = await client.query(`
-        SELECT id, slug, name, status, default_locale, timezone, created_at, updated_at
+        SELECT id, slug, name, status, package, lifecycle, dry_run, live_enabled,
+               last_readiness_status, last_readiness_checked_at,
+               last_manual_test_status, last_manual_test_at, last_ready_by,
+               default_locale, timezone, created_at, updated_at
         FROM shops
         WHERE id = $1 OR slug = $1
         ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC
@@ -203,46 +212,45 @@ function createDashboardRepository({
       }
 
       const params = [shop.id];
-      const [pagesResult, settingsResult, productsResult, assetSummaryResult, assetsResult] = await Promise.all([
-        client.query(`
-          SELECT id, page_id, page_name, status, created_at, updated_at
-          FROM shop_pages
-          WHERE shop_id = $1
-          ORDER BY status ASC, updated_at DESC, id ASC
-        `, params),
-        client.query(`
-          SELECT bot_mode, handoff_enabled, handoff_message, menu_intro_text,
-                 fallback_text, settings_json, updated_at
-          FROM shop_settings
-          WHERE shop_id = $1
-          LIMIT 1
-        `, params),
-        client.query(`
-          SELECT id, code, name, description, price, currency, status,
-                 sort_order, metadata_json, updated_at
-          FROM shop_products
-          WHERE shop_id = $1
-          ORDER BY sort_order ASC, code ASC, id ASC
-        `, params),
-        client.query(`
-          SELECT asset_type,
-                 COUNT(*)::int AS total,
-                 COUNT(*) FILTER (WHERE status = 'active')::int AS active
-          FROM shop_assets
-          WHERE shop_id = $1
-          GROUP BY asset_type
-          ORDER BY asset_type ASC
-        `, params),
-        client.query(`
-          SELECT a.id, a.product_id, p.code AS product_code, a.asset_type,
-                 a.storage_provider, a.public_url, a.content_type, a.size_bytes,
-                 a.status, a.sort_order, a.updated_at
-          FROM shop_assets a
-          LEFT JOIN shop_products p ON p.id = a.product_id AND p.shop_id = a.shop_id
-          WHERE a.shop_id = $1
-          ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
-        `, params)
-      ]);
+      const pagesResult = await client.query(`
+        SELECT id, page_id, page_name, status, created_at, updated_at
+        FROM shop_pages
+        WHERE shop_id = $1
+        ORDER BY status ASC, updated_at DESC, id ASC
+      `, params);
+      let pages = pagesResult.rows;
+      const settingsResult = await client.query(`
+        SELECT bot_mode, handoff_enabled, handoff_message, menu_intro_text,
+               fallback_text, settings_json, updated_at
+        FROM shop_settings
+        WHERE shop_id = $1
+        LIMIT 1
+      `, params);
+      const productsResult = await client.query(`
+        SELECT id, code, name, description, price, currency, status,
+               sort_order, metadata_json, updated_at
+        FROM shop_products
+        WHERE shop_id = $1
+        ORDER BY sort_order ASC, code ASC, id ASC
+      `, params);
+      const assetSummaryResult = await client.query(`
+        SELECT asset_type,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE status = 'active')::int AS active
+        FROM shop_assets
+        WHERE shop_id = $1
+        GROUP BY asset_type
+        ORDER BY asset_type ASC
+      `, params);
+      const assetsResult = await client.query(`
+        SELECT a.id, a.product_id, p.code AS product_code, a.asset_type,
+               a.storage_provider, a.public_url, a.content_type, a.size_bytes,
+               a.status, a.sort_order, a.updated_at
+        FROM shop_assets a
+        LEFT JOIN shop_products p ON p.id = a.product_id AND p.shop_id = a.shop_id
+        WHERE a.shop_id = $1
+        ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
+      `, params);
 
       const summary = {
         total: 0,
@@ -268,18 +276,39 @@ function createDashboardRepository({
       try {
         const credentialResult = await client.query(`
           SELECT
-            COUNT(*) FILTER (
-              WHERE c.status = 'active'
-                AND c.credential_type = 'fb_page_token'
-                AND sp.status = 'active'
-            )::int AS active_fb_page_token_count
+            c.page_mapping_id,
+            c.status,
+            c.credential_type,
+            sp.status AS page_status,
+            COUNT(*)::int AS total
           FROM shop_page_credentials c
           JOIN shop_pages sp ON sp.id = c.page_mapping_id AND sp.shop_id = c.shop_id
           WHERE c.shop_id = $1
+          GROUP BY c.page_mapping_id, c.status, c.credential_type, sp.status
+          ORDER BY c.page_mapping_id ASC, c.status ASC, c.credential_type ASC
         `, params);
+        const activeCredentialsByPage = new Map();
+        let activeFbPageTokenCount = 0;
+        for (const row of credentialResult.rows || []) {
+          const total = Number(row.total || 0);
+          const status = String(row.status || '').toLowerCase();
+          const credentialType = String(row.credential_type || '').toLowerCase();
+          if (status !== 'active' || credentialType !== 'fb_page_token') continue;
+          if (String(row.page_status || '').toLowerCase() === 'active') {
+            activeFbPageTokenCount += total;
+          }
+          const pageMappingId = String(row.page_mapping_id || '');
+          if (pageMappingId) {
+            activeCredentialsByPage.set(pageMappingId, (activeCredentialsByPage.get(pageMappingId) || 0) + total);
+          }
+        }
+        pages = pages.map(page => ({
+          ...page,
+          active_credential_count: activeCredentialsByPage.get(String(page.id || '')) || 0
+        }));
         credentials = {
           available: true,
-          active_fb_page_token_count: Number(credentialResult.rows[0]?.active_fb_page_token_count || 0)
+          active_fb_page_token_count: activeFbPageTokenCount
         };
       } catch (err) {
         if (!isMissingMultiShopSchemaError(err)) throw err;
@@ -288,7 +317,7 @@ function createDashboardRepository({
       return {
         schemaReady: true,
         shop,
-        pages: pagesResult.rows,
+        pages,
         settings: settingsResult.rows[0] || null,
         products: productsResult.rows,
         assets: {
@@ -322,7 +351,8 @@ function createDashboardRepository({
 
     try {
       const shopResult = await client.query(`
-        SELECT id, slug, name, status, updated_at
+        SELECT id, slug, name, status, package, lifecycle, dry_run, live_enabled,
+               last_readiness_status, last_manual_test_status, updated_at
         FROM shops
         WHERE id = $1 OR slug = $1
         ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, updated_at DESC, id ASC

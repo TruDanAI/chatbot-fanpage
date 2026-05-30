@@ -114,10 +114,15 @@ function makeClientClass({
         return {
           rows: this.products
             .filter(row => row.shop_id === shopId)
-            .filter(row => row.status !== 'archived')
             .filter(row => row.code.toLowerCase() === String(code || '').toLowerCase())
             .filter(row => !excludeProductId || row.id !== excludeProductId)
-            .map(row => ({ id: row.id }))
+            .sort((a, b) => {
+              const aArchived = a.status === 'archived' ? 1 : 0;
+              const bArchived = b.status === 'archived' ? 1 : 0;
+              if (aArchived !== bArchived) return aArchived - bArchived;
+              return String(a.id).localeCompare(String(b.id));
+            })
+            .map(row => ({ id: row.id, status: row.status }))
             .slice(0, 1)
         };
       }
@@ -160,6 +165,14 @@ function makeClientClass({
         if (!row) return { rows: [] };
         row.status = 'archived';
         row.updated_at = '2026-05-12T03:00:00.000Z';
+        return { rows: [row] };
+      }
+      if (/^UPDATE shop_products SET status = 'hidden'/i.test(normalized)) {
+        const [shopId, productId] = params;
+        const row = this.txProducts.find(item => item.shop_id === shopId && item.id === productId);
+        if (!row || row.status !== 'archived') return { rows: [] };
+        row.status = 'hidden';
+        row.updated_at = '2026-05-12T03:30:00.000Z';
         return { rows: [row] };
       }
       if (normalized.includes('FROM shop_products') && normalized.includes('WHERE shop_id = $1')) {
@@ -267,6 +280,169 @@ describe('product write persistence', () => {
     });
 
     expect(archived.product.status).toBe('archived');
+  });
+
+  it('editing the same product with the same code is allowed', async () => {
+    const state = createState();
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries: [] })
+    });
+
+    const patched = await service.updateProduct({
+      principal,
+      shopId: 'adult-shop',
+      productId: 'prod-1',
+      body: { code: 'DB1', name: 'Renamed Same Code' }
+    });
+
+    expect(patched.product.code).toBe('DB1');
+    expect(patched.product.name).toBe('Renamed Same Code');
+  });
+
+  it('rejects creating a product whose code already exists on an active product', async () => {
+    const state = createState();
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries: [] })
+    });
+
+    let err = null;
+    try {
+      await service.createProduct({
+        principal,
+        shopId: 'adult-shop',
+        body: { code: ' db1 ', name: 'Duplicate Active Code' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('duplicate_product_code');
+    expect(err && err.message).toBe('Mã sản phẩm này đã tồn tại trong shop, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.');
+    expect(state.products.length).toBe(1);
+  });
+
+  it('rejects creating a product whose code already exists on a hidden product', async () => {
+    const state = createState();
+    state.products[0].status = 'hidden';
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries: [] })
+    });
+
+    let err = null;
+    try {
+      await service.createProduct({
+        principal,
+        shopId: 'adult-shop',
+        body: { code: 'DB1', name: 'Duplicate Hidden Code' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('duplicate_product_code');
+    expect(err && err.message).toBe('Mã sản phẩm này đã tồn tại trong shop, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.');
+    expect(state.products.filter(product => product.code === 'DB1').length).toBe(1);
+  });
+
+  it('rejects creating a product whose code is reserved by an archived product', async () => {
+    const state = createState();
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries: [] })
+    });
+
+    const created = await service.createProduct({
+      principal,
+      shopId: 'adult-shop',
+      body: { code: 'ARCHV1', name: 'To Be Archived' }
+    });
+    await service.archiveProduct({
+      principal,
+      shopId: 'adult-shop',
+      productId: created.product.id
+    });
+
+    let err = null;
+    try {
+      await service.createProduct({
+        principal,
+        shopId: 'adult-shop',
+        body: { code: 'archv1', name: 'Reuse Archived Code' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('duplicate_product_code');
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toBe('Mã sản phẩm này đã tồn tại trong shop, kể cả sản phẩm đã lưu trữ. Hãy dùng mã khác hoặc khôi phục sản phẩm cũ.');
+    expect(state.products.filter(product => product.code.toLowerCase() === 'archv1').length).toBe(1);
+  });
+
+  it('blocks renaming an active product onto an archived product code', async () => {
+    const state = createState();
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries: [] })
+    });
+
+    const created = await service.createProduct({
+      principal,
+      shopId: 'adult-shop',
+      body: { code: 'TOARCH', name: 'Soon Archived' }
+    });
+    await service.archiveProduct({
+      principal,
+      shopId: 'adult-shop',
+      productId: created.product.id
+    });
+
+    let err = null;
+    try {
+      await service.updateProduct({
+        principal,
+        shopId: 'adult-shop',
+        productId: 'prod-1',
+        body: { code: 'TOARCH' }
+      });
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err && err.code).toBe('duplicate_product_code');
+    expect(state.products.find(product => product.id === 'prod-1').code).toBe('DB1');
+  });
+
+  it('restores an archived product to hidden, never active', async () => {
+    const state = createState();
+    const service = createPostgresProductWriteService({
+      databaseUrl: 'postgres://example.test/db',
+      Client: makeClientClass({ state, queries: [] })
+    });
+
+    const created = await service.createProduct({
+      principal,
+      shopId: 'adult-shop',
+      body: { code: 'RESTORE1', name: 'Restore Target' }
+    });
+    await service.archiveProduct({
+      principal,
+      shopId: 'adult-shop',
+      productId: created.product.id
+    });
+
+    const restored = await service.restoreProduct({
+      principal,
+      shopId: 'adult-shop',
+      productId: created.product.id
+    });
+
+    expect(restored.product.status).toBe('hidden');
+    expect(restored.product.enabled).toBeFalse();
+    expect(state.products.find(product => product.id === created.product.id).status).toBe('hidden');
   });
 
   it('commits create transaction and does not persist on rollback path', async () => {
