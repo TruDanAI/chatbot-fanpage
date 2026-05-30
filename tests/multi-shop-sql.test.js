@@ -240,13 +240,25 @@ describe('shop lifecycle readiness SQL patch', () => {
     expect(/\bALTER TABLE shops RENAME\b/i.test(normalized)).toBeFalse();
   });
 
-  it('backfills active shops as live and unknown statuses as paused', () => {
+  it('preserves active adult-shop as live without promoting other shops', () => {
     const normalized = normalizeSql(readPatchSql());
+    const executable = normalizeSql(stripSqlComments(readPatchSql()));
 
-    expect(normalized).toContain("WHEN status = 'active' THEN 'live'");
+    expect(normalized).toContain("id = 'adult-shop' OR slug = 'adult-shop'");
+    expect(normalized).toContain("AND status = 'active' THEN 'live'");
+    expect(normalized).toContain("AND status = 'active' THEN true");
     expect(normalized).toContain("WHEN status = 'archived' THEN 'archived'");
-    expect(normalized).toContain("ELSE 'paused'");
-    expect(normalized).toContain("live_enabled = COALESCE(live_enabled, status = 'active')");
+    expect(normalized).toContain("ELSE 'draft'");
+    expect(normalized).toContain("ELSE COALESCE(live_enabled, false)");
+    expect(normalized).toContain("last_readiness_status = CASE");
+    expect(normalized).toContain("AND status = 'active' THEN 'unknown'");
+    expect(normalized).toContain("last_readiness_checked_at = CASE");
+    expect(normalized).toContain("AND status = 'active' THEN NULL");
+    expect(normalized).toContain("last_ready_by = CASE");
+    expect(normalized).toContain("AND status = 'active' THEN ''");
+    expect(executable.includes("WHEN status = 'active' THEN 'live'")).toBeFalse();
+    expect(executable.includes("live_enabled = COALESCE(live_enabled, status = 'active')")).toBeFalse();
+    expect(executable.includes("last_readiness_status = 'passed'")).toBeFalse();
   });
 
   it('keeps package/lifecycle/readiness checks idempotent', () => {
@@ -259,6 +271,12 @@ describe('shop lifecycle readiness SQL patch', () => {
     expect(normalized).toContain("CHECK (package IN ('basic', 'sales_flow', 'self_closing_addons'))");
     expect(normalized).toContain("CHECK (lifecycle IN ('draft', 'configuring', 'ready', 'live', 'paused', 'archived'))");
   });
+
+  it('does not update customer, order, or message tables', () => {
+    const executable = normalizeSql(stripSqlComments(readPatchSql()));
+
+    expect(/\bUPDATE\s+(?:customers|orders|order_items|messages|conversations|events|processed_mids)\b/i.test(executable)).toBeFalse();
+  });
 });
 
 describe('shop dry-run SQL patch', () => {
@@ -270,17 +288,32 @@ describe('shop dry-run SQL patch', () => {
     expect(fs.existsSync(SHOP_DRY_RUN_PATCH_PATH)).toBeTrue();
   });
 
-  it('is additive and keeps existing shop rows safe', () => {
+  it('is additive and preserves active adult-shop live sends while defaulting others safe', () => {
     const normalized = normalizeSql(stripSqlComments(readPatchSql()));
 
     expect(normalized).toMatch(/\bALTER TABLE shops ADD COLUMN IF NOT EXISTS dry_run BOOLEAN\b/i);
-    expect(normalized).toContain('SET dry_run = COALESCE(dry_run, true)');
+    expect(normalized).toContain("id = 'adult-shop' OR slug = 'adult-shop'");
+    expect(normalized).toContain("AND status = 'active' THEN false");
+    expect(normalized).toContain('ELSE COALESCE(dry_run, true)');
+    expect(normalized).toContain('WHERE dry_run IS NULL');
+    expect(normalized).toContain('AND dry_run IS DISTINCT FROM false');
     expect(normalized).toMatch(/\bALTER TABLE shops ALTER COLUMN dry_run SET DEFAULT true\b/i);
     expect(normalized).toMatch(/\bALTER TABLE shops ALTER COLUMN dry_run SET NOT NULL\b/i);
+    expect(normalized.includes('SET dry_run = COALESCE(dry_run, true)')).toBeFalse();
     expect(/\bDROP\b/i.test(normalized)).toBeFalse();
     expect(/\bTRUNCATE\b/i.test(normalized)).toBeFalse();
     expect(/\bDELETE\b/i.test(normalized)).toBeFalse();
     expect(/\bRENAME\b/i.test(normalized)).toBeFalse();
+  });
+
+  it('documents production pre/post checks and avoids customer/order/message writes', () => {
+    const sql = readPatchSql();
+    const executable = normalizeSql(stripSqlComments(sql));
+
+    expect(sql).toContain('active_shop_count');
+    expect(sql).toContain('active_adult_shop_count');
+    expect(sql).toContain('Post-check after an approved production apply');
+    expect(/\bUPDATE\s+(?:customers|orders|order_items|messages|conversations|events|processed_mids)\b/i.test(executable)).toBeFalse();
   });
 });
 

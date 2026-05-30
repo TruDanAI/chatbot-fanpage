@@ -1,6 +1,36 @@
 -- Additive shop control-plane patch for package/lifecycle/live/readiness.
 -- Apply only through an approved migration runbook.
--- This patch is intentionally additive and idempotent.
+-- Production policy:
+-- - active adult-shop remains live: lifecycle='live' and live_enabled=true.
+-- - all other shops keep safe missing defaults and are not promoted live.
+-- - readiness is never falsely marked passed; missing readiness stays unknown.
+-- - active adult-shop readiness is reset to unknown with no checked timestamp.
+-- This patch is intentionally additive, idempotent, and does not touch
+-- customer/order/message data.
+--
+-- Pre-check before an approved production apply:
+-- SELECT
+--   COUNT(*) FILTER (WHERE status = 'active') AS active_shop_count,
+--   COUNT(*) FILTER (
+--     WHERE (id = 'adult-shop' OR slug = 'adult-shop')
+--       AND status = 'active'
+--   ) AS active_adult_shop_count
+-- FROM shops;
+--
+-- Post-check after an approved production apply:
+-- SELECT
+--   id,
+--   slug,
+--   status,
+--   dry_run,
+--   lifecycle,
+--   live_enabled,
+--   last_readiness_status,
+--   last_readiness_checked_at,
+--   last_ready_by
+-- FROM shops
+-- WHERE id = 'adult-shop' OR slug = 'adult-shop'
+-- ORDER BY id;
 
 BEGIN;
 
@@ -15,15 +45,39 @@ ALTER TABLE shops ADD COLUMN IF NOT EXISTS last_ready_by TEXT;
 
 UPDATE shops
 SET package = COALESCE(NULLIF(package, ''), 'basic'),
-    lifecycle = COALESCE(NULLIF(lifecycle, ''), CASE
-      WHEN status = 'active' THEN 'live'
+    lifecycle = CASE
+      WHEN (id = 'adult-shop' OR slug = 'adult-shop')
+        AND status = 'active'
+        THEN 'live'
+      WHEN NULLIF(lifecycle, '') IS NOT NULL THEN lifecycle
       WHEN status = 'archived' THEN 'archived'
-      ELSE 'paused'
-    END),
-    live_enabled = COALESCE(live_enabled, status = 'active'),
-    last_readiness_status = COALESCE(NULLIF(last_readiness_status, ''), 'unknown'),
+      ELSE 'draft'
+    END,
+    live_enabled = CASE
+      WHEN (id = 'adult-shop' OR slug = 'adult-shop')
+        AND status = 'active'
+        THEN true
+      ELSE COALESCE(live_enabled, false)
+    END,
+    last_readiness_status = CASE
+      WHEN (id = 'adult-shop' OR slug = 'adult-shop')
+        AND status = 'active'
+        THEN 'unknown'
+      ELSE COALESCE(NULLIF(last_readiness_status, ''), 'unknown')
+    END,
+    last_readiness_checked_at = CASE
+      WHEN (id = 'adult-shop' OR slug = 'adult-shop')
+        AND status = 'active'
+        THEN NULL
+      ELSE last_readiness_checked_at
+    END,
     last_manual_test_status = COALESCE(NULLIF(last_manual_test_status, ''), 'unknown'),
-    last_ready_by = COALESCE(last_ready_by, '');
+    last_ready_by = CASE
+      WHEN (id = 'adult-shop' OR slug = 'adult-shop')
+        AND status = 'active'
+        THEN ''
+      ELSE COALESCE(last_ready_by, '')
+    END;
 
 ALTER TABLE shops ALTER COLUMN package SET DEFAULT 'basic';
 ALTER TABLE shops ALTER COLUMN package SET NOT NULL;

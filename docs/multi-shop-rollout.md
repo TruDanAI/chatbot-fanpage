@@ -909,6 +909,86 @@ environment approval and restart or redeploy as needed. Keep
 webhook queue enablement only after separate staging and production readiness
 approval.
 
+## Production Dry-Run/Lifecycle Schema Patch Plan - 2026-05-30
+
+This plan updates the pending production schema patch only. It is not approval
+to apply a migration, deploy production, change environment variables, write a
+database, touch `/data`, call Meta Graph API, run token health checks, or send
+Messenger messages.
+
+Current production schema finding:
+
+- `shop_pages`, `shop_page_credentials`, and `webhook_queue` already exist.
+- `shops.dry_run`, `shops.live_enabled`, `shops.lifecycle`,
+  `shops.last_readiness_status`, `shops.last_readiness_checked_at`, and
+  `shops.last_ready_by` are missing.
+- Production adult-shop is already live on Messenger and must not be backfilled
+  into dry-run by the schema patch.
+
+Patch policy:
+
+- `db/shop-dry-run-patch.sql` adds `shops.dry_run` idempotently and backfills
+  active `adult-shop` to `dry_run=false`.
+- Every other shop with missing/null `dry_run` backfills to `dry_run=true`.
+- `dry_run` keeps `DEFAULT true` for future shops unless application code
+  explicitly changes it.
+- `db/shop-lifecycle-readiness-patch.sql` adds the lifecycle/readiness/live
+  columns idempotently and backfills active `adult-shop` to
+  `lifecycle='live'`, `live_enabled=true`, `last_readiness_status='unknown'`,
+  `last_readiness_checked_at=NULL`, and `last_ready_by=''`.
+- Other shops are not promoted live by this patch. Missing `live_enabled`
+  becomes `false`, and missing `lifecycle` becomes the non-live safe default
+  `draft` except archived shops, which become `archived`.
+- Readiness is never backfilled to `passed`.
+
+Required pre-check before any separately approved production apply:
+
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE status = 'active') AS active_shop_count,
+  COUNT(*) FILTER (
+    WHERE (id = 'adult-shop' OR slug = 'adult-shop')
+      AND status = 'active'
+  ) AS active_adult_shop_count
+FROM shops;
+```
+
+Required post-check after any separately approved production apply:
+
+```sql
+SELECT
+  id,
+  slug,
+  status,
+  dry_run,
+  lifecycle,
+  live_enabled,
+  last_readiness_status,
+  last_readiness_checked_at,
+  last_ready_by
+FROM shops
+WHERE id = 'adult-shop' OR slug = 'adult-shop'
+ORDER BY id;
+```
+
+Expected active adult-shop post-migration values:
+
+- `dry_run=false`
+- `live_enabled=true`
+- `lifecycle='live'`
+- `last_readiness_status='unknown'`
+- `last_readiness_checked_at=NULL`
+- `last_ready_by=''`
+
+Safety notes:
+
+- The patches are additive and safe to rerun for the documented policy.
+- They do not contain `DROP`, `DELETE`, or `TRUNCATE`.
+- They update only `shops`, never customer, order, message, conversation,
+  event, or MID tables.
+- Applying the patches to production still requires a fresh verified backup,
+  explicit DB write approval, and a separate execution session.
+
 ## Safety Rules
 
 - Do not write production PostgreSQL before a fresh backup exists and is

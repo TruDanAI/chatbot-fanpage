@@ -208,9 +208,12 @@ Recent patches:
   `shop_page_credentials` and `webhook_queue` plus indexes for environments
   that already have the first five multi-shop tables.
 - `db/shop-lifecycle-readiness-patch.sql`: adds package/lifecycle/live/readiness
-  and manual-test columns/checks to `shops`.
+  and manual-test columns/checks to `shops`; active `adult-shop` is the only
+  migration-time live backfill, while other missing rows stay non-live by
+  default and readiness stays `unknown`.
 - `db/shop-dry-run-patch.sql`: adds per-shop `dry_run`, backfilled true for
-  safety.
+  safety except active `adult-shop`, which is preserved as
+  `dry_run=false` for live Messenger behavior.
 
 ## Env And Feature Flags
 
