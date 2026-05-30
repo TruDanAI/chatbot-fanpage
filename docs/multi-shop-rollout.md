@@ -1045,6 +1045,52 @@ Safety boundary for this documentation checkpoint:
 - No production system was touched.
 - No Meta Graph API call, token health check, or Messenger send was performed.
 
+## Fanpage Connection Cutover Checkpoint (P1.2f) - 2026-05-30
+
+This checkpoint records the staged Fanpage Connection and Page cutover work. It
+is documentation-only and is not approval to deploy, change environment
+variables, write any database, touch `/data`, touch production, call Meta Graph
+API, run token health checks, or send Messenger messages.
+
+- **Detailed Checkpoint**:
+  [fanpage-connection-cutover-checkpoint.md](fanpage-connection-cutover-checkpoint.md)
+- **P1.2f1 Fanpage Connection State UI**: commit `4b91d48`, staging deployment
+  `8d50a5b7-9893-482e-970b-20186b76c7d4`, with states `CHƯA KẾT NỐI`,
+  `THIẾU QUYỀN GỬI TIN`, `ĐÃ KẾT NỐI`, `XUNG ĐỘT KẾT NỐI`, and
+  `CẦN KIỂM TRA`.
+- **P1.2f2 Credential Replacement UX**: commit `208f1fe`, staging deployment
+  `e084cedb-747e-407f-9658-3d62b6d64410`, with password-only non-prefilled
+  token entry, danger modal, checkbox, exact shop slug, countdown, and
+  environment/encryption warning. No automatic token health check is run.
+- **P1.2f2b Readiness Stale Behavior**: commit `534bd92`, staging deployment
+  `971eaa9e-edb1-43bc-aa31-1e5f2718b368`; mapping and credential mutations
+  mark readiness unknown while leaving `dry_run`, `live_enabled`, `lifecycle`,
+  and `status` unchanged.
+- **P1.2f3 Staging-Only Page Cutover Service**: commit `a5df5b5`, staging
+  deployment `125463cb-5507-4bcf-9768-42086c3b48a8`, API-only route
+  `POST /admin/api/shops/:shopId/pages/cutover`, production blocked, atomic
+  transaction, exactly-one-active mapping/credential post-condition, old
+  mapping/credential archived, new mapping/credential active, readiness stale,
+  rollback/negative checks passing, and no Meta call, token health check, or
+  Messenger send.
+- **Staging Smoke**: `wizard-smoke-shop` cut over from old safe ref
+  `p:421ca33965` to new safe ref `p:94bf9048cd`; cleanup option B was used.
+  Final state remained safe with `active mappings=1`, `active credentials=1`,
+  `dry_run=true`, `live_enabled=false`, `lifecycle=draft`, and
+  `messenger.dryRun=true`.
+- **Production Policy**: no production UI cutover is enabled yet; production
+  cutover still requires explicit operator approval and a runbook; production
+  credentials must be encrypted in the production runtime context only; never
+  use a staging key or staging token for production credentials.
+
+Safety boundary for this documentation checkpoint:
+
+- No deployment was performed.
+- No environment variable was changed.
+- No database or `/data` write was performed.
+- No production system was touched.
+- No Meta Graph API call, token health check, or Messenger send was performed.
+
 ## Open TODOs
 
 - Asset upload and media direct integration enhancements.
