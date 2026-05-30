@@ -3437,7 +3437,12 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('value="menu_image"');
     expect(res.body).toContain('value="product_image"');
     expect(res.body).toContain('name="public_url"');
-    expect(res.body).toContain('data-confirm="Archive asset"');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/assets/asset-1/archive"');
+    expect(res.body).toContain('data-action-title="Lưu trữ hình ảnh"');
+    expect(res.body).toContain('data-danger-confirm="true"');
+    expect(res.body.includes('data-confirm="Archive asset"')).toBeFalse();
+    expect(res.body.includes('onclick="return confirm')).toBeFalse();
+    expect(res.body.includes('window.confirm')).toBeFalse();
     expect(res.body.includes('storage_key')).toBeFalse();
     expect(res.body.includes('shop_image')).toBeFalse();
   });
@@ -3485,6 +3490,8 @@ describe('admin dashboard routes', () => {
     expect(stagingRes.body).toContain('data-danger-confirm="true"');
     expect(stagingRes.body).toContain('name="confirmation_text"');
     expect(stagingRes.body).toContain('placeholder="ARCHIVE MAPPING"');
+    expect(stagingRes.body).toContain('>Lưu trữ liên kết Fanpage</button>');
+    expect(stagingRes.body.includes('onclick="return confirm')).toBeFalse();
     expect(stagingRes.body).toContain('>2</td>');
     expect(stagingRes.body.includes('raw-active-page-id')).toBeFalse();
     expect(stagingRes.body.includes('raw-archived-page-id')).toBeFalse();
@@ -3920,6 +3927,80 @@ describe('admin dashboard routes', () => {
       expect(res.body).toContain(item.label);
       expect(res.body).toContain(item.placeholder);
       expect(res.body.includes(item.hidden)).toBeFalse();
+    }
+  });
+
+  it('shop detail HTML renders the recommended next-action CTA as a real hash link', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        pages: [],
+        products: []
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Gợi ý hành động tiếp theo');
+    expect(res.body).toContain('href="#pages"');
+    expect(res.body).toContain('Kết nối Fanpage ngay -&gt;');
+    expect(res.body.includes("document.querySelector('.tabs")).toBeFalse();
+  });
+
+  it('shop detail HTML uses danger modal markers for dry-run controls without native confirm', async () => {
+    for (const item of [
+      {
+        shop: { status: 'active', lifecycle: 'configuring', dry_run: false, live_enabled: false },
+        action: 'action="/admin/shops/new-shop/dry-run/enable"',
+        expectedText: 'data-expected-confirm-text="ENABLE DRY RUN"',
+        label: 'Bật lại chế độ test an toàn cho cửa hàng'
+      },
+      {
+        shop: {
+          status: 'active',
+          lifecycle: 'configuring',
+          dry_run: true,
+          live_enabled: false,
+          last_readiness_status: 'passed',
+          last_readiness_checked_at: '2026-05-12T00:30:00.000Z'
+        },
+        action: 'action="/admin/shops/new-shop/dry-run/disable"',
+        expectedText: 'data-expected-confirm-text="DISABLE DRY RUN"',
+        label: 'Tắt chế độ test an toàn (Cho phép gửi thật)'
+      }
+    ]) {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({ shop: item.shop })),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'new-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain(item.action);
+      expect(res.body).toContain('data-danger-confirm="true"');
+      expect(res.body).toContain(item.expectedText);
+      expect(res.body).toContain(item.label);
+      expect(res.body).toContain('Chế độ test an toàn');
+      expect(res.body.includes('onclick="return confirm')).toBeFalse();
+      expect(res.body.includes('window.confirm')).toBeFalse();
     }
   });
 
@@ -8192,6 +8273,8 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('class="drawer-panel"');
     expect(res.body).toContain('id="drawer-title"');
     expect(res.body).toContain('id="drawer-body-container"');
+    expect(res.body).toContain('id="drawer-discard-modal"');
+    expect(res.body).toContain('id="drawer-discard-confirm"');
 
     // 2. Verify drawer styling exists
     expect(res.body).toContain('.drawer-backdrop');
@@ -8220,6 +8303,7 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body.includes('postgres://')).toBeFalse();
     expect(res.body.includes('postgresql://')).toBeFalse();
     expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('window.confirm')).toBeFalse();
   });
 });
 
@@ -8256,6 +8340,8 @@ describe('Product archive/restore lifecycle UX', () => {
     expect(res.body).toContain('>Hủy</button>');
     // No one-click bare confirm() archive
     expect(res.body.includes("confirm('Archive this product?")).toBeFalse();
+    expect(res.body.includes('onclick="return confirm')).toBeFalse();
+    expect(res.body.includes('window.confirm')).toBeFalse();
     // Active product carries the archive trigger; archived product does not
     expect(res.body).toContain('action="/admin/shops/adult-shop/products/prod-1/archive" data-product-archive="true"');
     expect(res.body.includes('products/prod-3/archive')).toBeFalse();
@@ -8330,6 +8416,9 @@ describe('Product archive/restore lifecycle UX', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('class="js-cancel-drawer');
     expect(res.body).toContain('>Hủy bỏ</button>');
-    expect(res.body).toContain('Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi?');
+    expect(res.body).toContain('id="drawer-discard-modal"');
+    expect(res.body).toContain('Bạn có thay đổi chưa lưu trong form sản phẩm.');
+    expect(res.body).toContain('>Bỏ thay đổi</button>');
+    expect(res.body.includes('window.confirm')).toBeFalse();
   });
 });

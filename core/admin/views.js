@@ -1501,7 +1501,7 @@ function renderPageArchiveForm(shopId = '', page = {}, shop = {}) {
     <label>Nhập từ khóa xác nhận
       <input name="confirmation_text" maxlength="80" required aria-required="true" autocomplete="off" placeholder="ARCHIVE MAPPING" data-confirm-text-input="true">
     </label>
-    <div class="form-actions"><button type="submit" onclick="return confirm('Archive this mapping? It will archive active credentials for this mapping, not delete anything.');">Archive mapping</button></div>
+    <div class="form-actions"><button type="submit">Lưu trữ liên kết Fanpage</button></div>
   </form>`;
 }
 
@@ -1771,11 +1771,11 @@ function renderDryRunControls(shop = {}) {
     return `
       <div class="banner banner-warning" role="alert" id="dry-run-warning">
         <strong>&#9888; Cửa hàng đang ở chế độ CHẠY THẬT (Gửi tin nhắn thật).</strong>
-        Chế độ chạy thử an toàn (dry-run) hiện đang <strong>TẮT</strong>. Tin nhắn có thể được gửi trực tiếp đến người dùng thật nếu hệ thống toàn cục cho phép.
-        Sử dụng biểu mẫu bên dưới để bật lại chế độ chạy thử an toàn.
+        Chế độ test an toàn hiện đang <strong>TẮT</strong>. Tin nhắn có thể được gửi trực tiếp đến người dùng thật nếu hệ thống toàn cục cho phép.
+        Sử dụng biểu mẫu bên dưới để bật lại chế độ test an toàn.
       </div>
       ${globalNote}
-      <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run" data-danger-confirm="true" data-action-title="Bật lại chế độ test an toàn cho cửa hàng" data-warning-text="Bạn chuẩn bị bật lại chế độ test an toàn (Dry-Run: BẬT)." data-consequence-text="Bot sẽ chuyển sang chế độ test giả lập an toàn và không gửi tin nhắn Messenger thật đến khách hàng nữa." data-submit-label="Bật chế độ an toàn" data-expected-confirm-text="ENABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
+      <form class="settings-form compact" method="post" action="${escapeHtml(enableAction)}" id="form-enable-dry-run" data-danger-confirm="true" data-action-title="Bật lại chế độ test an toàn cho cửa hàng" data-warning-text="Bạn chuẩn bị bật lại chế độ test an toàn cho cửa hàng." data-consequence-text="Bot sẽ chuyển sang chế độ test giả lập an toàn và không gửi tin nhắn Messenger thật đến khách hàng nữa." data-submit-label="Bật chế độ an toàn" data-expected-confirm-text="ENABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
         <label>Nhập từ khóa xác nhận
           <input name="confirmation_text" placeholder="ENABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
         </label>
@@ -1790,12 +1790,12 @@ function renderDryRunControls(shop = {}) {
   if (dryRun === true && readinessStatus === 'passed') {
     return `
       ${globalNote}
-      <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run" data-danger-confirm="true" data-action-title="Tắt chế độ test an toàn (Cho phép gửi thật)" data-warning-text="Bạn chuẩn bị tắt chế độ test an toàn (Dry-Run: TẮT)." data-consequence-text="Hành động này cho phép bot gửi tin nhắn Messenger thật cho cửa hàng này nếu chế độ an toàn toàn cục cũng tắt. Vui lòng kiểm tra kỹ cấu hình trước khi xác nhận." data-submit-label="Cho phép gửi tin thật" data-expected-confirm-text="DISABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
+      <form class="settings-form compact" method="post" action="${escapeHtml(disableAction)}" id="form-disable-dry-run" data-danger-confirm="true" data-action-title="Tắt chế độ test an toàn (Cho phép gửi thật)" data-warning-text="Bạn chuẩn bị tắt chế độ test an toàn cho cửa hàng." data-consequence-text="Hành động này cho phép bot gửi tin nhắn Messenger thật cho cửa hàng này nếu chế độ an toàn toàn cục cũng tắt. Vui lòng kiểm tra kỹ cấu hình trước khi xác nhận." data-submit-label="Cho phép gửi tin thật" data-expected-confirm-text="DISABLE DRY RUN" data-shop-slug="${escapeHtml(shop.slug || '')}">
         <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
           <input name="confirmation_text" placeholder="DISABLE DRY RUN" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
         </label>
         <div class="form-actions">
-          <button type="submit" class="inline-action warning" onclick="return confirm('Hành động này cho phép gửi tin nhắn Messenger thật cho cửa hàng nếu công tắc toàn cục cũng tắt. Nhập DISABLE DRY RUN để xác nhận.');">Tắt chế độ test an toàn (Cho phép gửi thật)</button>
+          <button type="submit" class="inline-action warning">Tắt chế độ test an toàn (Cho phép gửi thật)</button>
           <span class="meta">Nhập chính xác <code>DISABLE DRY RUN</code>. Yêu cầu trạng thái kiểm tra sẵn sàng phải ĐẠT. Không tự động bật live_enabled hay chuyển lifecycle thành live.</span>
         </div>
       </form>`;
@@ -1955,9 +1955,9 @@ function renderControlPlaneForm(shop = {}, model = {}) {
 
     <!-- SECTION 2: CHẾ ĐỘ TEST AN TOÀN -->
     <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;">
-      <h3 style="margin-top: 0; color: #b45309; font-size: 15px;">🛡️ Cấu hình Chế độ test an toàn (Dry-Run Controls)</h3>
+      <h3 style="margin-top: 0; color: #b45309; font-size: 15px;">🛡️ Cấu hình Chế độ test an toàn</h3>
       <div class="banner banner-warning" style="margin: 8px 0 12px; padding: 8px 12px;">
-        ⚠️ <strong>Lưu ý:</strong> Chế độ test an toàn (Dry-run: BẬT) giúp bot chạy giả lập trong sandbox để tránh gửi nhầm tin nhắn cho khách hàng thật. Chỉ tắt chế độ này khi shop đã kết nối Fanpage đúng và sẵn sàng hoạt động.
+        ⚠️ <strong>Lưu ý:</strong> Chế độ test an toàn giúp bot chạy giả lập trong sandbox để tránh gửi nhầm tin nhắn cho khách hàng thật. Chỉ tắt chế độ này khi shop đã kết nối Fanpage đúng và sẵn sàng hoạt động. Trường kỹ thuật: <code>dry_run</code>.
       </div>
       ${renderDryRunControls(shop)}
     </div>
@@ -2173,8 +2173,8 @@ function renderAssetStatusActions(shopId = '', asset = {}) {
       <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
       <button type="submit">${escapeHtml(label)}</button>
     </form>
-    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-confirm="Archive asset">
-      <button type="submit" onclick="return confirm('Archive this asset? It will be hidden from active use, not deleted.');">Archive asset</button>
+    <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-danger-confirm="true" data-action-title="Lưu trữ hình ảnh" data-warning-text="Bạn chuẩn bị lưu trữ hình ảnh này." data-consequence-text="Hình ảnh sẽ bị ẩn khỏi trạng thái hoạt động nhưng không bị xóa khỏi hệ thống." data-submit-label="Lưu trữ hình ảnh" data-shop-slug="${escapeHtml(shopId)}">
+      <button type="submit">Lưu trữ hình ảnh</button>
     </form>
     <span class="meta">Archive is a soft archive, not a delete action.</span>
   `;
@@ -2408,7 +2408,7 @@ function renderShopDetailHtml(model = {}) {
     ? '<span class="status status-success">SẴN SÀNG (Passed)</span>'
     : '<span class="status status-danger">CHƯA ĐẠT (Incomplete)</span>';
   const dryRunBadge = shop.dry_run
-    ? '<span class="status status-success">TEST AN TOÀN (Dry-Run)</span>'
+    ? '<span class="status status-success">TEST AN TOÀN</span>'
     : (shop.live_enabled
       ? '<span class="status status-danger">CHẠY THẬT (Go-Live)</span>'
       : '<span class="status status-warning">TẮT (Non-Live)</span>');
@@ -2419,29 +2419,29 @@ function renderShopDetailHtml(model = {}) {
   // Recommended next action
   let recommendedTitle = '💡 Gợi ý hành động tiếp theo';
   let recommendedDesc = '';
-  let recommendedButton = '';
+  let recommendedAction = { href: '', label: '' };
 
   if (shop.lifecycle === 'paused') {
     recommendedDesc = 'Bot của cửa hàng hiện đang tạm dừng (Paused) và sẽ không phản hồi bất kỳ tin nhắn nào của khách hàng. Hãy kích hoạt lại bot để tiếp tục vận hành.';
-    recommendedButton = `<a href="#safety" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Kích hoạt lại Bot &rarr;</a>`;
+    recommendedAction = { href: '#safety', label: 'Kích hoạt lại Bot ->' };
   } else if (!hasActiveMapping) {
     recommendedDesc = 'Cửa hàng chưa kết nối với bất kỳ trang Facebook (Fanpage) nào. Bot sẽ không nhận được tin nhắn từ khách hàng. Vui lòng kết nối Fanpage để tiếp tục.';
-    recommendedButton = `<a href="#pages" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#pages\\']').click();">Kết nối Fanpage ngay &rarr;</a>`;
+    recommendedAction = { href: '#pages', label: 'Kết nối Fanpage ngay ->' };
   } else if (!hasActiveCredential) {
     recommendedDesc = 'Cửa hàng đã kết nối Fanpage nhưng chưa cấu hình Quyền gửi tin (Facebook Page Token bảo mật). Bot không thể phản hồi tin nhắn tự động cho khách hàng.';
-    recommendedButton = `<a href="#pages" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#pages\\']').click();">Cấu hình Quyền gửi tin &rarr;</a>`;
+    recommendedAction = { href: '#pages', label: 'Cấu hình Quyền gửi tin ->' };
   } else if (!model.products || model.products.length === 0) {
     recommendedDesc = 'Danh mục sản phẩm của cửa hàng hiện đang trống. Bot cần có ít nhất 1 sản phẩm hoạt động để có thể tự động tư vấn và bán hàng.';
-    recommendedButton = `<a href="#products" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#products\\']').click();">Thêm sản phẩm ngay &rarr;</a>`;
+    recommendedAction = { href: '#products', label: 'Thêm sản phẩm ngay ->' };
   } else if (!onboarding.ready) {
     recommendedDesc = 'Cấu hình cửa hàng hiện tại chưa đạt một số điều kiện sẵn sàng bắt buộc (Hard blockers). Hãy kiểm tra danh sách bên dưới và khắc phục lỗi chặn.';
-    recommendedButton = `<a href="#safety" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Khắc phục lỗi chặn &rarr;</a>`;
+    recommendedAction = { href: '#safety', label: 'Khắc phục lỗi chặn ->' };
   } else if (shop.dry_run) {
-    recommendedDesc = 'Cửa hàng đã hoàn thành cấu hình cơ bản ở chế độ test an toàn (Dry-Run: BẬT). Chatbot hiện đã sẵn sàng chạy thử nghiệm giả lập an toàn.';
-    recommendedButton = `<a href="#safety" class="button-link" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Chạy thử an toàn &rarr;</a>`;
+    recommendedDesc = 'Cửa hàng đã hoàn thành cấu hình cơ bản ở chế độ test an toàn. Chatbot hiện đã sẵn sàng chạy thử nghiệm giả lập an toàn.';
+    recommendedAction = { href: '#safety', label: 'Chạy thử an toàn ->' };
   } else {
     recommendedDesc = 'Cửa hàng hiện đã ở chế độ CHẠY THẬT (Go-Live). Chatbot đang hoạt động trực tiếp để phản hồi tin nhắn của khách hàng thật trên Facebook.';
-    recommendedButton = `<a href="#safety" class="button-link secondary-button" onclick="document.querySelector('.tabs a[href=\\'#safety\\']').click();">Quản lý Vận hành an toàn</a>`;
+    recommendedAction = { href: '#safety', label: 'Quản lý Vận hành an toàn' };
   }
 
   const overviewStatusGrid = `
@@ -2455,7 +2455,7 @@ function renderShopDetailHtml(model = {}) {
         <strong>${readinessBadge}</strong>
       </div>
       <div class="count">
-        <span>Chế độ gửi tin (Dry-Run/Live)</span>
+        <span>Chế độ gửi tin</span>
         <strong>${dryRunBadge}</strong>
       </div>
       <div class="count">
@@ -2465,7 +2465,12 @@ function renderShopDetailHtml(model = {}) {
     </div>
   `;
 
-  const recommendedActionCard = renderGuidanceCard(recommendedTitle, recommendedDesc, recommendedButton);
+  const recommendedActionCard = renderGuidanceCard(
+    recommendedTitle,
+    recommendedDesc,
+    recommendedAction.href,
+    recommendedAction.label
+  );
 
   const productsGuidanceCard = renderGuidanceCard(
     '💡 Hướng dẫn cấu hình Sản phẩm & Kịch bản',
@@ -2825,6 +2830,22 @@ function renderShopDetailHtml(model = {}) {
           <div class="modal-footer">
             <button type="button" id="product-archive-cancel" class="modal-btn-cancel">Hủy</button>
             <button type="button" id="product-archive-confirm" class="modal-btn-confirm">Lưu trữ</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="drawer-discard-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="drawer-discard-title">
+        <div class="modal-container">
+          <div class="modal-header">
+            <span style="font-size: 20px;">⚠️</span>
+            <h3 id="drawer-discard-title">Bỏ thay đổi chưa lưu</h3>
+          </div>
+          <div class="modal-body">
+            <p class="modal-consequence">Bạn có thay đổi chưa lưu trong form sản phẩm. Đóng ngăn chỉnh sửa sẽ bỏ các thay đổi này.</p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="drawer-discard-cancel" class="modal-btn-cancel">Tiếp tục chỉnh sửa</button>
+            <button type="button" id="drawer-discard-confirm" class="modal-btn-confirm">Bỏ thay đổi</button>
           </div>
         </div>
       </div>
@@ -3199,6 +3220,9 @@ function renderShopDetailHtml(model = {}) {
           const drawerTitle = document.getElementById('drawer-title');
           const drawerBody = document.getElementById('drawer-body-container');
           const drawerCloseBtn = document.getElementById('drawer-close-btn');
+          const drawerDiscardModal = document.getElementById('drawer-discard-modal');
+          const drawerDiscardCancel = document.getElementById('drawer-discard-cancel');
+          const drawerDiscardConfirm = document.getElementById('drawer-discard-confirm');
 
           let activeDrawerFormParent = null;
           let activeDrawerForm = null;
@@ -3245,11 +3269,35 @@ function renderShopDetailHtml(model = {}) {
 
           function requestCloseDrawer() {
             if (activeDrawerForm && serializeDrawerForm(activeDrawerForm) !== drawerInitialState) {
-              if (!window.confirm('Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi?')) {
+              if (drawerDiscardModal) {
+                drawerDiscardModal.classList.add('visible');
                 return;
               }
             }
             closeDrawer();
+          }
+
+          function closeDrawerDiscardModal() {
+            if (drawerDiscardModal) {
+              drawerDiscardModal.classList.remove('visible');
+            }
+          }
+
+          if (drawerDiscardCancel) {
+            drawerDiscardCancel.addEventListener('click', closeDrawerDiscardModal);
+          }
+          if (drawerDiscardConfirm) {
+            drawerDiscardConfirm.addEventListener('click', () => {
+              closeDrawerDiscardModal();
+              closeDrawer();
+            });
+          }
+          if (drawerDiscardModal) {
+            drawerDiscardModal.addEventListener('click', (e) => {
+              if (e.target === drawerDiscardModal) {
+                closeDrawerDiscardModal();
+              }
+            });
           }
 
           if (drawerCloseBtn) {
