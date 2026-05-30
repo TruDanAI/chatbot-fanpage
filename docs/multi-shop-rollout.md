@@ -1091,6 +1091,49 @@ Safety boundary for this documentation checkpoint:
 - No production system was touched.
 - No Meta Graph API call, token health check, or Messenger send was performed.
 
+## Production Page Cutover Runbook and Approval Gate (P1.2g) - 2026-05-30
+
+This checkpoint is documentation and design only. It is not approval to deploy,
+change environment variables, write any database, touch `/data`, touch
+production, call the Meta Graph API, run a token health check, send a Messenger
+message, or enable any production cutover UI or route.
+
+P1.2g adds the production-safe Page cutover runbook and the operator approval
+gate plan that must precede any future production cutover:
+
+- **Runbook**:
+  [production-page-cutover-runbook.md](production-page-cutover-runbook.md)
+- **Approval gate plan**:
+  [operator-approval-gate-plan.md](operator-approval-gate-plan.md)
+
+Key documented decisions:
+
+- Production cutover remains impossible today by design. The cutover service
+  refuses production runtime (`page_cutover_not_allowed_in_production`, 403),
+  the route is API-only with no UI button, and the only production shop
+  (`adult-shop`) is in the protected-shop set. Slugs containing
+  `prod`/`production` are also blocked, and the non-live gate still prevents
+  live or archived shops from cutover.
+- Two-gate approval is required for any future production cutover: an owner
+  approval phrase `duoc cutover page production shop=<slug> new_page_ref=<p:hash>`
+  (human gate, consistent with the `duoc ghi DB production` convention) and the
+  in-request `CUTOVER PAGE` confirmation plus exact shop slug and pinned
+  expected current state (service gate).
+- A two-person rule applies: the owner approves, a different `PRODUCT_WRITE`
+  operator executes.
+- Production tokens must be issued from the production Meta app, encrypted only
+  with the production `CREDENTIAL_MASTER_KEY` inside the production runtime;
+  staging tokens, staging keys, and `encrypted_value` rows must never cross
+  environments.
+- A fresh, verified production backup, exactly-one active mapping/credential,
+  post-cutover readiness re-check, and a reverse-cutover rollback path are
+  required, with reversible flag controls (`MESSENGER_DRY_RUN`,
+  `MULTI_SHOP_DB_CONFIG_ENABLED`) as immediate safety levers.
+
+Enabling a runnable production cutover path (any guard change, approval-gate
+enforcement in code, then a guarded UI) is future work and needs its own
+review, tests, and separate approval.
+
 ## Open TODOs
 
 - Asset upload and media direct integration enhancements.
