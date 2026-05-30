@@ -1175,6 +1175,38 @@ function createPageCredentialWriteServiceStub({ failWith, createdCredential } = 
   };
 }
 
+function createPageCutoverWriteServiceStub({ failWith, cutoverResult } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async cutoverPage(input = {}) {
+      calls.push({ method: 'cutoverPage', input });
+      if (failWith) throw failWith;
+      return cutoverResult || {
+        shopId: input.shopId || 'staging-shop',
+        shop_ref: 's:safe-shop',
+        old_page_ref: 'p:old-safe',
+        new_page_ref: 'p:new-safe',
+        old_page_mapping_id: 'page-old',
+        new_page_mapping_id: 'page-new',
+        old_credential_ref: 'c:old-safe',
+        new_credential_ref: 'c:new-safe',
+        old_mapping_status: 'archived',
+        new_mapping_status: 'active',
+        old_credential_status: 'archived',
+        new_credential_status: 'active',
+        active_mapping_count: 1,
+        active_credential_count: 1,
+        readiness_stale: true,
+        page_id: 'raw-page-id',
+        new_page_id: 'raw-new-page-id',
+        token: 'EAAB-do-not-return',
+        encrypted_value: 'encrypted-do-not-return'
+      };
+    }
+  };
+}
+
 function createPageSetupPreviewServiceStub({ failWith, pageResult, credentialResult } = {}) {
   const calls = [];
   return {
@@ -4510,6 +4542,147 @@ describe('admin dashboard routes', () => {
       expect(body.error).toBe(item.error);
       expect(bodyText.includes('relation')).toBeFalse();
       expect(bodyText.includes('postgres://secret')).toBeFalse();
+    }
+  });
+
+  it('page cutover API returns a sanitized staging-only cutover summary', async () => {
+    const app = createApp();
+    const pageCutoverWrites = createPageCutoverWriteServiceStub();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      pageCutoverWriteService: pageCutoverWrites,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+      headers: { authorization: 'Bearer secret', 'x-request-id': 'req-cutover-1' },
+      params: { shopId: 'staging-shop' },
+      body: {
+        new_page_id: 'raw-new-page-id',
+        new_page_name: 'New Page',
+        new_page_token: 'EAAB-local-cutover-page-token-value',
+        confirmation_text: 'CUTOVER PAGE',
+        shop_slug_confirmation: 'staging-shop',
+        expected_current_page_mapping_id: 'page-old',
+        expected_current_page_ref: 'p:old-safe'
+      }
+    }), res);
+    const body = JSON.parse(res.body);
+    const bodyText = JSON.stringify(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBeTrue();
+    expect(body.schemaReady).toBeTrue();
+    expect(body.shop_id).toBe('staging-shop');
+    expect(body.old_page_ref).toBe('p:old-safe');
+    expect(body.new_page_ref).toBe('p:new-safe');
+    expect(body.old_page_mapping_id).toBe('page-old');
+    expect(body.new_page_mapping_id).toBe('page-new');
+    expect(body.old_credential_ref).toBe('c:old-safe');
+    expect(body.new_credential_ref).toBe('c:new-safe');
+    expect(body.active_mapping_count).toBe(1);
+    expect(body.active_credential_count).toBe(1);
+    expect(body.readiness_stale).toBeTrue();
+    expect(pageCutoverWrites.calls[0].method).toBe('cutoverPage');
+    expect(pageCutoverWrites.calls[0].input.shopId).toBe('staging-shop');
+    expect(pageCutoverWrites.calls[0].input.body.new_page_token).toBe('EAAB-local-cutover-page-token-value');
+    expect(pageCutoverWrites.calls[0].input.requestContext.requestId).toBe('req-cutover-1');
+    expect(bodyText.includes('raw-new-page-id')).toBeFalse();
+    expect(bodyText.includes('raw-page-id')).toBeFalse();
+    expect(bodyText.includes('EAAB-local-cutover-page-token-value')).toBeFalse();
+    expect(bodyText.includes('EAAB-do-not-return')).toBeFalse();
+    expect(bodyText.includes('encrypted-do-not-return')).toBeFalse();
+    expect(bodyText.includes('encrypted_value')).toBeFalse();
+    expect(bodyText.includes('new_page_id')).toBeFalse();
+    expect(bodyText.toLowerCase().includes('token')).toBeFalse();
+  });
+
+  it('page cutover API requires auth and write permission before calling service', async () => {
+    for (const role of ['viewer', 'support']) {
+      const pageCutoverWrites = createPageCutoverWriteServiceStub();
+      const auditLogger = createAuditLoggerStub();
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCutoverWriteService: pageCutoverWrites,
+        auditLogger,
+        adminPrincipalRoles: [role],
+        adminPrincipalId: `${role}-actor`
+      });
+
+      const unauthRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+        params: { shopId: 'staging-shop' },
+        body: { new_page_token: 'EAAB-local-cutover-page-token-value' }
+      }), unauthRes);
+      expect(unauthRes.statusCode).toBe(401);
+
+      const deniedRes = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'staging-shop' },
+        body: { new_page_token: 'EAAB-local-cutover-page-token-value' }
+      }), deniedRes);
+      expect(deniedRes.statusCode).toBe(403);
+      expect(pageCutoverWrites.calls.length).toBe(0);
+      expect(auditLogger.entries[auditLogger.entries.length - 1].action).toBe('admin.shop_page.cutover');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].outcome).toBe('denied');
+      expect(auditLogger.entries[auditLogger.entries.length - 1].metadata.permission).toBe(PERMISSIONS.PRODUCT_WRITE);
+      expect(String(deniedRes.body).includes('EAAB-local-cutover-page-token-value')).toBeFalse();
+    }
+  });
+
+  it('page cutover API maps validation and production errors safely', async () => {
+    for (const item of [
+      { code: 'page_cutover_not_allowed_in_production', status: 403, error: 'page_cutover_not_allowed_in_production' },
+      { code: 'page_cutover_confirmation_required', status: 400, error: 'page_cutover_confirmation_required' },
+      { code: 'shop_slug_confirmation_mismatch', status: 400, error: 'shop_slug_confirmation_mismatch' },
+      { code: 'active_page_mapping_required', status: 409, error: 'active_page_mapping_required' },
+      { code: 'active_page_mapping_ambiguous', status: 409, error: 'active_page_mapping_ambiguous' },
+      { code: 'duplicate_active_page_id', status: 409, error: 'duplicate_active_page_id' },
+      { code: 'same_page_id', status: 409, error: 'same_page_id' },
+      { code: '42P01', status: 503, error: 'multi_shop_schema_not_ready' }
+    ]) {
+      const err = new Error(`raw PostgreSQL ${item.code} token=EAAB-secret encrypted_value=v1:secret at postgres://secret`);
+      err.code = item.code;
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createDashboardReaderStub(),
+        pageCutoverWriteService: createPageCutoverWriteServiceStub({ failWith: err }),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['POST /admin/api/shops/:shopId/pages/cutover'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'staging-shop' },
+        body: {
+          new_page_id: 'raw-new-page-id',
+          new_page_token: 'EAAB-local-cutover-page-token-value',
+          confirmation_text: 'CUTOVER PAGE',
+          shop_slug_confirmation: 'staging-shop'
+        }
+      }), res);
+      const body = JSON.parse(res.body);
+      const bodyText = JSON.stringify(body);
+
+      expect(res.statusCode).toBe(item.status);
+      expect(body.error).toBe(item.error);
+      expect(bodyText.includes('EAAB-secret')).toBeFalse();
+      expect(bodyText.includes('EAAB-local-cutover-page-token-value')).toBeFalse();
+      expect(bodyText.includes('postgres://secret')).toBeFalse();
+      expect(bodyText.includes('v1:secret')).toBeFalse();
+      expect(bodyText.includes('encrypted_value')).toBeFalse();
     }
   });
 

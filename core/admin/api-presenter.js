@@ -719,6 +719,28 @@ function presentPageCredentialWriteApi(model = {}) {
   };
 }
 
+function presentPageCutoverWriteApi(model = {}) {
+  return {
+    ok: true,
+    schemaReady: true,
+    shop_id: model.shopId || '',
+    shop_ref: model.shop_ref || '',
+    old_page_ref: model.old_page_ref || '',
+    new_page_ref: model.new_page_ref || '',
+    old_page_mapping_id: model.old_page_mapping_id || '',
+    new_page_mapping_id: model.new_page_mapping_id || '',
+    old_credential_ref: model.old_credential_ref || '',
+    new_credential_ref: model.new_credential_ref || '',
+    old_mapping_status: model.old_mapping_status || '',
+    new_mapping_status: model.new_mapping_status || '',
+    old_credential_status: model.old_credential_status || '',
+    new_credential_status: model.new_credential_status || '',
+    active_mapping_count: Number(model.active_mapping_count || 0),
+    active_credential_count: Number(model.active_credential_count || 0),
+    readiness_stale: Boolean(model.readiness_stale)
+  };
+}
+
 function presentReadinessImpact(impact = {}) {
   return {
     validate_only: impact.validate_only !== false,
@@ -823,6 +845,7 @@ module.exports = {
   presentOperations,
   presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageCutoverWriteApi,
   presentPageMappingArchiveApi,
   presentPageMappingPreviewApi,
   presentPageMappingWriteApi,

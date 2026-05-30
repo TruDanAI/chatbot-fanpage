@@ -8,6 +8,7 @@ const {
   presentAssetWriteApi,
   presentPageCredentialPreviewApi,
   presentPageCredentialWriteApi,
+  presentPageCutoverWriteApi,
   presentPageMappingArchiveApi,
   presentPageMappingPreviewApi,
   presentPageMappingWriteApi,
@@ -46,6 +47,11 @@ const {
   createPostgresPageCredentialWriteService,
   isMissingPageCredentialWriteSchemaError
 } = require('./admin/page-credential-writes');
+const {
+  PAGE_CUTOVER_ACTION,
+  createPostgresPageCutoverWriteService,
+  isMissingPageCutoverWriteSchemaError
+} = require('./admin/page-cutover-writes');
 const {
   createPostgresPageMappingWriteService,
   isStagingRuntime,
@@ -857,6 +863,74 @@ function presentPageCredentialWriteTextError(err) {
   };
 }
 
+function presentPageCutoverWriteError(err) {
+  if (isMissingPageCutoverWriteSchemaError(err)) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        schemaReady: false,
+        error: 'multi_shop_schema_not_ready',
+        message: 'Multi-shop schema is not ready.'
+      }
+    };
+  }
+
+  const code = String(err?.code || '');
+  const safe = {
+    page_cutover_not_allowed_in_production: ['page_cutover_not_allowed_in_production', 'Page cutover is not allowed in production.', 403],
+    page_cutover_confirmation_required: ['page_cutover_confirmation_required', 'Page cutover confirmation is required.', 400],
+    shop_slug_confirmation_required: ['shop_slug_confirmation_required', 'Shop slug confirmation is required.', 400],
+    shop_slug_confirmation_mismatch: ['shop_slug_confirmation_mismatch', 'Shop slug confirmation does not match.', 400],
+    invalid_page_id: ['invalid_page_id', 'Page id is invalid.', 400],
+    credential_token_missing: ['credential_token_missing', 'Credential token is required.', 400],
+    credential_token_invalid: ['credential_token_invalid', 'Credential token is invalid.', 400],
+    credential_master_key_missing: ['credential_write_unavailable', 'Credential writes are unavailable.', 503],
+    protected_shop_cutover_blocked: ['protected_shop_cutover_blocked', 'This shop is protected from page cutover.', 403],
+    shop_not_staging_test_safe: ['shop_not_staging_test_safe', 'Page cutover is allowed only for non-live staging test shops.', 409],
+    shop_not_found: ['shop_not_found', 'Shop was not found.', 404],
+    active_page_mapping_required: ['active_page_mapping_required', 'Exactly one active page mapping is required.', 409],
+    active_page_mapping_ambiguous: ['active_page_mapping_ambiguous', 'Exactly one active page mapping is required.', 409],
+    active_page_credential_required: ['active_page_credential_required', 'Exactly one active page credential is required.', 409],
+    active_page_credential_ambiguous: ['active_page_credential_ambiguous', 'Exactly one active page credential is required.', 409],
+    same_page_id: ['same_page_id', 'New page id must differ from the current active page id.', 409],
+    duplicate_active_page_id: ['duplicate_active_page_id', 'Page id already has an active mapping.', 409],
+    stale_page_mapping: ['stale_page_mapping', 'Current page mapping changed before cutover.', 409],
+    stale_page_ref: ['stale_page_ref', 'Current page reference changed before cutover.', 409],
+    page_cutover_commit_failed: ['page_cutover_commit_failed', 'Page cutover could not be committed.', 500],
+    page_cutover_mapping_persist_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_credential_persist_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_encryption_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_old_credential_archive_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_old_mapping_archive_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    page_cutover_postcondition_failed: ['page_cutover_failed', 'Page cutover could not be completed.', 500],
+    database_url_required: ['page_cutover_unavailable', 'Page cutover writes are unavailable.', 503],
+    permission_denied: ['permission_denied', 'Page cutover write permission is required.', 403]
+  }[code];
+  if (safe) {
+    return {
+      statusCode: safe[2],
+      body: {
+        ok: false,
+        schemaReady: true,
+        error: safe[0],
+        message: safe[1]
+      }
+    };
+  }
+
+  const fallbackStatusCode = Number(err?.statusCode || 0);
+  return {
+    statusCode: fallbackStatusCode >= 400 && fallbackStatusCode < 600 ? fallbackStatusCode : 500,
+    body: {
+      ok: false,
+      schemaReady: true,
+      error: 'page_cutover_failed',
+      message: 'Page cutover could not be completed.'
+    }
+  };
+}
+
 function presentPageSetupPreviewError(err) {
   if (isMissingPageSetupPreviewSchemaError(err)) {
     return {
@@ -1071,6 +1145,7 @@ function registerAdminRoutes(app, {
   assetWriteService,
   pageSetupPreviewService,
   pageCredentialWriteService,
+  pageCutoverWriteService,
   pageMappingWriteService,
   productImportService,
   productWriteService,
@@ -1126,6 +1201,9 @@ function registerAdminRoutes(app, {
     databaseUrl: dashboardDatabaseUrl
   });
   const pageCredentialWrites = pageCredentialWriteService || createPostgresPageCredentialWriteService({
+    databaseUrl: dashboardDatabaseUrl
+  });
+  const pageCutoverWrites = pageCutoverWriteService || createPostgresPageCutoverWriteService({
     databaseUrl: dashboardDatabaseUrl
   });
   const pageMappingWrites = pageMappingWriteService || createPostgresPageMappingWriteService({
@@ -2011,6 +2089,30 @@ function registerAdminRoutes(app, {
     }
   }
 
+  async function cutoverPageApi(req, res) {
+    const shopId = String(req.params.shopId || '').trim().slice(0, 160);
+    const principal = await authorizeAdminRequest(req, res, {
+      permission: PERMISSIONS.PRODUCT_WRITE,
+      bearerOnly: true,
+      action: PAGE_CUTOVER_ACTION,
+      resourceType: 'shop_page_cutover',
+      resourceId: shopId
+    });
+    if (!principal) return;
+    try {
+      const result = await pageCutoverWrites.cutoverPage({
+        principal,
+        shopId,
+        body: req.body || {},
+        requestContext: buildProductWriteRequestContext(req)
+      });
+      return res.json(presentPageCutoverWriteApi(result));
+    } catch (err) {
+      const response = presentPageCutoverWriteError(err);
+      return res.status(response.statusCode).json(response.body);
+    }
+  }
+
   async function createPageCredentialApi(req, res) {
     const shopId = String(req.params.shopId || '').trim().slice(0, 160);
     const pageMappingId = String(req.params.pageMappingId || '').trim().slice(0, 160);
@@ -2797,6 +2899,7 @@ function registerAdminRoutes(app, {
   app.post('/admin/api/shops/:shopId/pages/preview', previewPageMappingApi);
   app.post('/admin/api/shops/:shopId/page-credentials/preview', previewPageCredentialApi);
   app.post('/admin/api/shops/:shopId/pages', createPageMappingApi);
+  app.post('/admin/api/shops/:shopId/pages/cutover', cutoverPageApi);
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/archive', archivePageMappingApi);
   app.post('/admin/api/shops/:shopId/pages/:pageMappingId/credentials', createPageCredentialApi);
   app.post('/admin/api/shops/:shopId/products', createProductApi);
@@ -2880,6 +2983,7 @@ module.exports = {
   createPostgresAssetWriteService,
   createPostgresDashboardReader,
   createPostgresPageCredentialWriteService,
+  createPostgresPageCutoverWriteService,
   createPostgresPageMappingWriteService,
   createPostgresPageSetupPreviewService,
   createPostgresProductImportService,

@@ -23,6 +23,7 @@ require('./page-token-health.test');
 require('./page-token-health-script.test');
 require('./page-credential-writes.test');
 require('./page-setup-preview.test');
+require('./page-cutover-writes.test');
 require('./page-credential-seed-script.test');
 require('./seed-test-shop-canary.test');
 require('./migration-plan.test');
