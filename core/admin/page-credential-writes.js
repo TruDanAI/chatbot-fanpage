@@ -242,6 +242,19 @@ function createPageCredentialWriteRepository() {
     return Number(result.rows[0]?.count || 0);
   }
 
+  async function markShopReadinessStale(client, shopId) {
+    const result = await client.query(`
+      UPDATE shops
+      SET last_readiness_status = 'unknown',
+          last_readiness_checked_at = NULL,
+          last_ready_by = '',
+          updated_at = now()
+      WHERE id = $1
+      RETURNING id, last_readiness_status, last_readiness_checked_at, last_ready_by
+    `, [shopId]);
+    return result.rows[0] || null;
+  }
+
   async function insertAudit(client, {
     principal,
     action,
@@ -272,6 +285,7 @@ function createPageCredentialWriteRepository() {
     insertAudit,
     insertCredential,
     listActiveCredentialsForUpdate,
+    markShopReadinessStale,
     resolvePageMapping,
     resolveShop
   };
@@ -385,6 +399,7 @@ function createPostgresPageCredentialWriteService({
         pageMappingId: mapping.id,
         credentialType: input.credentialType
       });
+      await repository.markShopReadinessStale(client, shop.id);
       await repository.insertAudit(client, {
         principal,
         action: input.rotate ? PAGE_CREDENTIAL_WRITE_ACTIONS.ROTATE : PAGE_CREDENTIAL_WRITE_ACTIONS.CREATE,

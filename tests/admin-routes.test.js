@@ -3941,6 +3941,33 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Không có lỗi chặn nào hiện tại.');
   });
 
+  it('shop detail HTML prompts operators to rerun readiness when connection state is stale', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          last_readiness_status: 'unknown',
+          last_readiness_checked_at: '',
+          last_ready_by: ''
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Cần chạy lại kiểm tra hoàn tất');
+    expect(res.body).toContain('<span class="status status-neutral">unknown</span><br><span class="meta">Cần chạy lại kiểm tra hoàn tất</span>');
+  });
+
   it('shop detail HTML switches demo-shop configuring/non-live page setup to preview-only controls', async () => {
     const app = createApp();
     registerAdminRoutes(app, {

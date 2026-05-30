@@ -17,17 +17,34 @@ function createState() {
   return {
     shops: [{
       id: 'adult-shop',
-      slug: 'adult-shop'
+      slug: 'adult-shop',
+      status: 'active',
+      lifecycle: 'live',
+      dry_run: false,
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_readiness_checked_at: '2026-05-12T00:00:00.000Z',
+      last_ready_by: 'admin-1'
     }, {
       id: 'staging-shop',
       slug: 'staging-shop',
+      status: 'paused',
       lifecycle: 'configuring',
-      live_enabled: false
+      dry_run: true,
+      live_enabled: false,
+      last_readiness_status: 'passed',
+      last_readiness_checked_at: '2026-05-12T00:00:00.000Z',
+      last_ready_by: 'admin-1'
     }, {
       id: 'other-shop',
       slug: 'other-shop',
+      status: 'paused',
       lifecycle: 'configuring',
-      live_enabled: false
+      dry_run: true,
+      live_enabled: false,
+      last_readiness_status: 'passed',
+      last_readiness_checked_at: '2026-05-12T00:00:00.000Z',
+      last_ready_by: 'admin-1'
     }],
     pages: [{
       id: 'page-existing',
@@ -83,6 +100,7 @@ function makeClientClass({ state, queries, commitCommand = 'COMMIT', failAudit =
       queries.push({ sql: normalized, params });
 
       if (normalized === 'BEGIN') {
+        this.txShops = cloneRows(state.shops);
         this.txPages = cloneRows(state.pages);
         this.txAudits = cloneRows(state.audits);
         this.txCredentials = cloneRows(state.credentials);
@@ -90,29 +108,47 @@ function makeClientClass({ state, queries, commitCommand = 'COMMIT', failAudit =
       }
       if (normalized === 'COMMIT') {
         if (commitCommand === 'COMMIT') {
+          state.shops = cloneRows(this.txShops);
           state.pages = cloneRows(this.txPages);
           state.audits = cloneRows(this.txAudits);
           state.credentials = cloneRows(this.txCredentials);
         }
+        this.txShops = null;
         this.txPages = null;
         this.txAudits = null;
         this.txCredentials = null;
         return { rows: [], command: commitCommand };
       }
       if (normalized === 'ROLLBACK') {
+        this.txShops = null;
         this.txPages = null;
         this.txAudits = null;
         this.txCredentials = null;
         return { rows: [] };
       }
 
+      const shops = this.txShops || state.shops;
       const pages = this.txPages || state.pages;
       const audits = this.txAudits || state.audits;
       const credentials = this.txCredentials || state.credentials;
 
       if (normalized.includes('FROM shops') && normalized.includes('WHERE id = $1 OR slug = $1')) {
         const id = params[0];
-        return { rows: state.shops.filter(shop => shop.id === id || shop.slug === id).slice(0, 1) };
+        return { rows: shops.filter(shop => shop.id === id || shop.slug === id).slice(0, 1) };
+      }
+      if (/^UPDATE shops/i.test(normalized)) {
+        const shop = shops.find(row => row.id === params[0]);
+        if (!shop) return { rows: [], rowCount: 0 };
+        shop.last_readiness_status = 'unknown';
+        shop.last_readiness_checked_at = null;
+        shop.last_ready_by = '';
+        shop.updated_at = '2026-05-16T00:03:00.000Z';
+        return { rows: [{
+          id: shop.id,
+          last_readiness_status: shop.last_readiness_status,
+          last_readiness_checked_at: shop.last_readiness_checked_at,
+          last_ready_by: shop.last_ready_by
+        }], rowCount: 1 };
       }
       if (normalized.includes('FROM shop_pages') && normalized.includes('WHERE id = $1') && normalized.includes('shop_id = $2')) {
         const [pageMappingId, shopId] = params;
@@ -183,7 +219,7 @@ function makeClientClass({ state, queries, commitCommand = 'COMMIT', failAudit =
 }
 
 describe('page mapping write persistence', () => {
-  it('valid create inserts shop_pages and audit in one transaction without credentials', async () => {
+  it('valid create inserts shop_pages, marks readiness stale, and audits safely in one transaction without credentials', async () => {
     const state = createState();
     const queries = [];
     const service = createPostgresPageMappingWriteService({
@@ -198,6 +234,7 @@ describe('page mapping write persistence', () => {
     });
 
     const inserted = state.pages.find(row => row.page_id === 'page_new');
+    const shop = state.shops.find(row => row.id === 'adult-shop');
     const auditInsert = queries.find(item => /^INSERT INTO admin_audit_log/i.test(item.sql));
     const metadata = JSON.parse(auditInsert.params[12]);
     const metadataText = JSON.stringify(metadata);
@@ -208,6 +245,13 @@ describe('page mapping write persistence', () => {
     expect(inserted.shop_id).toBe('adult-shop');
     expect(inserted.page_name).toBe('New Page');
     expect(inserted.status).toBe('active');
+    expect(shop.status).toBe('active');
+    expect(shop.lifecycle).toBe('live');
+    expect(shop.dry_run).toBeFalse();
+    expect(shop.live_enabled).toBeTrue();
+    expect(shop.last_readiness_status).toBe('unknown');
+    expect(shop.last_readiness_checked_at).toBe(null);
+    expect(shop.last_ready_by).toBe('');
     expect(state.audits.length).toBe(1);
     expect(auditInsert.params[5]).toBe('admin.shop_page.create');
     expect(auditInsert.params[6]).toBe('shop_page');
@@ -354,6 +398,7 @@ describe('page mapping write persistence', () => {
     });
 
     const mapping = state.pages.find(row => row.id === 'page-staging-active');
+    const shop = state.shops.find(row => row.id === 'staging-shop');
     const auditInsert = queries.find(item => /^INSERT INTO admin_audit_log/i.test(item.sql));
     const metadata = JSON.parse(auditInsert.params[12]);
     const metadataText = JSON.stringify(metadata);
@@ -364,6 +409,13 @@ describe('page mapping write persistence', () => {
     expect(result.archivedCredentialCount).toBe(1);
     expect(result.activeCredentialCountAfter).toBe(0);
     expect(mapping.status).toBe('archived');
+    expect(shop.status).toBe('paused');
+    expect(shop.lifecycle).toBe('configuring');
+    expect(shop.dry_run).toBeTrue();
+    expect(shop.live_enabled).toBeFalse();
+    expect(shop.last_readiness_status).toBe('unknown');
+    expect(shop.last_readiness_checked_at).toBe(null);
+    expect(shop.last_ready_by).toBe('');
     expect(state.credentials.find(row => row.id === 'credential-scoped-active').status).toBe('archived');
     expect(state.credentials.find(row => row.id === 'credential-scoped-archived').status).toBe('archived');
     expect(state.credentials.find(row => row.id === 'credential-other-mapping').status).toBe('active');

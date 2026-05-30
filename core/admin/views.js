@@ -1484,6 +1484,11 @@ function pageStatus(page = {}) {
   return String(page.status || '').trim().toLowerCase();
 }
 
+function isShopReadinessStale(shop = {}) {
+  return String(shop.last_readiness_status || '').trim().toLowerCase() === 'unknown'
+    && !shop.last_readiness_checked_at;
+}
+
 function renderPageCredentialCount(page = {}) {
   if (page.active_credential_count == null) return '<span class="meta">unknown</span>';
   return escapeHtml(Number(page.active_credential_count || 0));
@@ -1591,6 +1596,7 @@ function resolveFanpageConnectionState({ activeMappingCount = 0, activeCredentia
 }
 
 function renderFanpageConnectionCard(model = {}) {
+  const shop = model.shop || {};
   const pages = Array.isArray(model.pages) ? model.pages : [];
   const activeMappings = pages.filter(page => pageStatus(page) === 'active');
   const activeCredentialCount = resolveActiveCredentialCount(model, activeMappings);
@@ -1620,6 +1626,7 @@ function renderFanpageConnectionCard(model = {}) {
         <span class="connection-state-label ${escapeHtml(state.className)}">${escapeHtml(state.label)}</span>
         <span class="meta">${escapeHtml(state.code)} - ${escapeHtml(state.help)}</span>
       </div>
+      ${isShopReadinessStale(shop) ? '<p class="meta">Cần chạy lại kiểm tra hoàn tất</p>' : ''}
       <div class="connection-summary-grid">
         <div class="connection-summary-item">
           <span>Active mapping</span>
@@ -1928,7 +1935,7 @@ function renderControlPlaneForm(shop = {}, model = {}) {
         <tr><th>Vòng đời hoạt động (Lifecycle)</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
         <tr><th>Chế độ test an toàn (dry_run)</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
         <tr><th>Cho phép chạy thật (live_enabled)</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
-        <tr><th>Kiểm tra hoàn tất (Readiness)</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}</td></tr>
+        <tr><th>Kiểm tra hoàn tất (Readiness)</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}${isShopReadinessStale(shop) ? '<br><span class="meta">Cần chạy lại kiểm tra hoàn tất</span>' : ''}</td></tr>
         <tr><th>Lần kiểm tra hoàn tất cuối</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
         <tr><th>Kiểm tra thủ công (Manual test)</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
         <tr><th>Lần kiểm tra thủ công cuối</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>

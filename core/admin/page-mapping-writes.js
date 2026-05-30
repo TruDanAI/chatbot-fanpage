@@ -258,6 +258,19 @@ function createPageMappingWriteRepository() {
     return Number(result.rows[0]?.count || 0);
   }
 
+  async function markShopReadinessStale(client, shopId) {
+    const result = await client.query(`
+      UPDATE shops
+      SET last_readiness_status = 'unknown',
+          last_readiness_checked_at = NULL,
+          last_ready_by = '',
+          updated_at = now()
+      WHERE id = $1
+      RETURNING id, last_readiness_status, last_readiness_checked_at, last_ready_by
+    `, [shopId]);
+    return result.rows[0] || null;
+  }
+
   async function insertAudit(client, {
     principal,
     action = PAGE_MAPPING_WRITE_ACTIONS.CREATE,
@@ -289,6 +302,7 @@ function createPageMappingWriteRepository() {
     countActiveCredentialsForMapping,
     insertAudit,
     insertPageMapping,
+    markShopReadinessStale,
     resolvePageMappingForUpdate,
     resolveShop,
     resolveShopForUpdate
@@ -363,6 +377,7 @@ function createPostgresPageMappingWriteService({
       if (!row?.id) {
         throw createPageMappingWriteError('page_mapping_persist_failed', 'Page mapping could not be persisted.', 500);
       }
+      await repository.markShopReadinessStale(client, shop.id);
       await repository.insertAudit(client, {
         principal,
         resourceId: row.id,
@@ -430,6 +445,7 @@ function createPostgresPageMappingWriteService({
       if (!alreadyArchived) changedFields.push('shop_pages.status');
       if (archivedCredentialCount > 0) changedFields.push('shop_page_credentials.status');
 
+      await repository.markShopReadinessStale(client, shop.id);
       await repository.insertAudit(client, {
         principal,
         action: PAGE_MAPPING_WRITE_ACTIONS.ARCHIVE,

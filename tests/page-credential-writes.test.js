@@ -31,7 +31,14 @@ function createState() {
   return {
     shops: [{
       id: 'adult-shop',
-      slug: 'adult-shop'
+      slug: 'adult-shop',
+      status: 'active',
+      lifecycle: 'live',
+      dry_run: false,
+      live_enabled: true,
+      last_readiness_status: 'passed',
+      last_readiness_checked_at: '2026-05-12T00:00:00.000Z',
+      last_ready_by: 'admin-1'
     }],
     pages: [{
       id: 'page-map-1',
@@ -51,8 +58,13 @@ function addDemoShop(state, shopOverrides = {}, pageOverrides = {}) {
   state.shops.push({
     id: 'demo-shop',
     slug: 'demo-shop',
+    status: 'paused',
     lifecycle: 'configuring',
+    dry_run: true,
     live_enabled: false,
+    last_readiness_status: 'passed',
+    last_readiness_checked_at: '2026-05-12T00:00:00.000Z',
+    last_ready_by: 'admin-1',
     ...shopOverrides
   });
   state.pages.push({
@@ -80,6 +92,7 @@ function makeClientClass({ state, queries, failAudit = false, commitCommand = 'C
       queries.push({ sql: normalized, params });
 
       if (normalized === 'BEGIN') {
+        this.txShops = cloneRows(state.shops);
         this.txCredentials = cloneRows(state.credentials);
         this.txAudits = cloneRows(state.audits);
         this.txPages = cloneRows(state.pages);
@@ -89,15 +102,23 @@ function makeClientClass({ state, queries, failAudit = false, commitCommand = 'C
       }
       if (normalized === 'COMMIT') {
         if (commitCommand === 'COMMIT') {
+          state.shops = cloneRows(this.txShops);
           state.credentials = cloneRows(this.txCredentials);
           state.audits = cloneRows(this.txAudits);
           state.pages = cloneRows(this.txPages);
           state.products = cloneRows(this.txProducts);
           state.assets = cloneRows(this.txAssets);
         }
+        this.txShops = null;
+        this.txCredentials = null;
+        this.txAudits = null;
+        this.txPages = null;
+        this.txProducts = null;
+        this.txAssets = null;
         return { rows: [], command: commitCommand };
       }
       if (normalized === 'ROLLBACK') {
+        this.txShops = null;
         this.txCredentials = null;
         this.txAudits = null;
         this.txPages = null;
@@ -106,13 +127,28 @@ function makeClientClass({ state, queries, failAudit = false, commitCommand = 'C
         return { rows: [] };
       }
 
+      const shops = this.txShops || state.shops;
       const credentials = this.txCredentials || state.credentials;
       const pages = this.txPages || state.pages;
       const audits = this.txAudits || state.audits;
 
       if (normalized.includes('FROM shops') && normalized.includes('WHERE id = $1 OR slug = $1')) {
         const id = params[0];
-        return { rows: state.shops.filter(shop => shop.id === id || shop.slug === id).slice(0, 1) };
+        return { rows: shops.filter(shop => shop.id === id || shop.slug === id).slice(0, 1) };
+      }
+      if (/^UPDATE shops/i.test(normalized)) {
+        const shop = shops.find(row => row.id === params[0]);
+        if (!shop) return { rows: [], rowCount: 0 };
+        shop.last_readiness_status = 'unknown';
+        shop.last_readiness_checked_at = null;
+        shop.last_ready_by = '';
+        shop.updated_at = '2026-05-16T00:03:00.000Z';
+        return { rows: [{
+          id: shop.id,
+          last_readiness_status: shop.last_readiness_status,
+          last_readiness_checked_at: shop.last_readiness_checked_at,
+          last_ready_by: shop.last_ready_by
+        }], rowCount: 1 };
       }
       if (normalized.includes('FROM shop_pages') && normalized.includes('WHERE id = $1') && normalized.includes('shop_id = $2')) {
         return { rows: pages.filter(row => row.id === params[0] && row.shop_id === params[1]).slice(0, 1) };
@@ -278,7 +314,7 @@ describe('page credential admin writes', () => {
     expect(queries.some(item => item.sql === 'ROLLBACK')).toBeTrue();
   });
 
-  it('creates an encrypted credential and safe audit in one transaction', async () => {
+  it('creates an encrypted credential, marks readiness stale, and writes safe audit in one transaction', async () => {
     const state = createState();
     const queries = [];
     const service = createService(state, queries);
@@ -291,6 +327,7 @@ describe('page credential admin writes', () => {
     });
 
     const inserted = state.credentials[0];
+    const shop = state.shops.find(row => row.id === 'adult-shop');
     const auditInsert = queries.find(item => /^INSERT INTO admin_audit_log/i.test(item.sql));
     const auditMetadata = JSON.parse(auditInsert.params[12]);
     const responseText = JSON.stringify(result);
@@ -307,6 +344,13 @@ describe('page credential admin writes', () => {
     expect(inserted.encrypted_value).toMatch(/^v1:/);
     expect(inserted.encrypted_value.includes(token)).toBeFalse();
     expect(decryptCredential(inserted.encrypted_value, masterKey)).toBe(token);
+    expect(shop.status).toBe('active');
+    expect(shop.lifecycle).toBe('live');
+    expect(shop.dry_run).toBeFalse();
+    expect(shop.live_enabled).toBeTrue();
+    expect(shop.last_readiness_status).toBe('unknown');
+    expect(shop.last_readiness_checked_at).toBe(null);
+    expect(shop.last_ready_by).toBe('');
     expect(auditInsert.params[5]).toBe('admin.shop_page_credential.create');
     expect(auditInsert.params[6]).toBe('shop_page_credential');
     expect(Object.keys(auditMetadata).sort()).toEqual([
@@ -402,6 +446,7 @@ describe('page credential admin writes', () => {
     const metadata = JSON.parse(auditInsert.params[12]);
     const active = state.credentials.filter(row => row.status === 'active');
     const archived = state.credentials.filter(row => row.status === 'archived');
+    const shop = state.shops.find(row => row.id === 'adult-shop');
 
     expect(result.rotated).toBeTrue();
     expect(result.active_credential_count).toBe(1);
@@ -409,6 +454,13 @@ describe('page credential admin writes', () => {
     expect(active.length).toBe(1);
     expect(archived.length).toBe(1);
     expect(archived[0].id).toBe('credential-old');
+    expect(shop.status).toBe('active');
+    expect(shop.lifecycle).toBe('live');
+    expect(shop.dry_run).toBeFalse();
+    expect(shop.live_enabled).toBeTrue();
+    expect(shop.last_readiness_status).toBe('unknown');
+    expect(shop.last_readiness_checked_at).toBe(null);
+    expect(shop.last_ready_by).toBe('');
     expect(Object.keys(metadata).sort()).toEqual([
       'active_count',
       'archived_count',
