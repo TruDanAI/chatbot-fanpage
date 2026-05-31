@@ -357,8 +357,8 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .credential-no-js-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
     body.js-enabled .credential-js-fallback-control,
     body.js-enabled .credential-no-js-note { display: none; }
-    .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; padding-bottom: 1px; }
-    .tabs a { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+    .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; flex-wrap: wrap; padding-bottom: 1px; }
+    .tabs a { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: normal; overflow-wrap: anywhere; }
     .tabs a:hover { color: #17202a; }
     .tabs a.active { color: var(--primary); border-bottom-color: var(--primary); }
     .tab-section { display: none; }
@@ -367,6 +367,24 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .health-card h2 { margin-top: 0; font-size: 16px; }
     .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
     .health-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .safety-stack { display: grid; gap: 16px; margin-top: 14px; }
+    .safety-section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+    .safety-section h3, .safety-section h4 { margin: 0; color: #17202a; }
+    .safety-section p { margin: 0; }
+    .safety-section > .settings-form { margin: 0; }
+    .safety-status-table { margin: 2px 0; }
+    .safety-callouts { display: grid; gap: 8px; }
+    .safety-callouts .banner { margin: 0; }
+    .safety-operate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .safety-operate-card { background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: grid; gap: 10px; align-content: start; }
+    .safety-operate-card h4 { font-size: 14px; }
+    .safety-operate-card .settings-form { padding: 0; margin: 0; border: 0; background: transparent; }
+    .safety-danger-zone { border-left: 4px solid var(--danger); background: var(--surface); }
+    .safety-danger-zone summary { cursor: pointer; color: #991b1b; font-weight: 800; }
+    .safety-danger-zone summary h3 { display: inline; color: #991b1b; font-size: 16px; }
+    .safety-danger-content { display: grid; gap: 12px; margin-top: 12px; }
+    .safety-danger-card { border: 1px solid #fecaca; border-left: 4px solid var(--danger); border-radius: 8px; background: #ffffff; padding: 14px; display: grid; gap: 10px; }
+    .safety-danger-card h4 { color: #991b1b; font-size: 14px; }
 
     /* Guidance Card */
     .guidance-card {
@@ -1933,7 +1951,7 @@ function renderDeleteDraftShopSection(shop = {}, model = {}) {
 
   if (check.eligible) {
     return `
-      <p class="meta" style="margin-bottom: 12px; color: var(--danger);">Cửa hàng nháp này đủ điều kiện xóa vì chưa từng hoạt động thật và không có dữ liệu quan trọng liên kết.</p>
+      <p class="meta">Cửa hàng nháp này đủ điều kiện xóa vì chưa từng hoạt động thật và không có dữ liệu quan trọng liên kết.</p>
       <form class="settings-form compact" method="post" action="${escapeHtml(action)}" data-danger-confirm="true" data-action-title="Xóa vĩnh viễn Cửa hàng nháp" data-warning-text="Bạn đang chuẩn bị XÓA VĨNH VIỄN cửa hàng nháp này." data-consequence-text="Hành động này là hoàn toàn KHÔNG THỂ HOÀN TÁC. Toàn bộ thông tin cấu hình, sản phẩm nháp và thiết lập của cửa hàng sẽ bị xóa vĩnh viễn khỏi hệ thống." data-submit-label="Xóa vĩnh viễn Cửa hàng" data-expected-confirm-text="DELETE DRAFT" data-shop-slug="${escapeHtml(shop.slug || '')}">
         <label>Nhập từ khóa xác nhận <span class="required">bắt buộc</span>
           <input name="confirmation_text" placeholder="DELETE DRAFT" maxlength="40" required aria-required="true" autocomplete="off" data-confirm-text-input="true">
@@ -1946,12 +1964,12 @@ function renderDeleteDraftShopSection(shop = {}, model = {}) {
     `;
   } else {
     return `
-      <p class="meta" style="margin-bottom: 12px; color: var(--muted);">Trạng thái xóa: <span class="status status-neutral">Không khả dụng (Blocked)</span></p>
-      <div class="banner banner-warning" style="margin: 8px 0 12px; padding: 8px 12px; font-size: 13px;">
+      <p class="meta">Trạng thái xóa: <span class="status status-neutral">Không khả dụng (Blocked)</span></p>
+      <div class="banner banner-warning">
         ⚠️ <strong>Không thể xóa:</strong> ${escapeHtml(check.reason)}
       </div>
       <button type="button" class="button-link secondary-button" disabled style="cursor: not-allowed; opacity: 0.6; pointer-events: none;">Không thể xóa — chỉ có thể lưu trữ</button>
-      <p class="meta" style="margin-top: 8px;">Khuyến nghị: Bạn có thể thay đổi vòng đời của shop thành <strong>archived</strong> (lưu trữ) trong biểu mẫu Vòng đời hoạt động ở trên để ngắt hoàn toàn hoạt động của shop một cách an toàn.</p>
+      <p class="meta">Khuyến nghị: Bạn có thể thay đổi vòng đời của shop thành <strong>archived</strong> (lưu trữ) trong biểu mẫu Vòng đời hoạt động ở trên để ngắt hoàn toàn hoạt động của shop một cách an toàn.</p>
     `;
   }
 }
@@ -1964,99 +1982,101 @@ function renderControlPlaneForm(shop = {}, model = {}) {
   const blockers = (onboarding.checklist || []).filter(row => !row.passed);
   const hardBlockers = Array.isArray(onboarding.hard_blockers) ? onboarding.hard_blockers : [];
   const warnings = Array.isArray(onboarding.warnings) ? onboarding.warnings : [];
-  return `<section class="checklist-card" id="control-plane" aria-label="Shop control plane" style="border: 0; padding: 0; background: transparent;">
+  const statusSummary = hardBlockers.length
+    ? renderReadinessIssues('Lỗi chặn chưa hoàn tất (Hard blockers)', hardBlockers, 'banner-error')
+    : (blockers.length ? `<div class="banner banner-error" role="status">Lỗi chặn chưa hoàn tất: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">Không có lỗi chặn nào hiện tại.</div>');
+  return `<section id="control-plane" aria-label="Shop control plane">
     <h2>Vận hành an toàn / Control Plane</h2>
     <p class="meta">Bảng điều khiển nội bộ dành cho quản trị viên và vận hành viên hệ thống.</p>
 
-    <!-- SECTION 1: KIỂM TRA SẴN SÀNG VÀ TÌNH TRẠNG VẬN HÀNH -->
-    <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0;">
-      <h3 style="margin-top: 0; color: #1e293b; font-size: 15px;">📋 Trạng thái sẵn sàng & Vận hành (Normal Checks)</h3>
-      <p class="meta" style="margin-bottom: 12px;">Thông tin tổng quan về trạng thái cấu hình và kiểm thử của cửa hàng.</p>
-      <table><tbody>
-        <tr><th>Trạng thái hiện tại</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
-        <tr><th>Gói dịch vụ (Package)</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
-        <tr><th>Vòng đời hoạt động (Lifecycle)</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
-        <tr><th>Chế độ test an toàn (dry_run)</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
-        <tr><th>Cho phép chạy thật (live_enabled)</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
-        <tr><th>Kiểm tra hoàn tất (Readiness)</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}${isShopReadinessStale(shop) ? '<br><span class="meta">Cần chạy lại kiểm tra hoàn tất</span>' : ''}</td></tr>
-        <tr><th>Lần kiểm tra hoàn tất cuối</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
-        <tr><th>Kiểm tra thủ công (Manual test)</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
-        <tr><th>Lần kiểm tra thủ công cuối</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
-        <tr><th>Người duyệt cuối</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
-      </tbody></table>
-      ${hardBlockers.length
-        ? renderReadinessIssues('Lỗi chặn chưa hoàn tất (Hard blockers)', hardBlockers, 'banner-error')
-        : (blockers.length ? `<div class="banner banner-error" role="status">Lỗi chặn chưa hoàn tất: ${escapeHtml(blockers.map(row => row.label || row.key).join(', '))}</div>` : '<div class="banner banner-success" role="status">Không có lỗi chặn nào hiện tại.</div>')}
-      ${warnings.length ? renderReadinessIssues('Cảnh báo (Warnings)', warnings, 'banner-warning') : ''}
-      <form class="settings-form compact" method="post" action="${escapeHtml(readinessAction)}" style="margin: 12px 0 0; padding: 0; border: 0; background: transparent;">
-        <div class="form-actions">
-          <button type="submit">Chạy lại kiểm tra hoàn tất</button>
-          <span class="meta">Chỉ cập nhật trạng thái kiểm tra sẵn sàng và thời gian kiểm tra.</span>
+    <div class="safety-stack">
+      <section class="safety-section" aria-labelledby="safety-operational-status">
+        <h3 id="safety-operational-status">Operational status</h3>
+        <p class="meta">Normal checks, readiness, and current safe-state signals for this shop.</p>
+        <table class="safety-status-table"><tbody>
+          <tr><th>Trạng thái hiện tại</th><td>${renderStatus(shop.status || 'unknown')}</td></tr>
+          <tr><th>Gói dịch vụ (Package)</th><td>${escapeHtml(shop.package || 'basic')}</td></tr>
+          <tr><th>Vòng đời hoạt động (Lifecycle)</th><td>${renderStatus(shop.lifecycle || 'unknown')}</td></tr>
+          <tr><th>Chế độ test an toàn (dry_run)</th><td>${renderDryRunStatus(shop.dry_run)}</td></tr>
+          <tr><th>Cho phép chạy thật (live_enabled)</th><td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td></tr>
+          <tr><th>Kiểm tra hoàn tất (Readiness)</th><td>${renderStatus(shop.last_readiness_status || 'unknown')}${isShopReadinessStale(shop) ? '<br><span class="meta">Cần chạy lại kiểm tra hoàn tất</span>' : ''}</td></tr>
+          <tr><th>Lần kiểm tra hoàn tất cuối</th><td>${escapeHtml(formatDate(shop.last_readiness_checked_at))}</td></tr>
+          <tr><th>Kiểm tra thủ công (Manual test)</th><td>${renderStatus(shop.last_manual_test_status || 'unknown')}</td></tr>
+          <tr><th>Lần kiểm tra thủ công cuối</th><td>${escapeHtml(formatDate(shop.last_manual_test_at))}</td></tr>
+          <tr><th>Người duyệt cuối</th><td>${escapeHtml(shop.last_ready_by || '')}</td></tr>
+        </tbody></table>
+        <div class="safety-callouts">
+          ${statusSummary}
+          ${warnings.length ? renderReadinessIssues('Cảnh báo (Warnings)', warnings, 'banner-warning') : ''}
         </div>
-      </form>
-    </div>
+        <form class="settings-form compact" method="post" action="${escapeHtml(readinessAction)}">
+          <div class="form-actions">
+            <button type="submit">Chạy lại kiểm tra hoàn tất</button>
+            <span class="meta">Chỉ cập nhật trạng thái kiểm tra sẵn sàng và thời gian kiểm tra.</span>
+          </div>
+        </form>
+      </section>
 
-    <!-- SECTION 2: CHẾ ĐỘ TEST AN TOÀN -->
-    <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;">
-      <h3 style="margin-top: 0; color: #b45309; font-size: 15px;">🛡️ Cấu hình Chế độ test an toàn</h3>
-      <div class="banner banner-warning" style="margin: 8px 0 12px; padding: 8px 12px;">
-        ⚠️ <strong>Lưu ý:</strong> Chế độ test an toàn giúp bot chạy giả lập trong sandbox để tránh gửi nhầm tin nhắn cho khách hàng thật. Chỉ tắt chế độ này khi shop đã kết nối Fanpage đúng và sẵn sàng hoạt động. Trường kỹ thuật: <code>dry_run</code>.
-      </div>
-      ${renderDryRunControls(shop)}
-    </div>
-
-    <!-- SECTION 3: PHANH KHẨN CẤP VÀ VÒNG ĐỜI -->
-    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 16px 0;">
-      <h3 style="margin-top: 0; color: #b91c1c; font-size: 15px;">🚨 Phanh khẩn cấp & Quyền quản trị (Emergency & Life-Cycle)</h3>
-      <div class="banner banner-error" style="margin: 8px 0 12px; padding: 8px 12px;">
-        🛑 <strong>CẢNH BÁO NGUY HIỂM:</strong> Các thao tác dưới đây ảnh hưởng trực tiếp đến trạng thái hoạt động thực tế của chatbot trên Fanpage. Tạm dừng (Pause) hoặc kích hoạt lại (Resume) bot ngay lập tức nếu phát hiện sự cố khẩn cấp.
-      </div>
-      ${renderShopEmergencyControls(shop)}
-
-      <hr style="border: 0; border-top: 1px solid #fecaca; margin: 16px 0;">
-      <h4 style="margin: 0 0 10px; color: #991b1b; font-size: 14px;">Quản lý Vòng đời & Cho phép chạy thật (Go-Live)</h4>
-
-      <form class="settings-form" method="post" action="${escapeHtml(action)}" style="padding: 0; border: 0; background: transparent;">
-        <label>Gói dịch vụ (Package)
-          <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>
-        </label>
-        <label>Vòng đời hoạt động (Lifecycle)
-          <select name="lifecycle">${renderControlPlaneOptions(['draft', 'configuring', 'ready', 'live', 'paused', 'archived'], shop.lifecycle || 'draft')}</select>
-        </label>
-        <input type="hidden" name="live_enabled" value="false">
-        <label class="checkbox-label">
-          <input type="checkbox" name="live_enabled" value="true"${liveChecked}>
-          live_enabled (Cho phép chạy thật)
-        </label>
-        <label>Trạng thái kiểm tra thủ công
-          <select name="manual_test_status">${renderControlPlaneOptions(['unknown', 'passed', 'failed'], shop.last_manual_test_status || 'unknown')}</select>
-        </label>
-        <label class="checkbox-label" style="grid-column: 1 / -1; margin-top: 6px;">
-          <input type="checkbox" name="confirm_live" value="true">
-          <strong>Xác nhận cho phép chạy thật / thay đổi vòng đời chạy thật</strong>
-        </label>
-        <label class="checkbox-label" style="grid-column: 1 / -1;">
-          <input type="checkbox" name="override_readiness" value="true">
-          Bỏ qua các lỗi chặn kiểm tra sẵn sàng (Chỉ dành cho Quản trị viên)
-        </label>
-        <label class="checkbox-label" style="grid-column: 1 / -1;">
-          <input type="checkbox" name="confirm_pause_archive" value="true">
-          Xác nhận tạm dừng / lưu trữ vòng đời hoạt động
-        </label>
-        <div class="form-actions" style="margin-top: 12px;">
-          <button type="submit" style="background: var(--danger); border-color: var(--danger);">Lưu cấu hình vận hành</button>
-          <span class="meta">Các thay đổi quan trọng đều được ghi nhận vào nhật ký hệ thống. Biểu mẫu này không kích hoạt các tính năng chưa hoàn thiện.</span>
+      <section class="safety-section" aria-labelledby="safety-operate">
+        <h3 id="safety-operate">Operate</h3>
+        <p class="meta">Routine operating controls for pause/resume, safe test mode, package, lifecycle, live flag, and manual test status.</p>
+        <div class="safety-operate-grid">
+          <div class="safety-operate-card">
+            <h4>Emergency controls</h4>
+            <p class="meta">Pause or resume the bot without changing stored shop data.</p>
+            ${renderShopEmergencyControls(shop)}
+          </div>
+          <div class="safety-operate-card">
+            <h4>Chế độ test an toàn</h4>
+            <p class="meta">Cấu hình <code>dry_run</code> để giữ bot trong chế độ giả lập an toàn hoặc cho phép gửi thật khi đủ điều kiện.</p>
+            ${renderDryRunControls(shop)}
+          </div>
         </div>
-      </form>
-    </div>
+        <form class="settings-form" method="post" action="${escapeHtml(action)}">
+          <label>Gói dịch vụ (Package)
+            <select name="package">${renderControlPlaneOptions(['basic', 'sales_flow', 'self_closing_addons'], shop.package || 'basic')}</select>
+          </label>
+          <label>Vòng đời hoạt động (Lifecycle)
+            <select name="lifecycle">${renderControlPlaneOptions(['draft', 'configuring', 'ready', 'live', 'paused', 'archived'], shop.lifecycle || 'draft')}</select>
+          </label>
+          <input type="hidden" name="live_enabled" value="false">
+          <label class="checkbox-label">
+            <input type="checkbox" name="live_enabled" value="true"${liveChecked}>
+            live_enabled (Cho phép chạy thật)
+          </label>
+          <label>Trạng thái kiểm tra thủ công
+            <select name="manual_test_status">${renderControlPlaneOptions(['unknown', 'passed', 'failed'], shop.last_manual_test_status || 'unknown')}</select>
+          </label>
+          <label class="checkbox-label" style="grid-column: 1 / -1; margin-top: 6px;">
+            <input type="checkbox" name="confirm_live" value="true">
+            <strong>Xác nhận cho phép chạy thật / thay đổi vòng đời chạy thật</strong>
+          </label>
+          <label class="checkbox-label" style="grid-column: 1 / -1;">
+            <input type="checkbox" name="override_readiness" value="true">
+            Bỏ qua các lỗi chặn kiểm tra sẵn sàng (Chỉ dành cho Quản trị viên)
+          </label>
+          <label class="checkbox-label" style="grid-column: 1 / -1;">
+            <input type="checkbox" name="confirm_pause_archive" value="true">
+            Xác nhận tạm dừng / lưu trữ vòng đời hoạt động
+          </label>
+          <div class="form-actions" style="margin-top: 12px;">
+            <button type="submit">Lưu cấu hình vận hành</button>
+            <span class="meta">Các thay đổi quan trọng đều được ghi nhận vào nhật ký hệ thống. Biểu mẫu này không kích hoạt các tính năng chưa hoàn thiện.</span>
+          </div>
+        </form>
+      </section>
 
-    <!-- SECTION 4: XÓA SHOP NHÁP -->
-    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 16px 0;">
-      <h3 style="margin-top: 0; color: #b91c1c; font-size: 15px;">🗑️ Xóa cửa hàng nháp (Draft Shop Deletion)</h3>
-      <div class="banner banner-error" style="margin: 8px 0 12px; padding: 8px 12px;">
-        🛑 <strong>Hành động cực kỳ nguy hiểm:</strong> Chỉ cho phép xóa các cửa hàng nháp chưa từng đi vào hoạt động thật (Go-Live) và không có dữ liệu khách hàng quan trọng. Đối với các shop đã chạy thật, bạn chỉ có thể Lưu trữ (Archive) shop.
-      </div>
-      ${renderDeleteDraftShopSection(shop, model)}
+      <details class="safety-section safety-danger-zone">
+        <summary><h3>Advanced / Danger Zone</h3></summary>
+        <div class="safety-danger-content">
+          <p class="meta">Destructive or irreversible shop actions are isolated here. Routine operating controls remain above.</p>
+          <div class="safety-danger-card">
+            <h4>Xóa cửa hàng nháp (Draft Shop Deletion)</h4>
+            <p class="meta">Chỉ cho phép xóa các cửa hàng nháp chưa từng đi vào hoạt động thật (Go-Live) và không có dữ liệu khách hàng quan trọng. Đối với các shop đã chạy thật, bạn chỉ có thể Lưu trữ (Archive) shop.</p>
+            ${renderDeleteDraftShopSection(shop, model)}
+          </div>
+        </div>
+      </details>
     </div>
   </section>`;
 }
@@ -3346,6 +3366,13 @@ function renderShopDetailHtml(model = {}) {
           document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && drawerBackdrop && drawerBackdrop.classList.contains('visible')) {
               requestCloseDrawer();
+            }
+          });
+
+          window.addEventListener('hashchange', () => {
+            if (drawerBackdrop && drawerBackdrop.classList.contains('visible')) {
+              closeDrawerDiscardModal();
+              closeDrawer();
             }
           });
 
