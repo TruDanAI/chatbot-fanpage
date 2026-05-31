@@ -185,6 +185,13 @@ function createDashboardReaderStub() {
       return {
         tenantId: 'default',
         pageId: 'page',
+        shopSummary: {
+          available: true,
+          total: 3,
+          activeLive: 1,
+          needsSetup: 2,
+          dryRun: 2
+        },
         counts: {
           profiles: 1,
           conversations: 1,
@@ -1611,6 +1618,16 @@ describe('admin dashboard routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('html');
     expect(res.body).toContain('Admin Dashboard');
+    expect(res.body).toContain('Trung tâm vận hành');
+    expect(res.body).toContain('Tổng số shop');
+    expect(res.body).toContain('Shop active/live');
+    expect(res.body).toContain('Cần setup/readiness');
+    expect(res.body).toContain('Chế độ test an toàn');
+    expect(res.body).toContain('href="/admin/shops/new"');
+    expect(res.body).toContain('Tạo shop mới');
+    expect(res.body).toContain('href="/admin/wizard/new"');
+    expect(res.body).toContain('Mở Setup Wizard');
+    expect(res.body).toContain('Chẩn đoán kỹ thuật và bộ lọc');
     expect(res.body).toContain('Ops Snapshot');
     expect(res.body).toContain('Needs Attention');
     expect(res.body).toContain('Top Products');
@@ -4315,7 +4332,7 @@ describe('admin dashboard routes', () => {
     }), listRes);
     expect(listRes.statusCode).toBe(200);
     expect(listRes.body).toContain('href="/admin/shops/new"');
-    expect(listRes.body).toContain('Create shop');
+    expect(listRes.body).toContain('Tạo shop mới');
 
     const formRes = createRes();
     await app.routes['/admin/shops/new'](createReq({
@@ -4330,6 +4347,111 @@ describe('admin dashboard routes', () => {
     expect(formRes.body).toContain('value="vi-VN"');
     expect(formRes.body).toContain('value="Asia/Ho_Chi_Minh"');
     expect(formRes.body).toContain('Page mapping and credentials are separate phases.');
+  });
+
+  it('shops HTML renders dashboard-style summary, human labels, safe refs, and existing links', async () => {
+    const rawPageLikeValue = '123456789012345';
+    const reader = createDashboardReaderStub();
+    reader.getShops = async () => ({
+      schemaReady: true,
+      shops: [{
+        id: 'adult-shop',
+        slug: 'adult-shop',
+        name: 'Adult Shop',
+        status: 'active',
+        package: 'basic',
+        lifecycle: 'live',
+        dry_run: false,
+        live_enabled: true,
+        last_readiness_status: 'passed',
+        last_manual_test_status: 'passed',
+        page_count: 2,
+        active_page_count: 1,
+        product_count: 2,
+        asset_count: 3,
+        bot_mode: 'menu_code_handoff',
+        updated_at: '2026-05-12T00:00:00.000Z',
+        page_access_token: 'do-not-return',
+        encrypted_value: 'do-not-return'
+      }, {
+        id: 'needs-setup-shop',
+        slug: rawPageLikeValue,
+        name: rawPageLikeValue,
+        status: 'active',
+        package: 'basic',
+        lifecycle: 'configuring',
+        dry_run: true,
+        live_enabled: false,
+        last_readiness_status: 'unknown',
+        last_manual_test_status: 'unknown',
+        page_count: 0,
+        active_page_count: 0,
+        product_count: 0,
+        asset_count: 0,
+        bot_mode: 'menu_only',
+        updated_at: '2026-05-13T00:00:00.000Z'
+      }, {
+        id: 'failed-shop',
+        slug: 'failed-shop',
+        name: 'Failed Shop',
+        status: 'paused',
+        package: 'basic',
+        lifecycle: 'draft',
+        dry_run: true,
+        live_enabled: false,
+        last_readiness_status: 'failed',
+        last_manual_test_status: 'failed',
+        page_count: 1,
+        active_page_count: 0,
+        product_count: 1,
+        asset_count: 0,
+        bot_mode: 'handoff_only',
+        updated_at: '2026-05-14T00:00:00.000Z'
+      }]
+    });
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Danh sách shop');
+    expect(res.body).toContain('Tổng số shop');
+    expect(res.body).toContain('Shop active/live');
+    expect(res.body).toContain('Cần setup/readiness');
+    expect(res.body).toContain('Chế độ test an toàn');
+    expect(res.body).toContain('Tạo shop mới');
+    expect(res.body).toContain('href="/admin/shops/new"');
+    expect(res.body).toContain('Mở Setup Wizard');
+    expect(res.body).toContain('href="/admin/wizard/new"');
+    expect(res.body).toContain('href="/admin/shops/adult-shop"');
+    expect(res.body).toContain('href="/admin/shops/needs-setup-shop"');
+    expect(res.body).toContain('Đang hoạt động');
+    expect(res.body).toContain('Đang live');
+    expect(res.body).toContain('Đang cấu hình');
+    expect(res.body).toContain('Cần xử lý');
+    expect(res.body).toContain('Chưa kiểm tra');
+    expect(res.body).toContain('Menu + bàn giao');
+    expect(res.body).toContain('Chỉ gửi menu');
+    expect(res.body).toContain(pageRef(rawPageLikeValue));
+    expect(res.body.includes(rawPageLikeValue)).toBeFalse();
+    expect(res.body.includes('menu_code_handoff')).toBeFalse();
+    expect(res.body.includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+    expect(res.body.includes('postgres://')).toBeFalse();
+    expect(res.body.includes('postgresql://')).toBeFalse();
+    expect(res.body.includes('EAAB')).toBeFalse();
+    expect(/\b\d{11,32}\b/.test(res.body)).toBeFalse();
   });
 
   it('shop create API requires auth and write permission before calling service', async () => {

@@ -101,6 +101,135 @@ function renderStatus(value = '') {
   return `<span class="${statusClass(label)}">${escapeHtml(label)}</span>`;
 }
 
+function renderStatusLabel(value = '', label = '') {
+  const raw = String(value || 'unknown');
+  return `<span class="${statusClass(raw)}">${escapeHtml(label || raw)}</span>`;
+}
+
+const SHOP_STATUS_LABELS = {
+  active: 'Đang hoạt động',
+  paused: 'Tạm dừng',
+  archived: 'Đã lưu trữ',
+  draft: 'Bản nháp'
+};
+
+const SHOP_LIFECYCLE_LABELS = {
+  live: 'Đang chạy',
+  configuring: 'Đang cấu hình',
+  draft: 'Bản nháp',
+  archived: 'Đã lưu trữ'
+};
+
+const SHOP_READINESS_LABELS = {
+  passed: 'Đạt',
+  failed: 'Cần xử lý',
+  warnings: 'Có cảnh báo',
+  unknown: 'Chưa kiểm tra'
+};
+
+const SHOP_BOT_MODE_LABELS = {
+  menu_code_handoff: 'Menu + bàn giao',
+  menu_only: 'Chỉ gửi menu',
+  handoff_only: 'Chỉ bàn giao',
+  disabled: 'Đang tắt'
+};
+
+function normalizeStatusText(value = '', fallback = 'unknown') {
+  return String(value || fallback).trim().toLowerCase() || fallback;
+}
+
+function renderShopStatusBadge(value = '') {
+  const status = normalizeStatusText(value);
+  return renderStatusLabel(status, SHOP_STATUS_LABELS[status] || formatLabel(status));
+}
+
+function renderShopLifecycleBadge(value = '') {
+  const lifecycle = normalizeStatusText(value);
+  return renderStatusLabel(lifecycle, SHOP_LIFECYCLE_LABELS[lifecycle] || formatLabel(lifecycle));
+}
+
+function renderShopReadinessBadge(value = '') {
+  const readiness = normalizeStatusText(value);
+  return renderStatusLabel(readiness, SHOP_READINESS_LABELS[readiness] || formatLabel(readiness));
+}
+
+function renderShopLiveBadge(shop = {}) {
+  if (shop.live_enabled === true || normalizeStatusText(shop.lifecycle, '') === 'live') {
+    return renderStatusLabel('active', 'Đang live');
+  }
+  if (shop.dry_run === true) return renderStatusLabel('paused', 'Chế độ test an toàn');
+  return renderStatusLabel('disabled', 'Chưa bật live');
+}
+
+function renderShopSafeRef(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return displayPageIdRef(text);
+}
+
+function getShopPrimaryLabel(shop = {}) {
+  return renderShopSafeRef(shop.name) || renderShopSafeRef(shop.slug) || renderShopSafeRef(shop.id) || 'Shop chưa đặt tên';
+}
+
+function renderShopIdentityMeta(shop = {}) {
+  const primary = getShopPrimaryLabel(shop);
+  const candidates = [
+    shop.slug ? `Slug: ${renderShopSafeRef(shop.slug)}` : '',
+    shop.id && shop.id !== shop.slug ? `Ref: ${renderShopSafeRef(shop.id)}` : ''
+  ]
+    .filter(Boolean)
+    .filter(item => item.replace(/^(Slug|Ref):\s*/, '') !== primary);
+  return candidates.length ? `<span class="meta">${escapeHtml(candidates.join(' | '))}</span>` : '';
+}
+
+function getShopBotModeLabel(value = '') {
+  const mode = normalizeStatusText(value, '');
+  return SHOP_BOT_MODE_LABELS[mode] || (mode ? formatLabel(mode) : 'Chưa cấu hình');
+}
+
+function shopNeedsSetup(shop = {}) {
+  const status = normalizeStatusText(shop.status, '');
+  if (status === 'archived') return false;
+  const lifecycle = normalizeStatusText(shop.lifecycle, '');
+  const readiness = normalizeStatusText(shop.last_readiness_status);
+  const activePages = Number(shop.active_page_count || 0);
+  return readiness !== 'passed' || ['draft', 'configuring', ''].includes(lifecycle) || activePages < 1;
+}
+
+function summarizeShops(shops = []) {
+  const rows = Array.isArray(shops) ? shops : [];
+  return {
+    available: true,
+    total: rows.length,
+    activeLive: rows.filter(shop => normalizeStatusText(shop.status, '') === 'active' && (shop.live_enabled === true || normalizeStatusText(shop.lifecycle, '') === 'live')).length,
+    needsSetup: rows.filter(shopNeedsSetup).length,
+    dryRun: rows.filter(shop => shop.dry_run === true).length
+  };
+}
+
+function normalizeShopSummary(summary = {}, shops = []) {
+  if (summary && summary.available === false) {
+    return {
+      available: false,
+      total: null,
+      activeLive: null,
+      needsSetup: null,
+      dryRun: null,
+      message: summary.message || ''
+    };
+  }
+  const fallback = summarizeShops(shops);
+  return {
+    available: true,
+    total: Number(summary.total ?? summary.total_shops ?? fallback.total),
+    activeLive: Number(summary.activeLive ?? summary.active_live ?? fallback.activeLive),
+    needsSetup: Number(summary.needsSetup ?? summary.needs_setup ?? fallback.needsSetup),
+    dryRun: summary.dryRun == null && summary.dry_run == null
+      ? fallback.dryRun
+      : Number(summary.dryRun ?? summary.dry_run)
+  };
+}
+
 function renderProductStatus(value = '') {
   const status = String(value || '').toLowerCase();
   let label = value;
@@ -166,8 +295,8 @@ function renderLayout(title, body, { showLogout = true } = {}) {
       --neutral: #475569;
     }
     body { margin: 0; background: #f7f8fb; }
-    header { background: var(--primary-dark); color: white; padding: 18px 24px; }
-    .header-inner { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    header { background: var(--primary-dark); color: white; padding: 14px 24px; box-shadow: 0 1px 0 rgba(15, 23, 42, .12); }
+    .header-inner { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; }
     .logout-form { margin: 0; }
     .logout-form button { border: 1px solid rgba(255,255,255,.55); border-radius: 6px; background: transparent; color: #ffffff; padding: 7px 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
     .logout-form button:hover { background: rgba(255,255,255,.1); }
@@ -184,11 +313,28 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .filters button, .filters a { min-height: 34px; border-radius: 6px; padding: 7px 10px; font-size: 14px; font-weight: 700; text-align: center; box-sizing: border-box; }
     .filters button { border: 1px solid var(--primary); color: #ffffff; background: var(--primary); cursor: pointer; }
     .filters a { border: 1px solid var(--border); color: #334155; background: #ffffff; text-decoration: none; }
-    .button-link { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; padding: 7px 10px; color: #ffffff; background: var(--primary); font-size: 14px; font-weight: 700; text-decoration: none; box-sizing: border-box; }
+    .button-link { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; padding: 7px 10px; color: #ffffff; background: var(--primary); font-size: 14px; font-weight: 700; text-decoration: none; box-sizing: border-box; }
     .button-link:hover { text-decoration: none; background: var(--primary-dark); }
+    .button-link.secondary { border-color: var(--border); color: #334155; background: #ffffff; }
+    .button-link.secondary:hover { color: #0f172a; background: #f8fafc; }
     .pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; color: var(--muted); font-size: 13px; }
     .pagination a, .pagination span { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: #ffffff; }
     .pagination span { color: var(--muted); background: #f8fafc; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+    .page-header h2 { margin: 0 0 4px; }
+    .page-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .command-center { display: grid; gap: 14px; margin: 4px 0 20px; }
+    .command-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .command-top h2 { margin: 0 0 5px; font-size: 20px; }
+    .command-top p { margin: 0; line-height: 1.45; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+    .summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-height: 88px; box-sizing: border-box; }
+    .summary-card span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .summary-card strong { display: block; margin-top: 4px; font-size: 28px; color: #0f172a; line-height: 1.1; }
+    .summary-card p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.35; }
+    .dashboard-diagnostics { margin-top: 18px; }
+    .dashboard-diagnostics summary { width: fit-content; cursor: pointer; color: #334155; font-size: 13px; font-weight: 800; padding: 8px 0; }
+    .dashboard-diagnostics summary:hover { color: #0f172a; }
     .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
     .count { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
     .count span { color: var(--muted); font-size: 13px; }
@@ -303,11 +449,18 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .checklist-table { margin-top: 8px; }
     .checklist-table td:first-child { width: 42%; }
     .checklist-table td:nth-child(2) { width: 90px; }
-    .admin-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .admin-nav a { color: rgba(255,255,255,.75); font-size: 14px; font-weight: 600; text-decoration: none; padding: 5px 10px; border-radius: 6px; }
+    .admin-nav { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .admin-nav a { color: rgba(255,255,255,.78); font-size: 14px; font-weight: 700; text-decoration: none; padding: 7px 11px; border-radius: 6px; }
     .admin-nav a:hover { color: #ffffff; background: rgba(255,255,255,.12); text-decoration: none; }
     .admin-nav a.nav-active { color: #ffffff; background: rgba(255,255,255,.18); }
-    .admin-brand { font-size: 15px; font-weight: 800; letter-spacing: .3px; color: #ffffff; margin-right: 8px; }
+    .admin-brand { font-size: 16px; font-weight: 800; letter-spacing: .3px; color: #ffffff; margin-right: 8px; }
+    .logout-form { justify-self: end; }
+    .shop-summary { margin: 0 0 16px; }
+    .shop-table td:first-child { min-width: 210px; }
+    .shop-name-link { display: inline-block; margin-bottom: 4px; font-size: 14px; }
+    .shop-state-stack { display: flex; gap: 6px; flex-wrap: wrap; }
+    .shop-metrics { color: #334155; font-size: 13px; line-height: 1.45; }
+    .shop-metrics strong { color: #17202a; }
     .login-branding { margin-bottom: 14px; }
     .login-branding h2 { font-size: 20px; margin: 0 0 4px; color: #17202a; }
     .login-branding p { margin: 0; color: var(--muted); font-size: 13px; }
@@ -676,6 +829,11 @@ function renderLayout(title, body, { showLogout = true } = {}) {
       .product-actions { min-width: 0; }
       .product-section table { display: none !important; }
       .product-mobile-list { display: flex !important; flex-direction: column; gap: 12px; }
+      .header-inner { grid-template-columns: 1fr; align-items: start; }
+      .admin-nav { justify-content: flex-start; }
+      .logout-form { justify-self: start; }
+      .page-header, .command-top { flex-direction: column; align-items: stretch; }
+      .page-actions { justify-content: flex-start; }
     }
   </style>
 </head>
@@ -864,6 +1022,21 @@ function renderOperations(operations = {}, filters = {}) {
   `;
 }
 
+function renderShopSummaryCards(summary = {}, { includeDryRun = true } = {}) {
+  const value = item => item == null ? 'N/A' : item;
+  const cards = [
+    ['Tổng số shop', value(summary.total), 'Toàn bộ shop đang có trong admin.'],
+    ['Shop active/live', value(summary.activeLive), 'Shop đang hoạt động hoặc đã bật live.'],
+    ['Cần setup/readiness', value(summary.needsSetup), 'Shop còn thiếu cấu hình hoặc chưa đạt kiểm tra.']
+  ];
+  if (includeDryRun) {
+    cards.push(['Chế độ test an toàn', value(summary.dryRun), 'Shop đang giữ dry-run để tránh gửi thật.']);
+  }
+  return `<section class="summary-grid" aria-label="Shop summary">
+    ${cards.map(([label, count, helper]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(count)}</strong><p>${escapeHtml(helper)}</p></div>`).join('')}
+  </section>`;
+}
+
 function renderFilterForm(filters = {}) {
   const statusOptions = ['', 'draft', 'ready_to_confirm', 'confirmed', 'cancelled', 'abandoned']
     .map(value => `<option value="${escapeHtml(value)}"${filters.status === value ? ' selected' : ''}>${escapeHtml(value || 'Any')}</option>`)
@@ -916,11 +1089,36 @@ function renderAuditFilterForm(filters = {}) {
 
 function renderDashboardHtml(model) {
   const pagination = model.pagination || {};
+  const shopSummary = normalizeShopSummary(model.shopSummary || {}, model.shops || []);
+  const createShopCta = model.canCreateShop === false
+    ? ''
+    : '<a class="button-link" href="/admin/shops/new">Tạo shop mới</a>';
   const body = `
-    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(displayPageIdRef(model.pageId))}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
-    ${renderFilterForm(model.filters || {})}
-    ${renderCounts(model.counts)}
+    <section class="command-center">
+      <div class="command-top">
+        <div>
+          <h2>Trung tâm vận hành</h2>
+          <p class="meta">Theo dõi tình trạng shop, setup và các tín hiệu cần xử lý trước khi xem log kỹ thuật.</p>
+        </div>
+        <div class="page-actions">
+          ${createShopCta}
+          <a class="button-link secondary" href="/admin/wizard/new">Mở Setup Wizard</a>
+          <a class="button-link secondary" href="/admin/shops">Xem danh sách shop</a>
+        </div>
+      </div>
+      ${shopSummary.available === false
+        ? '<div class="empty">Chưa đọc được tổng quan shop. Các bảng vận hành bên dưới vẫn khả dụng nếu dữ liệu hội thoại đã sẵn sàng.</div>'
+        : renderShopSummaryCards(shopSummary)}
+    </section>
+
     ${renderOperations(model.operations || {}, model.filters || {})}
+
+    <details class="dashboard-diagnostics">
+      <summary>Chẩn đoán kỹ thuật và bộ lọc</summary>
+      <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(displayPageIdRef(model.pageId))}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+      ${renderFilterForm(model.filters || {})}
+      ${renderCounts(model.counts)}
+    </details>
 
     <h2>Orders</h2>
     ${renderPagination(pagination.orders, model.filters || {}, dashboardQueryString, 'ordersPage')}
@@ -991,29 +1189,43 @@ function renderAuditHtml(model) {
 
 function renderShopsHtml(model = {}) {
   const shops = model.shops || [];
+  const shopSummary = normalizeShopSummary(
+    model.schemaReady === false ? { available: false, message: model.message } : (model.shopSummary || {}),
+    shops
+  );
   const createLink = model.canCreateShop
-    ? '<p><a class="button-link" href="/admin/shops/new">Create shop</a></p>'
+    ? '<a class="button-link" href="/admin/shops/new">Tạo shop mới</a>'
     : '';
-  const body = `
-    <p><a href="/admin/dashboard">Back to dashboard</a></p>
-    ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
-    <h2>Shops</h2>
-    ${createLink}
-    ${renderTable(['shop', 'status', 'package', 'lifecycle', 'live', 'readiness', 'pages', 'products', 'assets', 'bot mode', 'updated'], shops, shop => `
+  const wizardLink = '<a class="button-link secondary" href="/admin/wizard/new">Mở Setup Wizard</a>';
+  const shopsContent = shops.length
+    ? renderTable(['shop', 'trạng thái', 'chạy live/test', 'readiness', 'kết nối', 'dữ liệu', 'bot', 'cập nhật'], shops, shop => `
       <tr>
-        <td><a href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(shop.name || shop.slug || shop.id)}</a><br><span class="meta"><code>${escapeHtml(shop.id)}</code> ${escapeHtml(shop.slug)}</span></td>
-        <td>${renderStatus(shop.status)}</td>
-        <td>${escapeHtml(shop.package || 'basic')}</td>
-        <td>${renderStatus(shop.lifecycle || 'unknown')}</td>
-        <td>${renderStatus(shop.live_enabled ? 'enabled' : 'disabled')}</td>
-        <td>${renderStatus(shop.last_readiness_status || 'unknown')}</td>
-        <td>${escapeHtml(shop.active_page_count || 0)} / ${escapeHtml(shop.page_count || 0)}</td>
-        <td>${escapeHtml(shop.product_count || 0)}</td>
-        <td>${escapeHtml(shop.asset_count || 0)}</td>
-        <td>${escapeHtml(shop.bot_mode || '')}</td>
+        <td>
+          <a class="shop-name-link" href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(getShopPrimaryLabel(shop))}</a><br>
+          ${renderShopIdentityMeta(shop)}
+        </td>
+        <td><div class="shop-state-stack">${renderShopStatusBadge(shop.status)}${renderShopLifecycleBadge(shop.lifecycle || 'unknown')}</div></td>
+        <td>${renderShopLiveBadge(shop)}</td>
+        <td>${renderShopReadinessBadge(shop.last_readiness_status || 'unknown')}</td>
+        <td class="shop-metrics"><strong>${escapeHtml(shop.active_page_count || 0)}</strong> trang active / ${escapeHtml(shop.page_count || 0)} tổng</td>
+        <td class="shop-metrics"><strong>${escapeHtml(shop.product_count || 0)}</strong> sản phẩm<br><strong>${escapeHtml(shop.asset_count || 0)}</strong> ảnh</td>
+        <td>${escapeHtml(getShopBotModeLabel(shop.bot_mode || ''))}</td>
         <td>${escapeHtml(formatDate(shop.updated_at))}</td>
       </tr>
-    `)}
+    `).replace('<table>', '<table class="shop-table">')
+    : '<div class="empty">Chưa có shop nào. Bắt đầu bằng Setup Wizard để tạo shop ở chế độ test an toàn.</div>';
+  const body = `
+    <p><a href="/admin/dashboard">Quay lại dashboard</a></p>
+    ${model.schemaReady === false ? `<div class="empty">${escapeHtml(model.message || 'Multi-shop schema chưa sẵn sàng.')}</div>` : ''}
+    <div class="page-header">
+      <div>
+        <h2>Danh sách shop</h2>
+        <p class="meta">Trạng thái đã được gom theo cách vận hành: live, test an toàn, readiness và dữ liệu cần chuẩn bị.</p>
+      </div>
+      <div class="page-actions">${createLink}${wizardLink}</div>
+    </div>
+    <div class="shop-summary">${shopSummary.available === false ? '<div class="empty">Chưa đọc được tổng quan shop.</div>' : renderShopSummaryCards(shopSummary)}</div>
+    ${shopsContent}
   `;
   return renderLayout('Admin Shops', body);
 }
