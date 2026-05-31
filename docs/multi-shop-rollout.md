@@ -989,6 +989,53 @@ Safety notes:
 - Applying the patches to production still requires a fresh verified backup,
   explicit DB write approval, and a separate execution session.
 
+## Production Rollout Checkpoint - 2026-05-31
+
+Detailed checkpoint:
+[production-rollout-checkpoint.md](production-rollout-checkpoint.md)
+
+Production rollout after the dry-run/lifecycle readiness schema migration is
+fully verified.
+
+- Production schema migration applied successfully.
+- Required `shops` columns are present: `dry_run`, `live_enabled`,
+  `lifecycle`, `last_readiness_status`, `last_readiness_checked_at`, and
+  `last_ready_by`.
+- `adult-shop` post-migration state: `status=active`, `dry_run=false`,
+  `lifecycle=live`, `live_enabled=true`, and
+  `last_readiness_status=unknown`.
+- Verified backup:
+  `chatbot-fanpage-prod-20260531-015324.dump`,
+  SHA256
+  `6FE0F65C479B81E36EE381A533D73EFEBF3D81B3E3F344A3C3DF3AC7ACCDD2B9`;
+  `pg_restore --list` passed.
+- Production app deployment
+  `06c629a6-79c2-42a7-9527-bbb7a6fd31b5` at app commit
+  `origin/main 54c990e` finished with status `SUCCESS`; previous rollback
+  target remains `94905d5c-8d15-45a3-afe4-9edeb94d14f5`.
+- Replica state observed as `1/1` running.
+- Public `GET /healthz`: HTTP `200`, `ok=true`, `shop=adult-shop`,
+  `products=13`, `storage.adapter=postgres`, `storage.ready=true`, and
+  `messenger.dryRun=false`.
+- Post-deploy observation passed after 15+ minutes: no restart loop,
+  `credential_decrypt_failed`, page routing failures, missing column errors,
+  Messenger send errors, runtime exceptions, or HTTP `5xx` responses observed.
+- Manual Messenger smoke by the operator/user passed: `menu` returned the text
+  menu plus menu images 1 and 2; product code `MÃ10` returned the product
+  image; post-product handoff activated; a later message was skipped due to
+  handoff.
+- Safe refs only for the smoke: `page_ref=p:17a7a1c50e`,
+  `shop_ref=s:a7ee4fb634`. Do not record raw Page IDs or sender IDs.
+- Final status: production rollout fully verified, rollback not needed,
+  production cutover remains runbook-only, and Gemini remains off.
+
+Documentation safety boundary for this checkpoint:
+
+- No deployment was performed while documenting.
+- No production environment variable was changed.
+- No database or `/data` access was performed.
+- No Meta Graph API call, token health check, or Messenger send was performed.
+
 ## Safety Rules
 
 - Do not write production PostgreSQL before a fresh backup exists and is
