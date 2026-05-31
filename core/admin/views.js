@@ -58,6 +58,14 @@ function maskSensitiveText(value = '', max = 240) {
     .replace(/\b(?:dia chi|địa chỉ|address)\s*[:=-]?\s*.+$/gi, '$1 [masked-address]');
 }
 
+const PAGE_ID_SHAPED_PATTERN = /^\d{11,32}$/;
+
+function displayPageIdRef(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return PAGE_ID_SHAPED_PATTERN.test(text) ? pageRef(text) : text;
+}
+
 function encodeRoutePart(value = '') {
   return encodeURIComponent(String(value || ''));
 }
@@ -909,7 +917,7 @@ function renderAuditFilterForm(filters = {}) {
 function renderDashboardHtml(model) {
   const pagination = model.pagination || {};
   const body = `
-    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(displayPageIdRef(model.pageId))}</code> | list limit ${escapeHtml(model.limits.overviewRows)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
     ${renderFilterForm(model.filters || {})}
     ${renderCounts(model.counts)}
     ${renderOperations(model.operations || {}, model.filters || {})}
@@ -961,7 +969,7 @@ function renderAuditHtml(model) {
   const pagination = model.pagination || {};
   const body = `
     <p><a href="/admin/dashboard">Back to dashboard</a></p>
-    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(model.pageId)}</code> | audit limit ${escapeHtml(model.limits.auditRows)} | audit page ${escapeHtml(model.filters?.page || 1)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
+    <p class="meta">Tenant <code>${escapeHtml(model.tenantId)}</code> | Page <code>${escapeHtml(displayPageIdRef(model.pageId))}</code> | audit limit ${escapeHtml(model.limits.auditRows)} | audit page ${escapeHtml(model.filters?.page || 1)} | active filters ${escapeHtml(model.filters?.activeCount || 0)}</p>
     ${model.schemaReady === false ? '<div class="empty">Audit schema chưa được apply. Hãy chạy migration theo runbook trước khi bật audit log.</div>' : ''}
     ${renderAuditFilterForm(model.filters || {})}
     ${renderPagination(pagination.audit, model.filters || {}, auditQueryString)}

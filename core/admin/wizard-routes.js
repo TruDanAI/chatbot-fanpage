@@ -4,7 +4,15 @@ const { parseAdminRoles } = require('./route-auth');
 const { createAdminRouteAuthorizer } = require('./route-auth');
 const { createAdminSessionManager } = require('./session');
 const { createPostgresAuditLogger } = require('./audit');
-const { renderWizardLayout, escapeHtml, renderGuidanceCard, renderEmptyState, renderRequirementList } = require('./wizard-ui');
+const {
+  renderWizardLayout,
+  escapeHtml,
+  renderSafeCode,
+  sanitizeWizardDisplayText,
+  renderGuidanceCard,
+  renderEmptyState,
+  renderRequirementList
+} = require('./wizard-ui');
 const { isProductionRuntime } = require('../storage-config');
 const { createPostgresShopWriteService } = require('./shop-writes');
 const { createPostgresShopSettingsWriteService } = require('./shop-settings-writes');
@@ -212,11 +220,12 @@ function registerWizardRoutes(app, {
           slug: row.slug || '',
           name: row.name || '',
           status: row.status || '',
-          lifecycle: row.lifecycle || ''
+          lifecycle: row.lifecycle || '',
+          page_ref: row.page_ref || ''
         }));
 
       } catch (err) {
-        dbErrorMessage = err.message;
+        dbErrorMessage = sanitizeWizardDisplayText(err.message, { max: 240 });
         checks.dbConnected = false;
         checks.adultShopProtected = false;
       } finally {
@@ -284,7 +293,7 @@ function registerWizardRoutes(app, {
           <tbody>
             ${existingShops.map(s => `
               <tr>
-                <td><code>${escapeHtml(s.slug)}</code></td>
+                <td>${renderSafeCode(s.slug, { safeRef: s.page_ref || '' })}</td>
                 <td>${escapeHtml(s.name)}</td>
                 <td><span class="badge ${s.status === 'active' ? 'badge-success' : 'badge-warning'}">${escapeHtml(s.status)}</span></td>
                 <td><span class="badge badge-neutral">${escapeHtml(s.lifecycle)}</span></td>
@@ -333,7 +342,7 @@ function registerWizardRoutes(app, {
             </div>
             <span class="badge ${checks.dbConnected ? 'badge-success' : 'badge-danger'}">${checks.dbConnected ? 'ĐẠT (KẾT NỐI OK)' : 'THẤT BẠI'}</span>
           </div>
-          ${dbErrorMessage ? `<div class="banner banner-error" style="margin: -6px 0 0;">❌ Chi tiết lỗi kết nối DB: <code>${escapeHtml(dbErrorMessage)}</code></div>` : ''}
+          ${dbErrorMessage ? `<div class="banner banner-error" style="margin: -6px 0 0;">❌ Chi tiết lỗi kết nối DB: ${renderSafeCode(dbErrorMessage)}</div>` : ''}
 
           <div class="checklist-item">
             <div class="checklist-label">
@@ -372,7 +381,7 @@ function registerWizardRoutes(app, {
           </div>
           <div class="checklist-item">
             <span class="checklist-label">Nhánh vận hành (Railway branch):</span>
-            <code>${escapeHtml(deployedBranch)}</code>
+            ${renderSafeCode(deployedBranch)}
           </div>
         </div>
 

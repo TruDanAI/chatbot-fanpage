@@ -20,6 +20,7 @@ const {
   createPostgresShopSettingsWriteService,
   normalizeSettingsInput
 } = require('../core/admin/shop-settings-writes');
+const { pageRef } = require('../core/utils/log-refs');
 
 function createApp() {
   const routes = {};
@@ -1616,6 +1617,33 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('0987654321')).toBeFalse();
     expect(res.body.includes('12 Tran Phu')).toBeFalse();
     expect(res.body).toContain('[masked-address]');
+  });
+
+  it('dashboard HTML renders a safe page ref for Page ID-shaped pageId values', async () => {
+    const app = createApp();
+    const reader = createDashboardReaderStub();
+    const rawPageId = '123456789012345';
+    const originalGetOverview = reader.getOverview;
+    reader.getOverview = async filters => ({
+      ...(await originalGetOverview.call(reader, filters)),
+      pageId: rawPageId
+    });
+
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: reader
+    });
+
+    const res = createRes();
+    await app.routes['/admin/dashboard'](createReq({
+      headers: { authorization: 'Bearer secret' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes(rawPageId)).toBeFalse();
+    expect(res.body).toContain(pageRef(rawPageId));
   });
 
   it('dashboard API trả JSON đã mask dữ liệu nhạy cảm', async () => {
