@@ -464,18 +464,38 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .login-branding { margin-bottom: 14px; }
     .login-branding h2 { font-size: 20px; margin: 0 0 4px; color: #17202a; }
     .login-branding p { margin: 0; color: var(--muted); font-size: 13px; }
-    .asset-group { display: grid; gap: 10px; margin-top: 16px; }
-    .asset-group h3 { margin: 0; font-size: 15px; }
-    .asset-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .assets-layout { display: grid; gap: 16px; }
+    .assets-intro { display: grid; gap: 10px; }
+    .asset-section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+    .asset-section-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .asset-section-header h3 { margin: 0; font-size: 17px; color: #17202a; }
+    .asset-section-header p { margin: 4px 0 0; line-height: 1.45; }
+    .asset-section-metrics { display: flex; gap: 8px; flex-wrap: wrap; }
+    .asset-help-list { margin: 0; padding-left: 18px; color: #334155; font-size: 13px; line-height: 1.5; }
+    .asset-action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .asset-section .product-form { margin: 0; }
+    .asset-section .product-form h3 { font-size: 14px; color: #17202a; }
+    .asset-section details.collapsible-section { grid-column: 1 / -1; }
+    .asset-section details.collapsible-section .product-form { margin-top: 8px; }
+    .asset-warning { border: 1px solid #fde68a; background: #fffbeb; color: #854d0e; border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+    .asset-empty { border: 1px dashed var(--border); background: #f8fafc; border-radius: 8px; padding: 14px; color: #475569; font-size: 14px; line-height: 1.45; }
+    .asset-gallery-section { display: grid; gap: 12px; }
+    .asset-gallery-section h3 { margin: 0; font-size: 17px; color: #17202a; }
+    .asset-group { display: grid; gap: 10px; margin-top: 4px; }
+    .asset-group h4 { margin: 0; font-size: 15px; color: #17202a; }
+    .asset-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
     .asset-card { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
     .asset-preview { width: 128px; }
     .asset-thumb { width: 128px; height: 128px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-muted); display: block; }
-    .asset-thumb-broken { width: 128px; height: 128px; border-radius: 6px; border: 1px solid var(--border); background: #fee2e2; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; color: var(--danger); box-sizing: border-box; padding: 8px; }
+    .asset-thumb-broken { width: 128px; height: 128px; border-radius: 6px; border: 1px dashed #fca5a5; background: #fef2f2; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; color: var(--danger); box-sizing: border-box; padding: 8px; line-height: 1.35; }
     .asset-card-body { min-width: 0; display: grid; gap: 8px; }
     .asset-title-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .asset-url { overflow-wrap: anywhere; font-size: 13px; }
     .asset-badges { display: flex; flex-wrap: wrap; gap: 6px; }
     .asset-url-field { grid-column: 1 / -1; }
+    .asset-card-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .asset-card-actions .meta { max-width: 240px; }
+    .asset-edit-details summary { cursor: pointer; color: #334155; font-size: 13px; font-weight: 800; padding: 6px 0; }
     .bulk-menu-import { margin-top: 12px; }
     .bulk-menu-import textarea { min-height: 116px; font-family: Consolas, monospace; }
     .bulk-errors { margin-top: 12px; }
@@ -2380,31 +2400,48 @@ function renderAssetStatusOptions(selected = '') {
     .join('');
 }
 
+function countActiveAssetsByType(assets = [], type = '') {
+  return (assets || []).filter(asset =>
+    String(asset.asset_type || '') === type &&
+    String(asset.status || '').toLowerCase() === 'active'
+  ).length;
+}
+
 function renderAssetAddForm(shopId = '', products = []) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/assets`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
-    <h3>Add asset URL</h3>
-    <label>Asset type <span class="required">required</span><select name="asset_type" required>${renderAssetTypeOptions('menu_image')}</select></label>
-    <label>Product<select name="product_id">${renderProductOptions(products)}</select></label>
-    <label>Content type<input name="content_type" maxlength="120" placeholder="image/jpeg"></label>
-    <label>Sort order<input name="sort_order" type="number" value="0"></label>
-    <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
-    <label>Public image URL <span class="required">required</span><input name="public_url" type="url" maxlength="2048" required aria-required="true" autocomplete="off"></label>
-    <div class="form-actions"><button type="submit">Add asset</button><span class="meta">Product is required for product_image. URLs are stored as public_url only.</span></div>
+    <h3>Thêm ảnh bằng URL / Add asset URL</h3>
+    <label>Loại ảnh <span class="required">required</span><select name="asset_type" required>${renderAssetTypeOptions('menu_image')}</select></label>
+    <label>Sản phẩm<select name="product_id">${renderProductOptions(products)}</select></label>
+    <label class="asset-url-field">URL ảnh công khai HTTPS <span class="required">required</span><input name="public_url" type="url" maxlength="2048" required aria-required="true" autocomplete="off" placeholder="https://cdn.example.test/image.jpg"></label>
+    <details class="collapsible-section">
+      <summary>Tuỳ chọn kỹ thuật</summary>
+      <div class="product-form compact">
+        <label>Content type<input name="content_type" maxlength="120" placeholder="image/jpeg"></label>
+        <label>Sort order<input name="sort_order" type="number" value="0"></label>
+        <label>Status<select name="status"><option value="active">active</option><option value="hidden">hidden</option></select></label>
+      </div>
+    </details>
+    <div class="form-actions"><button type="submit">Thêm ảnh</button><span class="meta">URL cần là ảnh công khai qua HTTPS. Chọn sản phẩm khi thêm ảnh sản phẩm.</span></div>
   </form>`;
 }
 
 function renderBulkMenuImageImportForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/menu-images/import`;
   return `<form class="product-form bulk-menu-import" method="post" action="${escapeHtml(action)}">
-    <h3>Bulk menu image URL import</h3>
-    <label class="wide">Menu image URLs
+    <h3>Nhập nhiều URL ảnh menu</h3>
+    <label class="wide">Menu image URLs / URL ảnh menu
       <textarea name="menu_image_urls" maxlength="50000" placeholder="https://cdn.example.test/menu-1.jpg&#10;https://cdn.example.test/menu-2.jpg,2" required aria-required="true"></textarea>
     </label>
-    <label>Content type<input name="content_type" maxlength="120" placeholder="image/jpeg"></label>
+    <details class="collapsible-section">
+      <summary>Tuỳ chọn kỹ thuật</summary>
+      <div class="product-form compact">
+        <label>Content type<input name="content_type" maxlength="120" placeholder="image/jpeg"></label>
+      </div>
+    </details>
     <div class="form-actions">
-      <button type="submit">Import menu images</button>
-      <span class="meta">One public http/https URL per line. Optional format: URL,sort_order. Creates menu_image assets only.</span>
+      <button type="submit">Nhập URL ảnh menu</button>
+      <span class="meta">Mỗi dòng một URL ảnh menu công khai qua HTTPS. Có thể thêm sort_order: URL,sort_order.</span>
     </div>
   </form>`;
 }
@@ -2417,27 +2454,46 @@ function renderImageUploadStatusOptions() {
   return '<option value="active">active</option><option value="hidden">hidden</option>';
 }
 
-function renderAssetUploadForms(shopId = '', products = []) {
+function renderMenuImageUploadForm(shopId = '') {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/uploads`;
+  return `<form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
+    <h3>Tải ảnh menu lên / Upload menu image</h3>
+    <input type="hidden" name="asset_type" value="menu_image">
+    <label>Image file / Tệp ảnh <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
+    <details class="collapsible-section">
+      <summary>Tuỳ chọn kỹ thuật</summary>
+      <div class="product-form compact">
+        <label>Sort order<input name="sort_order" type="number" value="0"></label>
+        <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
+      </div>
+    </details>
+    <div class="form-actions"><button type="submit">Tải ảnh menu lên</button><span class="meta">JPG, PNG hoặc WebP. Ảnh menu dùng khi bot trả lời khách muốn xem menu.</span></div>
+  </form>`;
+}
+
+function renderProductImageUploadForm(shopId = '', products = []) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/assets/uploads`;
   const uploadProducts = activeProductsOnly(products);
+  return `<form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
+    <h3>Tải ảnh sản phẩm lên / Upload product image</h3>
+    <input type="hidden" name="asset_type" value="product_image">
+    <label>Product / Sản phẩm <span class="required">required</span><select name="product_id" required aria-required="true">${renderProductOptions(uploadProducts, '', { includeEmpty: true })}</select></label>
+    <label>Image file / Tệp ảnh <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
+    <details class="collapsible-section">
+      <summary>Tuỳ chọn kỹ thuật</summary>
+      <div class="product-form compact">
+        <label>Sort order<input name="sort_order" type="number" value="0"></label>
+        <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
+      </div>
+    </details>
+    <div class="form-actions"><button type="submit">Tải ảnh sản phẩm lên</button><span class="meta">Ảnh sản phẩm cần gắn với sản phẩm đang hoạt động.</span></div>
+  </form>`;
+}
+
+function renderAssetUploadForms(shopId = '', products = []) {
   return `
-    <form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
-      <h3>Upload menu image</h3>
-      <input type="hidden" name="asset_type" value="menu_image">
-      <label>Image file <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
-      <label>Sort order<input name="sort_order" type="number" value="0"></label>
-      <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
-      <div class="form-actions"><button type="submit">Upload menu image</button><span class="meta">JPG, PNG, or WebP. Stored through the configured image provider.</span></div>
-    </form>
-    <form class="product-form" method="post" action="${escapeHtml(action)}" enctype="multipart/form-data">
-      <h3>Upload product image</h3>
-      <input type="hidden" name="asset_type" value="product_image">
-      <label>Product <span class="required">required</span><select name="product_id" required aria-required="true">${renderProductOptions(uploadProducts, '', { includeEmpty: true })}</select></label>
-      <label>Image file <span class="required">required</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required aria-required="true"></label>
-      <label>Sort order<input name="sort_order" type="number" value="0"></label>
-      <label>Status<select name="status">${renderImageUploadStatusOptions()}</select></label>
-      <div class="form-actions"><button type="submit">Upload product image</button><span class="meta">Product image uploads require an active product.</span></div>
-    </form>
+    ${renderMenuImageUploadForm(shopId)}
+    ${renderProductImageUploadForm(shopId, products)}
   `;
 }
 
@@ -2598,11 +2654,11 @@ function renderHealthCard(health = {}) {
 
 function renderAssetPreview(asset = {}) {
   if (!asset.public_url) {
-    return '<div class="asset-thumb-broken">No URL</div>';
+    return '<div class="asset-thumb-broken">Chưa có URL ảnh</div>';
   }
   return `
     <img src="${escapeHtml(asset.public_url)}" alt="${escapeHtml(asset.asset_type || 'image asset')}" class="asset-thumb" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
-    <div class="asset-thumb-broken" hidden>Broken image</div>
+    <div class="asset-thumb-broken" hidden>Không tải được ảnh</div>
   `;
 }
 
@@ -2615,30 +2671,40 @@ function renderAssetEnabledBadge(asset = {}) {
 
 function renderAssetProductLinkBadge(asset = {}) {
   const linked = Boolean(asset.product_id || asset.product_code);
-  return `<span class="${linked ? 'status status-success' : 'status status-neutral'}">${linked ? 'product linked' : 'product unlinked'}</span>`;
+  return `<span class="${linked ? 'status status-success' : 'status status-neutral'}">${linked ? 'đã gắn sản phẩm' : 'chưa gắn sản phẩm'}</span>`;
+}
+
+function getAssetTypeLabel(type = '') {
+  const labels = {
+    menu_image: 'Ảnh menu',
+    product_image: 'Ảnh sản phẩm',
+    shop_image: 'Ảnh shop'
+  };
+  return labels[String(type || '')] || formatLabel(type || 'asset');
 }
 
 function renderAssetCards(assets = [], shopId = '', products = []) {
-  if (!assets.length) return '<div class="empty">Không có dữ liệu.</div>';
+  if (!assets.length) return '<div class="asset-empty">Chưa có ảnh trong nhóm này.</div>';
   return `<div class="asset-card-grid">${assets.map(asset => `
     <article class="asset-card">
       <div class="asset-preview">${renderAssetPreview(asset)}</div>
       <div class="asset-card-body">
         <div class="asset-title-row">
-          <strong>${escapeHtml(formatLabel(asset.asset_type || 'asset'))}</strong>
+          <strong>${escapeHtml(getAssetTypeLabel(asset.asset_type || 'asset'))}</strong>
           ${renderAssetEnabledBadge(asset)}
           ${renderAssetProductLinkBadge(asset)}
-          <span class="status status-neutral">sort_order ${escapeHtml(asset.sort_order || 0)}</span>
         </div>
         <div class="asset-badges">
-          ${renderStatus(asset.status || 'unknown')}
-          <span class="status status-neutral">${escapeHtml(asset.storage_provider || 'public_url')}</span>
+          <span class="status status-neutral">Thứ tự ${escapeHtml(asset.sort_order || 0)}</span>
           ${asset.product_code || asset.product_id ? `<span class="status status-neutral">${escapeHtml(asset.product_code || asset.product_id)}</span>` : ''}
         </div>
         <div class="asset-url">${asset.public_url ? `<a href="${escapeHtml(asset.public_url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(limitText(asset.public_url, 120))}</a>` : ''}</div>
-        <p class="meta">Updated ${escapeHtml(formatDate(asset.updated_at))}</p>
-        <div class="product-actions">${renderAssetStatusActions(shopId, asset)}</div>
-        ${renderAssetEditForm(shopId, asset, products)}
+        <p class="meta">Cập nhật ${escapeHtml(formatDate(asset.updated_at))}</p>
+        <div class="asset-card-actions">${renderAssetStatusActions(shopId, asset)}</div>
+        <details class="asset-edit-details">
+          <summary>Sửa thông tin kỹ thuật</summary>
+          ${renderAssetEditForm(shopId, asset, products)}
+        </details>
       </div>
     </article>
   `).join('')}</div>`;
@@ -2659,10 +2725,10 @@ function groupShopAssets(assets = []) {
     else grouped.other.push(asset);
   }
   return [
-    { title: 'Menu Images', rows: grouped.menu_image },
-    { title: 'Product Images', rows: grouped.product_image },
-    { title: 'Shop Images', rows: grouped.shop_image },
-    { title: 'Other / Unknown Assets', rows: grouped.other }
+    { title: 'Menu images / Ảnh menu', rows: grouped.menu_image },
+    { title: 'Product images / Ảnh sản phẩm', rows: grouped.product_image },
+    { title: 'Shop images / Ảnh shop', rows: grouped.shop_image },
+    { title: 'Other / Unknown assets', rows: grouped.other }
   ];
 }
 
@@ -2670,11 +2736,113 @@ function renderAssetGroups(assets = [], shopId = '', products = []) {
   return groupShopAssets(assets)
     .map(group => `
       <section class="asset-group">
-        <h3>${escapeHtml(group.title)}</h3>
+        <h4>${escapeHtml(group.title)}</h4>
         ${renderAssetCards(group.rows, shopId, products)}
       </section>
     `)
     .join('');
+}
+
+function renderAssetsTabContent({
+  shopId = '',
+  assets = [],
+  summary = {},
+  products = [],
+  assetProducts = [],
+  adminImageUploadEnabled = false,
+  missingImageCount = 0
+} = {}) {
+  const menuActive = countActiveAssetsByType(assets, 'menu_image');
+  const productActive = countActiveAssetsByType(assets, 'product_image');
+  const menuUploadForm = adminImageUploadEnabled ? renderMenuImageUploadForm(shopId) : '';
+  const productUploadForm = adminImageUploadEnabled ? renderProductImageUploadForm(shopId, assetProducts) : '';
+  const galleryHtml = assets.length
+    ? renderAssetGroups(assets, shopId, products)
+    : '<div class="asset-empty">Chưa có hình ảnh nào. Bắt đầu bằng ảnh menu hoặc URL ảnh sản phẩm công khai.</div>';
+
+  return `
+    <div class="assets-layout">
+      <section class="assets-intro">
+        <div class="asset-section">
+          <div class="asset-section-header">
+            <div>
+              <h3>Quản lý ảnh bot dùng để trả lời khách</h3>
+              <p class="meta">Ảnh menu dùng khi khách hỏi menu. Ảnh sản phẩm dùng khi khách hỏi mã sản phẩm. URL ảnh cần là HTTPS công khai để bot và trình duyệt tải được.</p>
+            </div>
+            <a href="#asset-add-url" class="button-link">Thêm ảnh</a>
+          </div>
+          ${missingImageCount > 0
+            ? `<div class="asset-warning"><strong>Thiếu ảnh sản phẩm:</strong> ${escapeHtml(missingImageCount)} sản phẩm đang hoạt động chưa có ảnh. Đây là cảnh báo, không chặn bot tư vấn bằng chữ.</div>`
+            : '<p class="meta">Sản phẩm đang hoạt động đều có ảnh hoặc chưa có cảnh báo thiếu ảnh.</p>'
+          }
+        </div>
+        ${renderCounts(summary)}
+      </section>
+
+      <section class="asset-section" id="asset-menu-images">
+        <div class="asset-section-header">
+          <div>
+            <h3>Menu images / Ảnh menu</h3>
+            <p class="meta">Ảnh menu là ảnh danh mục/thực đơn bot gửi khi khách nhắn "menu" hoặc muốn xem danh sách sản phẩm.</p>
+          </div>
+          <div class="asset-section-metrics">
+            <span class="status status-success">${escapeHtml(menuActive)} đang hoạt động</span>
+          </div>
+        </div>
+        <ul class="asset-help-list">
+          <li>Dùng ảnh rõ chữ, đúng danh mục hiện tại.</li>
+          <li>URL nhập hàng loạt cần là ảnh công khai qua HTTPS.</li>
+        </ul>
+        ${menuUploadForm}
+      </section>
+
+      <section class="asset-section" id="asset-product-images">
+        <div class="asset-section-header">
+          <div>
+            <h3>Product images / Ảnh sản phẩm</h3>
+            <p class="meta">Ảnh sản phẩm gắn với từng mã sản phẩm để bot trả lời kèm hình khi khách hỏi chi tiết.</p>
+          </div>
+          <div class="asset-section-metrics">
+            <span class="status status-success">${escapeHtml(productActive)} đang hoạt động</span>
+            <span class="status ${missingImageCount > 0 ? 'status-warning' : 'status-neutral'}">${escapeHtml(missingImageCount)} thiếu ảnh</span>
+          </div>
+        </div>
+        <p class="meta">Thiếu ảnh sản phẩm chỉ là cảnh báo. Bot vẫn có thể tư vấn bằng nội dung chữ.</p>
+        ${productUploadForm}
+      </section>
+
+      <section class="asset-section" id="asset-add-url">
+        <div class="asset-section-header">
+          <div>
+            <h3>Add image / Import image URL</h3>
+            <p class="meta">Thêm một ảnh bằng URL hoặc nhập nhiều URL ảnh menu. Không thay đổi cách lưu trữ hay hành vi import hiện có.</p>
+          </div>
+        </div>
+        <div class="asset-action-grid">
+          ${renderAssetAddForm(shopId, products)}
+          ${renderBulkMenuImageImportForm(shopId)}
+        </div>
+        <details class="collapsible-section">
+          <summary>Hướng dẫn chi tiết</summary>
+          <ul class="asset-help-list">
+            <li><strong>ảnh menu:</strong> ảnh thực đơn/danh mục dùng khi khách muốn xem menu.</li>
+            <li><strong>ảnh sản phẩm:</strong> ảnh gắn với một sản phẩm cụ thể.</li>
+            <li><strong>ảnh dùng cho bot trả lời:</strong> ảnh đang active, public và tải được qua HTTPS.</li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="asset-gallery-section" id="asset-gallery">
+        <div class="asset-section-header">
+          <div>
+            <h3>Existing image gallery / Thư viện ảnh hiện có</h3>
+            <p class="meta">Xem nhanh ảnh đang có. Các trường kỹ thuật khi sửa ảnh nằm trong phần mở rộng của từng thẻ.</p>
+          </div>
+        </div>
+        ${galleryHtml}
+      </section>
+    </div>
+  `;
 }
 
 function renderShopDetailHtml(model = {}) {
@@ -2896,14 +3064,15 @@ function renderShopDetailHtml(model = {}) {
         `;
       }) + productMobileListHtml;
 
-  const assetsGuidanceCard = renderGuidanceCard(
-    '💡 Phân biệt các loại hình ảnh',
-    '• Menu Images (Ảnh thực đơn): Hiển thị khi khách gõ "menu", "xem thực đơn" hoặc yêu cầu xem danh mục. Cần có ít nhất 1 ảnh thực đơn hoạt động để bot hoạt động trọn vẹn.\n• Product Images (Ảnh sản phẩm): Gắn với từng sản phẩm thông qua mã code (e.g. M1). Hiển thị chi tiết khi khách xem sản phẩm cụ thể.'
-  );
-
-  const assetsHtml = (assetRows.length === 0)
-    ? renderEmptyState('🖼️', 'Chưa có hình ảnh nào', 'Cửa hàng hiện chưa có hình ảnh sản phẩm hoặc hình ảnh thực đơn nào. Vui lòng thêm hình ảnh bên dưới để nâng cao hiệu quả tư vấn.')
-    : renderAssetGroups(assetRows, shop.id, model.products || []);
+  const assetsHtml = renderAssetsTabContent({
+    shopId: shop.id,
+    assets: assetRows,
+    summary,
+    products: model.products || [],
+    assetProducts,
+    adminImageUploadEnabled: Boolean(model.adminImageUploadEnabled),
+    missingImageCount: productStats.missingImages
+  });
 
   const pagesGuidanceCard = renderGuidanceCard(
     '💡 Hướng dẫn kết nối Fanpage & Mã Token',
@@ -3037,13 +3206,8 @@ function renderShopDetailHtml(model = {}) {
       </div>
 
       <div id="assets" class="tab-section">
-        <h2 id="assets-heading">Images / Hình ảnh &amp; Tài sản</h2>
+        <h2 id="assets-heading">Images / Hình ảnh</h2>
         ${renderProductFlash(model.assetFlash || {})}
-        ${assetsGuidanceCard}
-        ${renderCounts(summary)}
-        ${model.adminImageUploadEnabled ? renderAssetUploadForms(shop.id, assetProducts) : ''}
-        ${renderAssetAddForm(shop.id, model.products || [])}
-        ${renderBulkMenuImageImportForm(shop.id)}
         ${assetsHtml}
       </div>
 

@@ -3874,23 +3874,23 @@ describe('admin dashboard routes', () => {
     }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('Menu Images');
-    expect(res.body).toContain('Product Images');
-    expect(res.body).toContain('Shop Images');
-    expect(res.body).toContain('Other / Unknown Assets');
+    expect(res.body).toContain('Menu images / Ảnh menu');
+    expect(res.body).toContain('Product images / Ảnh sản phẩm');
+    expect(res.body).toContain('Shop images / Ảnh shop');
+    expect(res.body).toContain('Other / Unknown assets');
     expect(res.body).toContain('class="asset-card-grid"');
     expect(res.body).toContain('class="asset-thumb"');
     expect(res.body).toContain('loading="lazy"');
-    expect(res.body).toContain('Broken image');
+    expect(res.body).toContain('Không tải được ảnh');
     expect(res.body).toContain('target="_blank"');
     expect(res.body).toContain('status status-success">enabled');
     expect(res.body).toContain('status status-warning">disabled');
     expect(res.body).toContain('status status-danger">archived');
-    expect(res.body).toContain('product linked');
-    expect(res.body).toContain('product unlinked');
-    expect(res.body).toContain('sort_order 4');
+    expect(res.body).toContain('đã gắn sản phẩm');
+    expect(res.body).toContain('chưa gắn sản phẩm');
+    expect(res.body).toContain('Thứ tự 4');
     expect(res.body).toContain('Replace image URL');
-    expect(res.body).toContain('Bulk menu image URL import');
+    expect(res.body).toContain('Nhập nhiều URL ảnh menu');
     expect(res.body).toContain('name="menu_image_urls"');
   });
 
@@ -6039,6 +6039,63 @@ describe('admin dashboard routes', () => {
     expect(apiRes.statusCode).toBe(404);
     expect(body.error).toBe('feature_disabled');
     expect(assetUploads.calls.length).toBe(0);
+  });
+
+  it('shop detail assets tab renders operator image sections while preserving asset forms', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('id="assets" class="tab-section"');
+    expect(res.body).toContain('Images / Hình ảnh');
+    expect(res.body).toContain('id="asset-menu-images"');
+    expect(res.body).toContain('Menu images / Ảnh menu');
+    expect(res.body).toContain('id="asset-product-images"');
+    expect(res.body).toContain('Product images / Ảnh sản phẩm');
+    expect(res.body).toContain('id="asset-add-url"');
+    expect(res.body).toContain('Add image / Import image URL');
+    expect(res.body).toContain('id="asset-gallery"');
+    expect(res.body).toContain('Existing image gallery / Thư viện ảnh hiện có');
+    expect(res.body).toContain('ảnh dùng cho bot trả lời');
+    expect(res.body).toContain('URL ảnh công khai HTTPS');
+    expect(res.body).toContain('Thiếu ảnh sản phẩm chỉ là cảnh báo.');
+
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/assets"');
+    expect(res.body).toContain('name="asset_type"');
+    expect(res.body).toContain('name="product_id"');
+    expect(res.body).toContain('name="content_type"');
+    expect(res.body).toContain('name="sort_order"');
+    expect(res.body).toContain('name="status"');
+    expect(res.body).toContain('name="public_url" type="url"');
+    expect(res.body).toContain('Thêm ảnh');
+
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/assets/menu-images/import"');
+    expect(res.body).toContain('textarea name="menu_image_urls"');
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/assets/asset-1"');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/assets/asset-1/archive" data-danger-confirm="true"');
+    expect(res.body).toContain('Sửa thông tin kỹ thuật');
+    expect(res.body).toContain('Không tải được ảnh');
+
+    expect(res.body.includes('postgres://')).toBeFalse();
+    expect(res.body.includes('postgresql://')).toBeFalse();
+    expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('access_token')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+    expect(res.body.includes('page_1')).toBeFalse();
+    expect(res.body.includes('EAAB')).toBeFalse();
   });
 
   it('admin image upload UI appears only when enabled and missing Cloudinary config returns safe API/HTML errors', async () => {
