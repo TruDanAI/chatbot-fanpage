@@ -259,6 +259,26 @@ class MockFailPgClient {
   async end() {}
 }
 
+class MockPageIdPreflightPgClient extends MockPgClient {
+  async query(sql, params) {
+    if (String(sql || '').includes('SELECT slug, name, status, lifecycle FROM shops')) {
+      return { rows: [
+        { slug: '111222333444555', page_ref: 'p:safe-preflight', name: 'Numeric Legacy Shop', status: 'active', lifecycle: 'configuring' },
+        { slug: '999888777666', name: 'Numeric Legacy Shop 2', status: 'active', lifecycle: 'configuring' },
+        { slug: 'normal-shop', name: 'Normal Shop', status: 'active', lifecycle: 'configuring' }
+      ] };
+    }
+    return super.query(sql, params);
+  }
+}
+
+class MockSensitiveFailPgClient {
+  async connect() {
+    throw new Error('connect failed at postgres://user:pass@example.test/db token=EAABsecretvalue123 encrypted_value=v1:encrypted-secret-value for page 111222333444555');
+  }
+  async end() {}
+}
+
 function createApp() {
   const routes = {};
   function makeChain(handlers) {
@@ -447,6 +467,74 @@ describe('Setup Wizard Step 0 Pre-flight check page logic', () => {
     expect(res.body.includes('class="btn btn-primary" >Bắt đầu tạo Shop')).toBeTrue();
 
     // Restore environment
+    process.env = originalEnv;
+  });
+
+  it('GET redacts Page ID-shaped values from pre-flight code cells but allows safe refs', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'true';
+    process.env.MULTI_SHOP_DB_CONFIG_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+    process.env.RAILWAY_GIT_BRANCH = '222333444555666';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      adminIpAllowlist: [],
+      Client: MockPageIdPreflightPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/new'](req, res);
+
+    const rawCodeValues = Array.from(res.body.matchAll(/<code>(\d{11,32})<\/code>/g));
+
+    expect(res.statusCode).toBe(200);
+    expect(rawCodeValues.length).toBe(0);
+    expect(res.body.includes('111222333444555')).toBeFalse();
+    expect(res.body.includes('999888777666')).toBeFalse();
+    expect(res.body.includes('222333444555666')).toBeFalse();
+    expect(res.body.includes('p:safe-preflight')).toBeTrue();
+    expect(res.body.includes('đã ẩn')).toBeTrue();
+    expect(res.body.includes('Pre-flight Check')).toBeTrue();
+    expect(res.body.includes('Môi trường không phải Production')).toBeTrue();
+
+    process.env = originalEnv;
+  });
+
+  it('GET sanitizes pre-flight DB error details without leaking DB URLs, tokens, encrypted values, or raw Page IDs', async () => {
+    const app = createApp();
+    const originalEnv = { ...process.env };
+    process.env.MESSENGER_DRY_RUN = 'true';
+    process.env.MULTI_SHOP_DB_CONFIG_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://localhost/test';
+    process.env.NODE_ENV = 'development';
+
+    registerWizardRoutes(app, {
+      adminExportToken: 'test-token',
+      Client: MockSensitiveFailPgClient
+    });
+
+    const req = createReq({ headers: { authorization: 'Bearer test-token' } });
+    const res = createRes();
+
+    await app.routes['/admin/wizard/new'](req, res);
+
+    const rawCodeValues = Array.from(res.body.matchAll(/<code>(\d{11,32})<\/code>/g));
+
+    expect(res.statusCode).toBe(200);
+    expect(rawCodeValues.length).toBe(0);
+    expect(res.body.includes('postgres://')).toBeFalse();
+    expect(res.body.includes('EAAB')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('v1:')).toBeFalse();
+    expect(res.body.includes('111222333444555')).toBeFalse();
+    expect(res.body.includes('Chi tiết lỗi kết nối DB')).toBeTrue();
+    expect(res.body.includes('đã ẩn')).toBeTrue();
+
     process.env = originalEnv;
   });
 

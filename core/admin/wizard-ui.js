@@ -1,5 +1,3 @@
-const { pageRef } = require('../utils/log-refs');
-
 function escapeHtml(value = '') {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -7,6 +5,38 @@ function escapeHtml(value = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function limitText(value = '', max = 240) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1)).trim()}...`;
+}
+
+const PAGE_ID_SHAPED_PATTERN = /^\d{11,32}$/;
+const PAGE_ID_SHAPED_TEXT_PATTERN = /\b\d{11,32}\b/g;
+const SENSITIVE_URL_PATTERN = /\b(?:postgres(?:ql)?:\/\/|mysql:\/\/|mongodb(?:\+srv)?:\/\/|redis:\/\/)\S+/gi;
+const SENSITIVE_ASSIGNMENT_PATTERN = /\b(?:token|access[_-]?token|page[_-]?token|page[_-]?access[_-]?token|encrypted[_-]?value|database[_-]?url|db[_-]?url|secret|password)\s*[:=]\s*["']?[^"'\s<>&]+/gi;
+const META_TOKEN_PATTERN = /\bEAA[A-Za-z0-9_-]{8,}\b/g;
+const ENCRYPTED_VALUE_PATTERN = /\bv\d+:[A-Za-z0-9+/=:_-]{12,}\b/g;
+
+function isPageIdShapedValue(value = '') {
+  return PAGE_ID_SHAPED_PATTERN.test(String(value || '').trim());
+}
+
+function sanitizeWizardDisplayText(value = '', { max = 240, safeRef = '' } = {}) {
+  const text = limitText(value, max);
+  if (isPageIdShapedValue(text)) return safeRef || 'đã ẩn';
+  return text
+    .replace(SENSITIVE_URL_PATTERN, '[redacted]')
+    .replace(SENSITIVE_ASSIGNMENT_PATTERN, '[redacted]')
+    .replace(META_TOKEN_PATTERN, '[redacted]')
+    .replace(ENCRYPTED_VALUE_PATTERN, '[redacted]')
+    .replace(PAGE_ID_SHAPED_TEXT_PATTERN, safeRef || 'đã ẩn');
+}
+
+function renderSafeCode(value = '', options = {}) {
+  return `<code>${escapeHtml(sanitizeWizardDisplayText(value, options))}</code>`;
 }
 
 const STEP_LABELS = [
@@ -622,6 +652,9 @@ function renderWizardLayout(title, body, { showLogout = true, shopId = '', curre
 
 module.exports = {
   escapeHtml,
+  isPageIdShapedValue,
+  sanitizeWizardDisplayText,
+  renderSafeCode,
   renderProgressBar,
   renderSafetyFooter,
   renderWizardLayout,
