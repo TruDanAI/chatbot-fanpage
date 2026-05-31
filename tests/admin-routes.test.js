@@ -3891,6 +3891,71 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
   });
 
+  it('shop detail Safety tab renders calm sections and preserves operation form contracts', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+        shop: {
+          id: 'new-shop',
+          slug: 'new-shop',
+          status: 'active',
+          lifecycle: 'configuring',
+          dry_run: false,
+          live_enabled: false,
+          last_readiness_status: 'passed',
+          last_manual_test_status: 'passed'
+        }
+      })),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'new-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Safety / Vận hành');
+    expect(res.body).toContain('Operational status');
+    expect(res.body).toContain('Operate');
+    expect(res.body).toContain('Advanced / Danger Zone');
+    expect(res.body).toContain('<details class="safety-section safety-danger-zone">');
+
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/pause" data-danger-confirm="true"');
+    expect(res.body).toContain('placeholder="PAUSE SHOP"');
+    expect(res.body).toContain('data-expected-confirm-text="PAUSE SHOP"');
+    expect(res.body).toContain('input name="confirmation_text" placeholder="PAUSE SHOP"');
+
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/dry-run/enable" id="form-enable-dry-run" data-danger-confirm="true"');
+    expect(res.body).toContain('placeholder="ENABLE DRY RUN"');
+    expect(res.body).toContain('data-expected-confirm-text="ENABLE DRY RUN"');
+
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/control-plane"');
+    expect(res.body).toContain('select name="package"');
+    expect(res.body).toContain('select name="lifecycle"');
+    expect(res.body).toContain('input type="hidden" name="live_enabled" value="false"');
+    expect(res.body).toContain('input type="checkbox" name="live_enabled" value="true"');
+    expect(res.body).toContain('select name="manual_test_status"');
+    expect(res.body).toContain('input type="checkbox" name="confirm_live" value="true"');
+    expect(res.body).toContain('input type="checkbox" name="override_readiness" value="true"');
+    expect(res.body).toContain('input type="checkbox" name="confirm_pause_archive" value="true"');
+
+    expect(res.body).toContain('method="post" action="/admin/shops/new-shop/delete-draft" data-danger-confirm="true"');
+    expect(res.body).toContain('placeholder="DELETE DRAFT"');
+    expect(res.body).toContain('data-expected-confirm-text="DELETE DRAFT"');
+
+    expect(res.body.includes('postgres://')).toBeFalse();
+    expect(res.body.includes('postgresql://')).toBeFalse();
+    expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('access_token')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+  });
+
   it('shop detail HTML shows current dry-run state and the matching emergency control', async () => {
     for (const item of [
       {
@@ -8284,6 +8349,9 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('id="drawer-body-container"');
     expect(res.body).toContain('id="drawer-discard-modal"');
     expect(res.body).toContain('id="drawer-discard-confirm"');
+    expect(res.body).toContain("window.addEventListener('hashchange', () => {");
+    expect(res.body).toContain('closeDrawerDiscardModal();');
+    expect(res.body).toContain('closeDrawer();');
 
     // 2. Verify drawer styling exists
     expect(res.body).toContain('.drawer-backdrop');
