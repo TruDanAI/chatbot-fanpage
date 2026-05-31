@@ -122,6 +122,56 @@ function createDashboardRepository({
     };
   }
 
+  function createUnavailableShopSummary(message = 'Multi-shop schema is not ready.') {
+    return {
+      available: false,
+      total: null,
+      activeLive: null,
+      needsSetup: null,
+      dryRun: null,
+      message
+    };
+  }
+
+  async function getShopSummary(client) {
+    try {
+      const result = await client.query(`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (
+            WHERE status = 'active'
+              AND (live_enabled IS TRUE OR lifecycle = 'live')
+          )::int AS active_live,
+          COUNT(*) FILTER (
+            WHERE status <> 'archived'
+              AND (
+                COALESCE(last_readiness_status, 'unknown') <> 'passed'
+                OR COALESCE(lifecycle, '') IN ('', 'draft', 'configuring')
+                OR COALESCE(active_pages.active_page_count, 0) < 1
+              )
+          )::int AS needs_setup,
+          COUNT(*) FILTER (WHERE dry_run IS TRUE)::int AS dry_run
+        FROM shops s
+        LEFT JOIN (
+          SELECT shop_id, COUNT(*) FILTER (WHERE status = 'active')::int AS active_page_count
+          FROM shop_pages
+          GROUP BY shop_id
+        ) active_pages ON active_pages.shop_id = s.id
+      `, []);
+      const row = result.rows[0] || {};
+      return {
+        available: true,
+        total: Number(row.total || 0),
+        activeLive: Number(row.active_live || 0),
+        needsSetup: Number(row.needs_setup || 0),
+        dryRun: Number(row.dry_run || 0)
+      };
+    } catch (err) {
+      if (!isMissingMultiShopSchemaError(err)) throw err;
+      return createUnavailableShopSummary();
+    }
+  }
+
   async function getShops(client) {
     try {
       const result = await client.query(`
@@ -558,6 +608,7 @@ function createDashboardRepository({
         (SELECT COUNT(*)::int FROM events WHERE tenant_id = $1 AND page_id = $2) AS events,
         (SELECT COUNT(*)::int FROM processed_mids WHERE tenant_id = $1 AND page_id = $2) AS processed_mids
     `, params);
+    const shopSummary = await getShopSummary(client);
     const conversationRows = await client.query(`
       SELECT COUNT(*)::int AS total
       FROM conversations c
@@ -679,6 +730,7 @@ function createDashboardRepository({
     return {
       tenantId,
       pageId,
+      shopSummary,
       counts: counts.rows[0] || {},
       operations: {
         windowHours: 24,

@@ -310,6 +310,7 @@ function createAdminReadHandlers({
     if (!principal) return;
     try {
       const model = await reader.getOverview(req.query || {});
+      model.canCreateShop = hasPermission(principal, PERMISSIONS.PRODUCT_WRITE);
       await recordAdminAudit(req, {
         principal,
         action: PERMISSIONS.DASHBOARD_READ,
