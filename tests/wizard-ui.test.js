@@ -30,11 +30,11 @@ describe('Setup Wizard UI components', () => {
     const activeHtml = renderSafetyFooter(true, 'staging');
     const inactiveHtml = renderSafetyFooter(false, 'production');
 
-    expect(activeHtml.includes('Global Dry-Run Active')).toBeTrue();
+    expect(activeHtml.includes('Chế độ test an toàn toàn cục đang bật')).toBeTrue();
     expect(activeHtml.includes('safety-badge dry-run')).toBeTrue();
     expect(activeHtml.includes('staging mode')).toBeTrue();
 
-    expect(inactiveHtml.includes('Dry-Run Inactive')).toBeTrue();
+    expect(inactiveHtml.includes('Chế độ test an toàn toàn cục đang tắt')).toBeTrue();
     expect(inactiveHtml.includes('safety-badge dry-run inactive')).toBeTrue();
     expect(inactiveHtml.includes('production mode')).toBeTrue();
   });

@@ -312,10 +312,10 @@ function registerWizardRoutes(app, {
 
           <div class="checklist-item">
             <div class="checklist-label">
-              <strong>2. Chế độ Global Dry-Run:</strong>
+              <strong>2. Chế độ test an toàn toàn cục:</strong>
               <span class="meta" style="display: block;">Yêu cầu an toàn toàn cục MESSENGER_DRY_RUN=true trên Staging.</span>
             </div>
-            <span class="badge ${checks.dryRun ? 'badge-success' : 'badge-danger'}">${checks.dryRun ? 'ĐẠT (DRY-RUN ON)' : 'THẤT BẠI (DRY-RUN OFF)'}</span>
+            <span class="badge ${checks.dryRun ? 'badge-success' : 'badge-danger'}">${checks.dryRun ? 'ĐẠT (TEST AN TOÀN BẬT)' : 'THẤT BẠI (TEST AN TOÀN TẮT)'}</span>
           </div>
 
           <div class="checklist-item">
@@ -387,7 +387,7 @@ function registerWizardRoutes(app, {
           </div>
           ${renderGuidanceCard(
             'Bạn cần làm gì nếu lỗi?',
-            'Liên hệ quản trị viên kỹ thuật để kiểm tra cấu hình hệ thống: đảm bảo chế độ test an toàn (Dry-Run) đã bật, cơ sở dữ liệu đã kết nối, và hệ thống đang chạy ở môi trường thử nghiệm (không phải Production).'
+            'Liên hệ quản trị viên kỹ thuật để kiểm tra cấu hình hệ thống: đảm bảo chế độ test an toàn đã bật, cơ sở dữ liệu đã kết nối, và hệ thống đang chạy ở môi trường thử nghiệm (không phải Production).'
           )}
         ` : ''}
 
@@ -444,13 +444,13 @@ function registerWizardRoutes(app, {
         <p><strong>Shop nháp</strong> là cửa hàng thử nghiệm để bạn cấu hình sản phẩm, tin nhắn tự động và kết nối Fanpage trước khi chạy thật. Shop nháp luôn ở chế độ test an toàn — không gửi tin nhắn thật đến khách hàng.</p>
         ${renderGuidanceCard(
           'Các cấu hình an toàn mặc định khi tạo shop',
-          'Chưa hoạt động thật (Live: TẮT) • Đang ở chế độ test an toàn (Dry-Run: BẬT) • Chưa kết nối Fanpage • Chưa có quyền gửi tin'
+          'Chưa hoạt động thật (Live: TẮT) • Đang ở chế độ test an toàn • Chưa kết nối Fanpage • Chưa có quyền gửi tin'
         )}
 
         <div class="checklist-card" style="margin: 10px 0 20px;">
           <h3 style="margin-top: 0; font-size: 14px; color: var(--muted); text-transform: uppercase;">🛡️ Các cấu hình an toàn mặc định</h3>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-            <span class="badge badge-success">Chế độ test an toàn (Dry-Run: BẮT BUỘC BẬT)</span>
+            <span class="badge badge-success">Chế độ test an toàn bắt buộc bật</span>
             <span class="badge badge-warning">Hoạt động thật (Go-Live): TẮT ❌</span>
             <span class="badge badge-neutral">Kết nối Fanpage: CHƯA CÓ</span>
             <span class="badge badge-neutral">Quyền gửi tin: CHƯA CÓ</span>
@@ -1891,8 +1891,8 @@ function registerWizardRoutes(app, {
 
     const warningBannerHtml = `
       <div class="banner banner-warning" style="margin: 14px 0;">
-        ⚠️ <strong>Bước 6 Tiếp theo:</strong> Nhấn "Tiếp tục" sẽ đưa bạn sang <strong>Bước 6: Chạy thử giả lập (Dry-Run Smoke Test)</strong>.
-        Tại Bước 6, hệ thống chỉ chạy thử nghiệm giả lập (Dry-run: ON, Live: OFF) để bảo vệ tuyệt đối dữ liệu và không gửi tin nhắn thật hay gọi Meta API.
+        ⚠️ <strong>Bước 6 Tiếp theo:</strong> Nhấn "Tiếp tục" sẽ đưa bạn sang <strong>Bước 6: Chạy thử giả lập an toàn</strong>.
+        Tại Bước 6, hệ thống chỉ chạy thử nghiệm giả lập trong chế độ test an toàn (Live: TẮT) để bảo vệ tuyệt đối dữ liệu và không gửi tin nhắn thật hay gọi Meta API.
       </div>
     `;
 
@@ -2212,7 +2212,7 @@ function registerWizardRoutes(app, {
             <strong style="color: ${globalDryRun ? 'var(--success)' : 'var(--danger)'};">${globalDryRun ? 'ĐANG BẬT (An toàn)' : 'ĐANG TẮT (Nguy hiểm)'}</strong>
           </div>
           <div class="count">
-            <span>Chạy thử Shop (Local dry_run)</span>
+            <span>Chế độ test an toàn của shop (dry_run)</span>
             <strong style="color: ${isShopDryRun ? 'var(--success)' : 'var(--danger)'};">${isShopDryRun ? 'ĐANG BẬT (An toàn)' : 'ĐANG TẮT (Nguy hiểm)'}</strong>
           </div>
           <div class="count">
@@ -2344,7 +2344,7 @@ function registerWizardRoutes(app, {
       const isShopDryRun = Boolean(shopDetail.shop.dry_run);
 
       if (globalDryRun !== true || !isShopDryRun) {
-        return res.status(400).send('Giả lập chạy thử chỉ được thực hiện khi cả global dry-run và local shop dry-run đều được bật.');
+        return res.status(400).send('Giả lập chạy thử chỉ được thực hiện khi cả chế độ test an toàn toàn cục và chế độ test an toàn của shop đều được bật.');
       }
 
       const menuPass = Boolean(shopDetail.settings?.menu_intro_text?.trim());
@@ -2434,7 +2434,7 @@ function registerWizardRoutes(app, {
           <div style="margin: 20px 0; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border);">
             <h3>🛡️ Hoàn thành ở chế độ test an toàn</h3>
             <p style="margin: 6px 0; line-height: 1.5; font-size: 14px; color: #334155;">
-              Cửa hàng đã hoàn tất toàn bộ 6 bước thiết lập trong chế độ <strong>test an toàn (Dry-Run: BẬT, Live: TẮT)</strong>.
+              Cửa hàng đã hoàn tất toàn bộ 6 bước thiết lập trong <strong>chế độ test an toàn (Live: TẮT)</strong>.
               Bot hiện chỉ phản hồi giả lập — tuyệt đối không gửi tin nhắn thật hay ảnh hưởng đến khách hàng Messenger.
             </p>
             <p style="margin: 12px 0 6px; font-weight: bold; font-size: 14px; color: var(--warning);">

@@ -439,7 +439,7 @@ describe('Setup Wizard Step 0 Pre-flight check page logic', () => {
     // Check it renders hard check cards
     expect(res.body.includes('Pre-flight Check')).toBeTrue();
     expect(res.body.includes('Môi trường không phải Production')).toBeTrue();
-    expect(res.body.includes('Chế độ Global Dry-Run')).toBeTrue();
+    expect(res.body.includes('Chế độ test an toàn toàn cục')).toBeTrue();
     expect(res.body.includes('Cấu hình DB Multi-Shop')).toBeTrue();
     expect(res.body.includes('Bắt đầu tạo Shop →')).toBeTrue();
 
@@ -469,7 +469,7 @@ describe('Setup Wizard Step 0 Pre-flight check page logic', () => {
     await app.routes['/admin/wizard/new'](req, res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.includes('THẤT BẠI (DRY-RUN OFF)')).toBeTrue();
+    expect(res.body.includes('THẤT BẠI (TEST AN TOÀN TẮT)')).toBeTrue();
 
     // Verify the button has the disabled attribute
     expect(res.body.includes('class="btn btn-primary" disabled>Bắt đầu tạo Shop')).toBeTrue();
@@ -564,7 +564,7 @@ describe('Setup Wizard Step 1 Create Shop Shell Form logic', () => {
 
     expect(resAuth.statusCode).toBe(200);
     expect(resAuth.body.includes('Bước 1: Tạo shop nháp')).toBeTrue();
-    expect(resAuth.body.includes('Dry-Run: BẮT BUỘC BẬT')).toBeTrue();
+    expect(resAuth.body.includes('Chế độ test an toàn bắt buộc bật')).toBeTrue();
     expect(resAuth.body.includes('Tin nhắn chào mừng đầu Menu')).toBeTrue();
     expect(resAuth.body.includes('Tin nhắn bàn giao nhân viên hỗ trợ')).toBeTrue();
     expect(resAuth.body.includes('Tin nhắn mặc định khi bot không hiểu')).toBeTrue();
@@ -1706,7 +1706,7 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
       await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
 
       expect(res.statusCode).toBe(400);
-      expect(res.body.includes('Giả lập chạy thử chỉ được thực hiện khi cả global dry-run và local shop dry-run đều được bật.')).toBeTrue();
+      expect(res.body.includes('Giả lập chạy thử chỉ được thực hiện khi cả chế độ test an toàn toàn cục và chế độ test an toàn của shop đều được bật.')).toBeTrue();
 
       process.env = originalEnv;
     });
@@ -1783,7 +1783,7 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body.includes('Setup Wizard Hoàn Tất!')).toBeTrue();
-      expect(res.body.includes('test an toàn (Dry-Run: BẬT, Live: TẮT)')).toBeTrue();
+      expect(res.body.includes('chế độ test an toàn (Live: TẮT)')).toBeTrue();
 
       process.env = originalEnv;
     });
@@ -1847,7 +1847,7 @@ describe('Setup Wizard Guidance States', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.includes('Shop nháp')).toBeTrue();
     expect(res.body.includes('Chưa hoạt động thật')).toBeTrue();
-    expect(res.body.includes('Dry-Run: BẬT')).toBeTrue();
+    expect(res.body.includes('Đang ở chế độ test an toàn')).toBeTrue();
     expect(res.body.includes('nem-bui-xa')).toBeTrue();
     expect(res.body.includes('banh-mi-ha-noi')).toBeTrue();
   });

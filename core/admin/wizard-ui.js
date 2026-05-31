@@ -82,13 +82,15 @@ function renderProgressBar(currentStep, completedSteps, shopId) {
  */
 function renderSafetyFooter(globalDryRun, envName = process.env.NODE_ENV || 'staging') {
   const isDryRunActive = globalDryRun === true || globalDryRun === 'true';
-  const dryRunText = isDryRunActive ? 'Global Dry-Run Active' : 'Dry-Run Inactive';
+  const dryRunText = isDryRunActive
+    ? 'Chế độ test an toàn toàn cục đang bật'
+    : 'Chế độ test an toàn toàn cục đang tắt';
   const dryRunClass = isDryRunActive ? 'dry-run' : 'dry-run inactive';
 
   return `
     <div class="safety-footer">
       <div class="safety-badges">
-        <span class="safety-badge ${dryRunClass}">${escapeHtml(dryRunText)} (Chế độ test an toàn)</span>
+        <span class="safety-badge ${dryRunClass}">${escapeHtml(dryRunText)}</span>
         <span class="safety-badge env-staging">${escapeHtml(envName)} mode (Chạy thử nghiệm)</span>
         <span class="safety-badge adult-shop">Bảo vệ adult-shop 🛡️</span>
       </div>
