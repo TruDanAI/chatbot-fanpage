@@ -3409,11 +3409,18 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('status status-danger">Đã lưu trữ');
     expect(res.body).toContain('giữ lại lịch sử, không dùng trong bot');
 
-    // Style archived rows
-    expect(res.body).toContain('<tr style="opacity: 0.6;">');
+    // Secondary product rows are visually quieter than active rows
+    expect(res.body).toContain('class="product-row-primary"');
+    expect(res.body).toContain('class="product-row-secondary"');
 
     // Product code helper
     expect(res.body).toContain('Mã khách nhắn cho bot');
+
+    // Simplified operator sections
+    expect(res.body).toContain('Kịch bản phản hồi Bot');
+    expect(res.body).toContain('Tình trạng danh mục');
+    expect(res.body).toContain('Nhập hàng loạt');
+    expect(res.body).toContain('Quy tắc vận hành danh mục');
 
     // "Ảnh" column & image thumbnails/placeholders
     expect(res.body).toContain('<th>Ảnh</th>');
@@ -4152,7 +4159,7 @@ describe('admin dashboard routes', () => {
     }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('Chat Behavior Settings');
+    expect(res.body).toContain('Kịch bản phản hồi Bot');
     expect(res.body).toContain('action="/admin/shops/adult-shop/settings"');
     expect(res.body).toContain('name="bot_mode"');
     expect(res.body).toContain('value="menu_code_handoff" selected');
@@ -5124,7 +5131,7 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('action="/admin/shops/adult-shop/pages/adult-page/credentials"');
     expect(res.body).toContain('type="password"');
     expect(res.body).toContain('name="rotate"');
-    expect(res.body).toContain('Bulk import products');
+    expect(res.body).toContain('Nhập hàng loạt');
     expect(res.body).toContain('action="/admin/shops/adult-shop/products/import"');
     expect(res.body).toContain('name="csv"');
     expect(res.body).toContain('Required columns:');
@@ -5525,6 +5532,8 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Tạo mới');
     expect(res.body).toContain('<code>M7</code>');
     expect(res.body).toContain('Demo Product');
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/import" data-product-import-confirm');
+    expect(res.body).toContain('textarea name="csv" hidden');
     expect(res.body).toContain('Nhập chính thức');
     expect(res.body).toContain('Final import revalidates');
     expect(productImports.calls[0].input.body.validate_only).toBe('true');
@@ -8293,16 +8302,33 @@ describe('Product Add/Edit Drawer UI', () => {
 
     // 4. Verify product edit form action/method/input names remain unchanged
     expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/prod-1"');
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/prod-2"');
+
+    // 4b. Verify CSV preview form action/method/input names remain unchanged
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/import" data-product-import-form');
+    expect(res.body).toContain('textarea name="csv"');
+    expect(res.body).toContain('name="validate_only" value="true"');
+    expect(res.body).toContain('Xem trước CSV');
 
     // 5. Verify progressive-enhancement markup: edit trigger + inline fallback form
     expect(res.body).toContain('class="js-edit-product-btn');
     expect(res.body).toContain('class="js-fallback-form-container"');
     expect(res.body).toContain('body.js-enabled #add-product-section');
+    expect(res.body).toContain('Thông tin cơ bản');
+    expect(res.body).toContain('Phản hồi khách hàng');
+    expect(res.body).toContain('Điều khiển nội bộ');
+    expect(res.body).toContain('Kịch bản phản hồi Bot');
+    expect(res.body).toContain('Tình trạng danh mục');
+    expect(res.body).toContain('Nhập hàng loạt');
 
     // 6. Verify no raw secrets/DB URLs/tokens/Page IDs in HTML
     expect(res.body.includes('postgres://')).toBeFalse();
     expect(res.body.includes('postgresql://')).toBeFalse();
     expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('access_token')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+    expect(res.body.includes('EAAB')).toBeFalse();
     expect(res.body.includes('window.confirm')).toBeFalse();
   });
 });

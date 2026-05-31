@@ -260,13 +260,36 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .settings-form .help { color: var(--muted); font-size: 12px; font-weight: 400; text-transform: none; }
     .settings-form button { width: fit-content; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 7px 11px; cursor: pointer; }
     .settings-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+    .product-operator-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .9fr); gap: 14px; margin: 0 0 18px; align-items: start; }
+    .product-work-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+    .product-work-card h2, .product-work-card h3 { margin: 0; color: #17202a; }
+    .product-work-card p { margin: 0; }
+    .product-work-card > .settings-form, .product-work-card > .product-form { border: 0; padding: 0; margin: 0; background: transparent; }
+    .product-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+    .product-status-item { border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 10px; }
+    .product-status-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .product-status-item strong { display: block; margin-top: 3px; font-size: 20px; color: #17202a; }
+    .product-primary-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+    .product-catalog-note { border: 1px solid #fde68a; background: #fffbeb; color: #854d0e; border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+    .product-form fieldset { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+    .product-form fieldset legend { color: #334155; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .product-form fieldset label.wide { grid-column: 1 / -1; }
+    .product-form .help { color: var(--muted); font-size: 12px; font-weight: 400; text-transform: none; line-height: 1.4; }
     .product-name { min-width: 190px; }
-    .product-actions { display: grid; gap: 6px; min-width: 86px; }
+    .product-row-primary td { background: #ffffff; }
+    .product-row-secondary td { background: #f8fafc; color: #475569; }
+    .product-actions { display: flex; gap: 6px; min-width: 122px; flex-wrap: wrap; align-items: center; }
     .product-actions .meta { max-width: 180px; }
     .inline-action { margin: 0 0 6px; }
     .inline-action:last-child { margin-bottom: 0; }
+    .inline-action.secondary button { border-color: var(--border); background: #ffffff; color: #334155; }
     .inline-action.warning button { border-color: var(--warning); background: var(--warning); }
     .inline-action.danger button { border-color: var(--danger); background: var(--danger); }
+    .product-row-edit { min-width: 78px; }
+    .product-row-edit .button-link { min-height: 32px; font-size: 13px; }
+    .product-thumb-warning { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; box-sizing: border-box; font-size: 16px; }
+    .product-thumb-muted { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b; box-sizing: border-box; font-size: 16px; }
+    .import-steps { grid-column: 1 / -1; display: grid; gap: 6px; margin: 0; padding-left: 20px; color: #334155; font-size: 13px; line-height: 1.45; }
     .checklist-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 16px 0 4px; }
     .checklist-card h2 { margin-top: 0; }
     .checklist-table { margin-top: 8px; }
@@ -623,6 +646,8 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .js-cancel-drawer { display: none; }
     body.js-enabled .drawer-body .js-cancel-drawer { display: inline-flex; }
     @media (max-width: 640px) {
+      .product-operator-top { grid-template-columns: 1fr; }
+      .product-actions { min-width: 0; }
       .product-section table { display: none !important; }
       .product-mobile-list { display: flex !important; flex-direction: column; gap: 12px; }
     }
@@ -1067,22 +1092,31 @@ function renderProductAddForm(shopId = '') {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products`;
   return `<form class="product-form" method="post" action="${escapeHtml(action)}">
     <h3>Add product</h3>
-    <label>Product code <span class="required">required</span>
-      <input name="code" maxlength="80" required aria-required="true" autocomplete="off">
-      <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
-      <span class="help">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
-      <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
-    </label>
-    <label>Name / title <span class="required">required</span><input name="name" maxlength="180" required aria-required="true"></label>
-    <label>Price text<input name="price_text" maxlength="120" placeholder="150k"></label>
-    <label>Sort order<input name="sort_order" type="number" value="0"></label>
-    <label>Status
-      <select name="status"><option value="active">active</option><option value="hidden">hidden</option></select>
-      <span class="help">Ở trạng thái active, bot có thể tự động trả lời thông tin sản phẩm này.</span>
-    </label>
-    <label>Category<input name="category" maxlength="80"></label>
-    <label>Tags<input name="tags" maxlength="240"></label>
-    <label>Description<textarea name="description" maxlength="2000"></textarea></label>
+    <fieldset>
+      <legend>Thông tin cơ bản</legend>
+      <label>Product code <span class="required">required</span>
+        <input name="code" maxlength="80" required aria-required="true" autocomplete="off">
+        <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+        <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
+      </label>
+      <label>Name / title <span class="required">required</span><input name="name" maxlength="180" required aria-required="true"></label>
+      <label>Price text<input name="price_text" maxlength="120" placeholder="150k"></label>
+    </fieldset>
+    <fieldset>
+      <legend>Phản hồi khách hàng</legend>
+      <label class="wide">Description<textarea name="description" maxlength="2000"></textarea></label>
+    </fieldset>
+    <fieldset>
+      <legend>Điều khiển nội bộ</legend>
+      <label>Status
+        <select name="status"><option value="active">active</option><option value="hidden">hidden</option></select>
+        <span class="help">Active cho phép bot tư vấn sản phẩm này.</span>
+      </label>
+      <label>Sort order<input name="sort_order" type="number" value="0"></label>
+      <label>Category<input name="category" maxlength="80"></label>
+      <label>Tags<input name="tags" maxlength="240"></label>
+      <span class="help wide">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
+    </fieldset>
     <div class="form-actions"><button type="submit" class="js-product-save-btn">Tạo sản phẩm (Lưu mới)</button><button type="button" class="js-cancel-drawer secondary-button">Hủy bỏ</button><span class="meta">Required fields: code and name/title.</span></div>
   </form>`;
 }
@@ -1095,11 +1129,20 @@ function renderProductBulkImportForm(shopId = '') {
     'M7,Demo Product M7,150k,Demo product,https://example.com/m7.png,demo,"hot,new","{""size"":""M""}",active,1'
   ].join('\n');
   return `<form class="product-form bulk-import" method="post" action="${escapeHtml(action)}" data-product-import-form data-product-import-storage-key="${escapeHtml(storageKey)}">
-    <h3>Bulk import products</h3>
+    <h3>Nhập hàng loạt</h3>
     <div class="import-help">
-      <p><strong>Required columns:</strong> <code>code</code>, <code>name</code></p>
-      <p><strong>Optional columns:</strong> <code>price_text</code>, <code>description</code>, <code>image_url</code>, <code>category</code>, <code>tags</code>, <code>metadata_json</code>, <code>status</code>, <code>sort_order</code></p>
-      <div class="import-example">${escapeHtml(sample)}</div>
+      <p><strong>Làm theo thứ tự:</strong> dán CSV, bấm <strong>Xem trước CSV</strong>, chỉ nhập chính thức khi bản xem trước không còn lỗi chặn.</p>
+      <ol class="import-steps">
+        <li>Xem trước CSV trước. Bước này không ghi dữ liệu.</li>
+        <li>Sửa các dòng bị chặn nếu có.</li>
+        <li>Nhập chính thức sẽ kiểm tra lại ở server và áp dụng all-or-nothing.</li>
+      </ol>
+      <details class="collapsible-section">
+        <summary>Cột CSV và ví dụ</summary>
+        <p><strong>Required columns:</strong> <code>code</code>, <code>name</code></p>
+        <p><strong>Optional columns:</strong> <code>price_text</code>, <code>description</code>, <code>image_url</code>, <code>category</code>, <code>tags</code>, <code>metadata_json</code>, <code>status</code>, <code>sort_order</code></p>
+        <div class="import-example">${escapeHtml(sample)}</div>
+      </details>
     </div>
     <label>CSV products
       <textarea name="csv" maxlength="50000" placeholder="${escapeHtml(sample)}" spellcheck="false" data-product-import-csv></textarea>
@@ -1111,7 +1154,7 @@ function renderProductBulkImportForm(shopId = '') {
     </div>
     <div class="form-actions">
       <button type="submit" name="validate_only" value="true" class="secondary-button" data-product-import-server-preview>Xem trước CSV</button>
-      <span class="meta">Bản xem trước server phân loại tạo mới, cập nhật, mã đã lưu trữ, trùng trong tệp và lỗi. Nhập chính thức chỉ mở sau khi không có lỗi chặn.</span>
+      <span class="meta">Nhập chính thức chỉ mở sau khi không có lỗi chặn.</span>
     </div>
   </form>`;
 }
@@ -2021,18 +2064,27 @@ function renderControlPlaneForm(shop = {}, model = {}) {
 function renderProductEditForm(shopId = '', product = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}`;
   return `<form class="product-form compact" method="post" action="${escapeHtml(action)}" data-current-code="${escapeHtml(product.code || '')}">
-    <label>Code <span class="required">required</span>
-      <input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true">
-      <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
-      <span class="help">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
-      <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
-    </label>
-    <label>Name/title <span class="required">required</span><input name="name" value="${escapeHtml(product.name)}" maxlength="180" required aria-required="true"></label>
-    <label>Price text<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
-    <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
-    <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
-    <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
-    <label>Description<textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea></label>
+    <fieldset>
+      <legend>Thông tin cơ bản</legend>
+      <label>Code <span class="required">required</span>
+        <input name="code" value="${escapeHtml(product.code)}" maxlength="80" required aria-required="true">
+        <span class="help">Mã khách nhắn cho bot để xem chi tiết (Ví dụ: M1, M2).</span>
+        <span class="js-duplicate-code-hint duplicate-code-hint" role="alert"></span>
+      </label>
+      <label>Name/title <span class="required">required</span><input name="name" value="${escapeHtml(product.name)}" maxlength="180" required aria-required="true"></label>
+      <label>Price text<input name="price_text" value="${escapeHtml(product.price_text || product.price || '')}" maxlength="120"></label>
+    </fieldset>
+    <fieldset>
+      <legend>Phản hồi khách hàng</legend>
+      <label class="wide">Description<textarea name="description" maxlength="2000">${escapeHtml(product.description || '')}</textarea></label>
+    </fieldset>
+    <fieldset>
+      <legend>Điều khiển nội bộ</legend>
+      <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(product.sort_order || 0)}"></label>
+      <label>Category<input name="category" value="${escapeHtml(product.category || '')}" maxlength="80"></label>
+      <label>Tags<input name="tags" value="${escapeHtml(Array.isArray(product.tags) ? product.tags.join(', ') : '')}" maxlength="240"></label>
+      <span class="help wide">Mã sản phẩm là dấu vết lịch sử. Không dùng lại mã của sản phẩm đã lưu trữ.</span>
+    </fieldset>
     <div class="form-actions"><button type="submit" class="js-product-save-btn">Lưu thay đổi (Cập nhật)</button><button type="button" class="js-cancel-drawer secondary-button">Hủy bỏ</button></div>
   </form>`;
 }
@@ -2053,14 +2105,13 @@ function renderProductStatusActions(shopId = '', product = {}) {
   const nextEnabled = status === 'active' ? 'false' : 'true';
   const toggleLabel = status === 'active' ? 'Tạm ẩn' : 'Hiện lại';
   return `
-    <form class="inline-action" method="post" action="${escapeHtml(statusAction)}">
+    <form class="inline-action secondary" method="post" action="${escapeHtml(statusAction)}">
       <input type="hidden" name="enabled" value="${escapeHtml(nextEnabled)}">
       <button type="submit">${escapeHtml(toggleLabel)}</button>
     </form>
     <form class="inline-action danger" method="post" action="${escapeHtml(archiveAction)}" data-product-archive="true" data-product-name="${escapeHtml(product.name || '')}" data-product-code="${escapeHtml(product.code || '')}">
       <button type="submit">Lưu trữ</button>
     </form>
-    <span class="meta">Lưu trữ là thao tác mềm, giữ lịch sử đơn/chat, không xóa cứng.</span>
   `;
 }
 
@@ -2472,17 +2523,32 @@ function renderShopDetailHtml(model = {}) {
     recommendedAction.label
   );
 
-  const productsGuidanceCard = renderGuidanceCard(
-    '💡 Hướng dẫn cấu hình Sản phẩm & Kịch bản',
-    '• Kịch bản phản hồi Bot: Thiết lập phản hồi tự động khi chuyển giao cho nhân viên (Handoff), chào mừng menu (Menu intro), và trả lời khi không hiểu câu hỏi (Fallback).\n• Quản lý sản phẩm: Thêm danh mục sản phẩm hoạt động kèm mã code định danh (Ví dụ: M1, M2). Chatbot sẽ nhận diện các mã này trong tin nhắn khách để tư vấn chi tiết.'
+  const productRows = Array.isArray(model.products) ? model.products : [];
+  const productHasActiveImage = product => assetRows.some(a =>
+    a.asset_type === 'product_image' &&
+    a.status === 'active' &&
+    (
+      (a.product_id && String(a.product_id) === String(product.id)) ||
+      (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
+    )
   );
+  const activeProducts = productRows.filter(product => String(product.status || '').toLowerCase() === 'active');
+  const secondaryProducts = productRows.filter(product => String(product.status || '').toLowerCase() !== 'active');
+  const missingImageProducts = activeProducts.filter(product => !productHasActiveImage(product));
+  const productStats = {
+    active: activeProducts.length,
+    secondary: secondaryProducts.length,
+    missingImages: missingImageProducts.length,
+    total: productRows.length
+  };
 
   const productMobileListHtml = (!model.products || model.products.length === 0)
     ? ''
     : `<div class="product-mobile-list" style="display: none;">
         ${model.products.map(product => {
           const isArchived = String(product.status || '').toLowerCase() === 'archived';
-          const style = isArchived ? 'opacity: 0.6; ' : '';
+          const isSecondary = String(product.status || '').toLowerCase() !== 'active';
+          const style = isSecondary ? 'opacity: 0.72; ' : '';
           const productImage = assetRows.find(a =>
             a.asset_type === 'product_image' &&
             a.status === 'active' &&
@@ -2499,14 +2565,9 @@ function renderShopDetailHtml(model = {}) {
           } else {
             const isActive = String(product.status || '').toLowerCase() === 'active';
             if (isActive) {
-              imgHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; text-align: center; box-sizing: border-box; padding: 4px;">
-                <span style="font-size: 16px;">⚠</span>
-                <span style="font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 2px;">Thiếu ảnh</span>
-              </div>`;
+              imgHtml = `<div class="product-thumb-warning" style="width: 64px; height: 64px;" title="Thiếu ảnh" aria-label="Thiếu ảnh">⚠</div>`;
             } else {
-              imgHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b;">
-                <span style="font-size: 18px;">🖼️</span>
-              </div>`;
+              imgHtml = `<div class="product-thumb-muted" style="width: 64px; height: 64px;" title="Chưa có ảnh">Ảnh</div>`;
             }
           }
 
@@ -2526,7 +2587,7 @@ function renderShopDetailHtml(model = {}) {
                 </div>
                 <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                   <span class="meta" style="font-size: 11px;">Thứ tự: ${escapeHtml(product.sort_order || 0)}</span>
-                  <div style="display: flex; gap: 6px;">
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end;">
                     ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 4px 8px; font-size: 12px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
                     ${renderProductStatusActions(shop.id, product)}
                   </div>
@@ -2542,9 +2603,10 @@ function renderShopDetailHtml(model = {}) {
 
   const productsListHtml = (!model.products || model.products.length === 0)
     ? renderEmptyState('📦', 'Chưa có sản phẩm nào / Empty Catalog', 'Danh mục sản phẩm của shop đang trống. Hãy kéo xuống dưới để sử dụng form "Thêm sản phẩm thủ công" hoặc "Nhập sản phẩm từ CSV" nhằm khởi tạo dữ liệu.')
-    : renderTable(['code', 'Ảnh', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'quick actions', 'edit'], model.products, product => {
+    : renderTable(['code', 'Ảnh', 'name/title', 'price_text', 'status', 'sort_order', 'updated', 'actions'], model.products, product => {
         const isArchived = String(product.status || '').toLowerCase() === 'archived';
-        const rowStyle = isArchived ? ' style="opacity: 0.6;"' : '';
+        const isSecondary = String(product.status || '').toLowerCase() !== 'active';
+        const rowClass = isSecondary ? ' class="product-row-secondary"' : ' class="product-row-primary"';
         const productImage = assetRows.find(a =>
           a.asset_type === 'product_image' &&
           a.status === 'active' &&
@@ -2566,21 +2628,16 @@ function renderShopDetailHtml(model = {}) {
           const isActive = String(product.status || '').toLowerCase() === 'active';
           if (isActive) {
             imageHtml = `
-              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 56px; min-height: 56px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; padding: 4px; box-sizing: border-box; text-align: center;" title="Thiếu ảnh">
-                <span style="font-size: 14px;">⚠</span>
-                <span style="font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 2px;">Thiếu ảnh</span>
-              </div>
+              <div class="product-thumb-warning" title="Thiếu ảnh" aria-label="Thiếu ảnh">⚠</div>
             `;
           } else {
             imageHtml = `
-              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b;" title="Chưa có ảnh">
-                <span style="font-size: 16px;">🖼️</span>
-              </div>
+              <div class="product-thumb-muted" title="Chưa có ảnh">Ảnh</div>
             `;
           }
         }
         return `
-          <tr${rowStyle}>
+          <tr${rowClass}>
             <td><code>${escapeHtml(product.code)}</code><br><span class="meta" style="font-size: 11px; display: block; margin-top: 2px; font-weight: normal; text-transform: none; line-height: 1.3;">Mã khách nhắn cho bot</span></td>
             <td>${imageHtml}</td>
             <td class="product-name">${escapeHtml(product.name)}<br><span class="meta">${escapeHtml(limitText(product.description, 120))}</span></td>
@@ -2588,9 +2645,9 @@ function renderShopDetailHtml(model = {}) {
             <td>${renderProductStatus(product.status)}</td>
             <td>${escapeHtml(product.sort_order || 0)}</td>
             <td>${escapeHtml(formatDate(product.updated_at))}</td>
-            <td class="product-actions">${renderProductStatusActions(shop.id, product)}</td>
-            <td>
+            <td class="product-actions">
               ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
+              ${renderProductStatusActions(shop.id, product)}
               <div class="js-fallback-form-container">
                 ${renderProductEditForm(shop.id, product)}
               </div>
@@ -2657,107 +2714,82 @@ function renderShopDetailHtml(model = {}) {
 
       <div id="products" class="tab-section">
         ${renderProductFlash(model.productFlash || {})}
-        ${productsGuidanceCard}
-
-        <div style="background: #ffffff; padding: 20px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px;">
-          <h2 id="settings" style="margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 12px; color: var(--primary);">⚙️ Kịch bản phản hồi của Bot (Chat Behavior Settings)</h2>
-          <p class="meta" style="margin-bottom: 16px; font-weight: normal; text-transform: none;">Thiết lập chế độ hoạt động và nội dung tin nhắn tự động chatbot gửi cho khách hàng.</p>
-          ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
-
-          <details class="collapsible-section" style="margin-top: 14px;">
-            <summary>Advanced: Current settings values &amp; raw JSON / Cấu hình chi tiết JSON</summary>
-            <table><tbody>
-              <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
-              <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
-              <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
-              <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
-              <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
-              <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
-                ...(model.settings?.settings_json?.botMode || {}),
-                ...(model.settings?.settings_json?.ruleToggles || {})
-              })))}</td></tr>
-              <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
-            </tbody></table>
-            ${renderJsonBlock(model.settings?.settings_json || {})}
-          </details>
+        <div class="product-operator-top">
+          <section class="product-work-card" aria-labelledby="settings">
+            <div>
+              <h2 id="settings">Kịch bản phản hồi Bot</h2>
+              <p class="meta">Chỉnh nội dung bot gửi cho khách: chuyển giao, giới thiệu menu và phản hồi khi không hiểu.</p>
+            </div>
+            ${renderChatBehaviorSettingsForm(shop.id, model.settings || {})}
+            <details class="collapsible-section">
+              <summary>Giá trị hiện tại và cấu hình kỹ thuật</summary>
+              <table><tbody>
+                <tr><th>Bot Mode</th><td>${escapeHtml(model.settings?.bot_mode || '')}</td></tr>
+                <tr><th>Handoff</th><td>${escapeHtml(model.settings?.handoff_enabled ? 'enabled' : 'disabled')}</td></tr>
+                <tr><th>Handoff Message</th><td>${escapeHtml(model.settings?.handoff_message || '')}</td></tr>
+                <tr><th>Menu Intro</th><td>${escapeHtml(model.settings?.menu_intro_text || '')}</td></tr>
+                <tr><th>Fallback</th><td>${escapeHtml(model.settings?.fallback_text || '')}</td></tr>
+                <tr><th>Rule Toggles</th><td>${escapeHtml(JSON.stringify(normalizeRuleToggles({
+                  ...(model.settings?.settings_json?.botMode || {}),
+                  ...(model.settings?.settings_json?.ruleToggles || {})
+                })))}</td></tr>
+                <tr><th>Updated</th><td>${escapeHtml(formatDate(model.settings?.updated_at))}</td></tr>
+              </tbody></table>
+              ${renderJsonBlock(model.settings?.settings_json || {})}
+            </details>
+          </section>
+          <aside class="product-work-card" aria-label="Product catalog status">
+            <div>
+              <h3>Tình trạng danh mục</h3>
+              <p class="meta">Ưu tiên xử lý sản phẩm đang hoạt động trước.</p>
+            </div>
+            <div class="product-status-grid">
+              <div class="product-status-item"><span>Hoạt động</span><strong>${escapeHtml(productStats.active)}</strong></div>
+              <div class="product-status-item"><span>Thiếu ảnh</span><strong>${escapeHtml(productStats.missingImages)}</strong></div>
+              <div class="product-status-item"><span>Ẩn/lưu trữ</span><strong>${escapeHtml(productStats.secondary)}</strong></div>
+            </div>
+            ${productStats.missingImages > 0
+              ? '<div class="product-catalog-note"><strong>Thiếu ảnh:</strong> chỉ là cảnh báo cho sản phẩm đang hoạt động. Bot vẫn có thể tư vấn bằng chữ; bổ sung ảnh ở tab Hình ảnh khi cần.</div>'
+              : '<p class="meta">Sản phẩm đang hoạt động đều có ảnh minh họa.</p>'
+            }
+            <div class="product-primary-actions" aria-label="Primary product actions">
+              <a href="#add-product-section" class="button-link">+ Thêm sản phẩm</a>
+              <a href="#csv-import-section" class="button-link secondary-button">Nhập hàng loạt</a>
+              <a href="#assets" class="button-link secondary-button">Quản lý ảnh</a>
+            </div>
+          </aside>
         </div>
 
-        <section class="product-section" style="margin-top: 32px; padding-top: 24px; border-top: 2px solid var(--border);">
-          <div class="product-toolbar" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+        <section class="product-section">
+          <div class="product-toolbar" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 4px; flex-wrap: wrap;">
             <div>
-              <h2 id="products-heading" style="margin: 0; color: var(--primary);">📦 Danh mục sản phẩm / Product Catalog</h2>
-              <p class="meta" style="margin: 4px 0 0; font-weight: normal; text-transform: none;">Quản lý mã định danh chatbot tư vấn, tên hiển thị, giá bán và hình ảnh sản phẩm.</p>
-            </div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-              <a href="#add-product-section" class="button-link" style="background: var(--primary); color: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; text-decoration: none;">+ Thêm sản phẩm</a>
-              <a href="#csv-import-section" class="button-link secondary-button" style="border: 1px solid var(--border); color: var(--neutral); background: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; text-decoration: none;">Nhập sản phẩm CSV</a>
+              <h2 id="products-heading" style="margin: 0; color: var(--primary);">Danh mục sản phẩm</h2>
+              <p class="meta" style="margin: 4px 0 0; font-weight: normal; text-transform: none;">Sản phẩm hoạt động nổi bật hơn; sản phẩm ẩn/lưu trữ được làm nhẹ để dễ quét.</p>
             </div>
           </div>
-
-          <div class="guidance-card" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 13px; color: #1e3a5f; display: block; width: auto;">
-            <strong>💡 Hướng dẫn Vận hành Danh mục sản phẩm:</strong>
+          <details class="collapsible-section">
+            <summary>Quy tắc vận hành danh mục</summary>
             <ul style="margin: 6px 0 0; padding-left: 20px; line-height: 1.5;">
-              <li><strong>Mã Code:</strong> Là mã định danh chatbot dùng để nhận diện (Ví dụ khách gõ <code>M10</code> bot sẽ gửi thông tin chi tiết).</li>
-              <li><strong>Hình ảnh:</strong> Mỗi sản phẩm đang hoạt động nên được gán ít nhất 1 hình ảnh trực quan. Việc thiếu ảnh chỉ hiển thị cảnh báo (Warning), không chặn chatbot tư vấn thông tin chữ.</li>
-              <li><strong>Lưu trữ (Archive):</strong> Ưu tiên chuyển trạng thái hoặc lưu trữ (soft-archive) sản phẩm thay vì xóa cứng để đảm bảo tính toàn vẹn dữ liệu đơn hàng lịch sử.</li>
+              <li><strong>Mã Code:</strong> mã khách nhắn cho bot để xem chi tiết sản phẩm.</li>
+              <li><strong>Thiếu ảnh:</strong> cảnh báo nhẹ, không chặn bot tư vấn bằng chữ.</li>
+              <li><strong>Lưu trữ:</strong> thao tác mềm để giữ lịch sử đơn/chat.</li>
             </ul>
-          </div>
-
-          ${(() => {
-            if (!model.products || model.products.length === 0) return '';
-            const activeProducts = (model.products || []).filter(p => p.status === 'active');
-            const inactiveProducts = (model.products || []).filter(p => p.status !== 'active');
-
-            // Calculate active products missing images
-            const productCodesWithImages = new Set(
-              assetRows
-                .filter(a => a.asset_type === 'product_image' && a.status === 'active')
-                .map(a => String(a.product_code || '').trim().toLowerCase())
-            );
-
-            const activeProductsMissingImages = activeProducts.filter(p => {
-              const code = String(p.code || '').trim().toLowerCase();
-              return !productCodesWithImages.has(code);
-            });
-
-            const missingImagesCount = activeProductsMissingImages.length;
-
-            return `
-              <div class="counts" style="margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
-                <div class="count" style="border-left: 4px solid var(--success); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
-                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm hoạt động</span>
-                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #111827;">${escapeHtml(activeProducts.length)}</strong>
-                </div>
-                <div class="count" style="border-left: 4px solid ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'}; padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
-                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm thiếu ảnh</span>
-                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: ${missingImagesCount > 0 ? 'var(--warning)' : 'var(--success)'};">${escapeHtml(missingImagesCount)}</strong>
-                  ${missingImagesCount > 0
-                    ? '<span class="meta" style="color: var(--warning); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">⚠ Hãy bổ sung ảnh ở tab "Hình ảnh" để tư vấn tốt hơn</span>'
-                    : '<span class="meta" style="color: var(--success); font-size: 11px; font-weight: bold; display: block; margin-top: 4px; text-transform: none;">✓ Tất cả sản phẩm đều có ảnh minh họa</span>'
-                  }
-                </div>
-                <div class="count" style="border-left: 4px solid var(--neutral); padding: 12px; background: #ffffff; border-radius: 8px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
-                  <span style="color: var(--muted); font-size: 12px; font-weight: bold; text-transform: uppercase;">Sản phẩm ẩn/lưu trữ</span>
-                  <strong style="display: block; font-size: 24px; margin-top: 4px; color: #4b5563;">${escapeHtml(inactiveProducts.length)}</strong>
-                </div>
-              </div>
-            `;
-          })()}
+          </details>
 
           ${renderProductFilterForm(shop.id, model.productFilters || {}, model.productFilterSummary || { total: (model.products || []).length, shown: (model.products || []).length })}
 
-          <div style="background: var(--surface-muted); padding: 20px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; display: grid; gap: 20px;">
-            <div id="add-product-section" style="padding-bottom: 20px; border-bottom: 1px solid var(--border);">
-              <h3 style="margin-top: 0; font-size: 15px; color: #1e3a5f;">➕ Thêm sản phẩm thủ công / Add Product Manual</h3>
-              <p class="meta" style="margin-bottom: 12px; font-weight: normal; text-transform: none;">Thêm sản phẩm đơn lẻ vào danh mục tư vấn của chatbot.</p>
+          <div style="background: var(--surface-muted); padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 18px; display: grid; gap: 14px;">
+            <div id="add-product-section" class="product-work-card">
+              <h3>Thêm sản phẩm</h3>
+              <p class="meta">Thêm một sản phẩm vào danh mục tư vấn của chatbot.</p>
               ${renderProductAddForm(shop.id)}
             </div>
 
-            <div id="csv-import-section">
-              <h3 style="margin-top: 0; font-size: 15px; color: #1e3a5f;">📥 Nhập sản phẩm từ CSV / Bulk Import CSV</h3>
-              <p class="meta" style="margin-bottom: 12px; font-weight: normal; text-transform: none;">Nhập hàng loạt nhanh danh mục sản phẩm từ tập tin CSV.</p>
+            <section id="csv-import-section" class="product-work-card" aria-label="Nhập hàng loạt">
+              <h3>Nhập hàng loạt</h3>
+              <p class="meta">Dành cho nhiều sản phẩm. Luôn xem trước CSV trước khi nhập chính thức.</p>
               ${renderProductBulkImportForm(shop.id)}
-            </div>
+            </section>
           </div>
 
           ${productsListHtml}
