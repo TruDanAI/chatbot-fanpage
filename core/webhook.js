@@ -16,7 +16,7 @@ const {
   isNonRetryableMessengerSendError
 } = require('./messenger-send-errors');
 const { uniqueImagesForRequest } = require('./runtime-image-dedupe');
-const { pageRef } = require('./utils/log-refs');
+const { pageRef, shopRef } = require('./utils/log-refs');
 
 const MENU_CODE_ADS_REFERRAL_SOURCES = new Set(['ADS', 'SHORTLINK']);
 const STALE_AUTO_REPLY_EVENT_MS = 23 * 60 * 60 * 1000;
@@ -25,10 +25,12 @@ const MESSAGE_TEXT_DEDUPE_TTL_MS = 5 * 1000;
 const MESSAGE_TEXT_DEDUPE_MAX_KEYS = 2000;
 const MENU_SEND_COOLDOWN_MS = 15 * 1000;
 const MENU_SEND_COOLDOWN_MAX_KEYS = 2000;
+const HOT_PRODUCTS_SEND_COOLDOWN_MAX_KEYS = 2000;
 
 function createWebhook({
   storage,
   shopConfig,
+  products = [],
   fbVerifyToken,
   fbAppSecret,
   webhookRateLimiter,
@@ -80,6 +82,7 @@ function createWebhook({
 }) {
   const recentMessageTextKeys = new Map();
   const recentMenuSendKeys = new Map();
+  const recentHotProductsSendKeys = new Map();
   const fileConfigPageIdSet = new Set(
     (Array.isArray(fileConfigPageIds) ? fileConfigPageIds : [])
       .map(item => String(item || '').trim())
@@ -164,6 +167,40 @@ function createWebhook({
       String(senderId || '')
     ]);
     recentMenuSendKeys.delete(key);
+  }
+
+  function hotProductsCooldownKey({ pageId, senderId, shopId }) {
+    return JSON.stringify([
+      String(pageId || ''),
+      String(senderId || ''),
+      String(shopId || '')
+    ]);
+  }
+
+  function shouldSkipRecentHotProductsSend({ pageId, senderId, shopId, cooldownMs }) {
+    const duration = Number(cooldownMs);
+    if (!senderId || !Number.isFinite(duration) || duration <= 0) return false;
+
+    const nowMs = Date.now();
+    pruneExpiringMap(recentHotProductsSendKeys, HOT_PRODUCTS_SEND_COOLDOWN_MAX_KEYS, nowMs);
+
+    const key = hotProductsCooldownKey({ pageId, senderId, shopId });
+    const expiresAt = recentHotProductsSendKeys.get(key);
+    if (expiresAt && expiresAt > nowMs) {
+      console.log(
+        `[hot_products] skipped cooldown page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)} shop_ref=${shopRef(shopId)}`
+      );
+      return true;
+    }
+
+    recentHotProductsSendKeys.set(key, nowMs + duration);
+    pruneExpiringMap(recentHotProductsSendKeys, HOT_PRODUCTS_SEND_COOLDOWN_MAX_KEYS, nowMs);
+    return false;
+  }
+
+  function clearRecentHotProductsSend({ pageId, senderId, shopId }) {
+    if (!senderId) return;
+    recentHotProductsSendKeys.delete(hotProductsCooldownKey({ pageId, senderId, shopId }));
   }
 
   function parseEventTimestampMs(value) {
@@ -293,6 +330,7 @@ function createWebhook({
   const defaultRuntime = {
     storage,
     shopConfig,
+    products,
     useGemini,
     resolveQuickReplyPayload,
     buildQuickReplies,
@@ -341,6 +379,7 @@ function createWebhook({
     return createMenuCodeHandoffHandler({
       storage: runtime.storage,
       shopConfig: runtime.shopConfig,
+      products: runtime.products,
       handoffMs,
       productCodeLookupEnabled,
       menuSendingEnabled,
@@ -355,12 +394,19 @@ function createWebhook({
       getMenuImageUrls: runtime.getMenuImageUrls,
       buildRequestedImageUrls: runtime.buildRequestedImageUrls,
       shouldSkipRecentMenuSend,
-      clearRecentMenuSend
+      clearRecentMenuSend,
+      shouldSkipRecentHotProductsSend,
+      clearRecentHotProductsSend
     });
   }
 
   function materializeRuntime(overrides = {}) {
     const runtime = { ...defaultRuntime, ...overrides };
+    runtime.products = Array.isArray(runtime.products)
+      ? runtime.products
+      : Array.isArray(runtime.shopConfig?.__products)
+        ? runtime.shopConfig.__products
+        : [];
     runtime.effectiveUseGemini = runtime.useGemini && isAiFallbackEnabled(runtime.shopConfig);
     runtime.leadCaptureEnabled = isLeadCaptureEnabled(runtime.shopConfig);
     runtime.orderFlowEnabled = isOrderFlowEnabled(runtime.shopConfig);

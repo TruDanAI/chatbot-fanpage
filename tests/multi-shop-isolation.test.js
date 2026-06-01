@@ -306,6 +306,7 @@ function buildRuntime({ resolved, storage, messenger }) {
   return {
     storage,
     shopConfig: config,
+    products: resolved.products,
     useGemini: false,
     buildDeterministicReply: rules.buildDeterministicReply,
     buildFallbackReply: rules.buildFallbackReply,

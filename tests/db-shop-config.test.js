@@ -91,6 +91,13 @@ function makeSeed() {
           privacy: 'DB privacy',
           payment: 'DB COD'
         },
+        hotProducts: {
+          enabled: true,
+          trigger: 'keyword',
+          maxItems: '2',
+          cooldownMs: '45000',
+          productCodes: ['DB1', 'DB2']
+        },
         hotCarouselProductCodes: ['DB1']
       }
     }],
@@ -207,6 +214,13 @@ describe('db shop config resolver', () => {
     });
     expect(result.config.ruleToggles.unknownToggle).toBe(undefined);
     expect(result.config.policies.privacy).toBe('DB privacy');
+    expect(result.config.hotProducts).toEqual({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 2,
+      cooldownMs: 45000,
+      productCodes: ['DB1', 'DB2']
+    });
     expect(result.products.map(product => product.code)).toEqual(['DB1']);
     expect(result.products[0].price).toBe('150k');
     expect(result.config.__assets.menuImages.length).toBe(1);

@@ -711,6 +711,7 @@ function buildDbShopRuntime(resolved, options = {}) {
   return {
     storage: runtimeStorage,
     shopConfig: dbConfig,
+    products: dbProducts,
     messengerDryRun,
     useGemini: USE_GEMINI && isAiFallbackEnabled(dbConfig),
     buildDeterministicReply: dbRules.buildDeterministicReply,
@@ -891,6 +892,7 @@ if (WEBHOOK_QUEUE_ENABLED) {
 const webhook = createWebhook({
   storage,
   shopConfig,
+  products,
   fbVerifyToken: FB_VERIFY_TOKEN,
   fbAppSecret: FB_APP_SECRET,
   webhookRateLimiter,

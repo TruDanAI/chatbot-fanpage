@@ -1,4 +1,5 @@
 const { normalizeFeatureFlags } = require('./feature-flags');
+const { normalizeHotProductsConfig } = require('../hot-products');
 
 function text(value) {
   return value == null ? '' : String(value);
@@ -192,6 +193,7 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
       menuIntroText,
       fallbackText: fallbackReply
     },
+    hotProducts: normalizeHotProductsConfig(settingsJson.hotProducts),
     hotCarouselProductCodes: jsonArray(settingsJson.hotCarouselProductCodes),
     keywordProducts: {},
     keywordTriggers: {},
