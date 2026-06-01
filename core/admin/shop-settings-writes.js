@@ -24,6 +24,22 @@ const TEXT_LIMITS = Object.freeze({
   fallback_text: 1000
 });
 
+const HOT_PRODUCTS_DEFAULTS = Object.freeze({
+  enabled: false,
+  trigger: 'keyword',
+  maxItems: 3,
+  cooldownMs: 60000,
+  productCodes: []
+});
+
+const HOT_PRODUCTS_LIMITS = Object.freeze({
+  maxItemsMin: 1,
+  maxItemsMax: 5,
+  cooldownMsMin: 10000,
+  cooldownMsMax: 300000,
+  productCodesMax: 20
+});
+
 function loadPgClient() {
   try {
     return require('pg').Client;
@@ -47,6 +63,73 @@ function normalizeBoolean(value, fallback = false) {
   return /^(1|true|yes|on|enabled|active)$/i.test(String(value).trim());
 }
 
+function firstSubmittedValue(value) {
+  if (!Array.isArray(value)) return value;
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const item = value[index];
+    if (item != null && String(item).trim() !== '') return item;
+  }
+  return value[value.length - 1];
+}
+
+function normalizeInteger(value, fallback, min, max) {
+  const submitted = firstSubmittedValue(value);
+  if (submitted == null || String(submitted).trim() === '') return fallback;
+  const number = Number(submitted);
+  if (!Number.isFinite(number)) return fallback;
+  const integer = Math.floor(number);
+  return Math.min(max, Math.max(min, integer));
+}
+
+function productCodeCandidates(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.flatMap(productCodeCandidates);
+  if (typeof value === 'object') return [];
+  return String(value)
+    .split(/[\r\n,]+/)
+    .map(item => item.trim());
+}
+
+function normalizeHotProductCodes(value) {
+  const seen = new Set();
+  const codes = [];
+  for (const code of productCodeCandidates(value)) {
+    if (!code) continue;
+    const key = code.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    codes.push(code);
+    if (codes.length >= HOT_PRODUCTS_LIMITS.productCodesMax) break;
+  }
+  return codes;
+}
+
+function normalizeHotProductsTrigger(value) {
+  const trigger = normalizeText(firstSubmittedValue(value), 80).toLowerCase();
+  return trigger === 'keyword' ? 'keyword' : HOT_PRODUCTS_DEFAULTS.trigger;
+}
+
+function normalizeHotProductsConfig(value = {}) {
+  const input = jsonObject(value);
+  return {
+    enabled: normalizeBoolean(input.enabled, HOT_PRODUCTS_DEFAULTS.enabled),
+    trigger: normalizeHotProductsTrigger(input.trigger),
+    maxItems: normalizeInteger(
+      input.maxItems,
+      HOT_PRODUCTS_DEFAULTS.maxItems,
+      HOT_PRODUCTS_LIMITS.maxItemsMin,
+      HOT_PRODUCTS_LIMITS.maxItemsMax
+    ),
+    cooldownMs: normalizeInteger(
+      input.cooldownMs,
+      HOT_PRODUCTS_DEFAULTS.cooldownMs,
+      HOT_PRODUCTS_LIMITS.cooldownMsMin,
+      HOT_PRODUCTS_LIMITS.cooldownMsMax
+    ),
+    productCodes: normalizeHotProductCodes(input.productCodes)
+  };
+}
+
 function jsonObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
     ? value
@@ -65,6 +148,47 @@ function normalizeBotMode(value = '', fallback = 'disabled') {
   return mode || fallback;
 }
 
+function readFirstPresentField(body = {}, names = []) {
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(body, name)) {
+      return { found: true, value: body[name] };
+    }
+  }
+  return { found: false, value: undefined };
+}
+
+function readHotProductsPatch(body = {}) {
+  const has = key => Object.prototype.hasOwnProperty.call(body, key);
+  if (has('hotProducts')) {
+    return {
+      provided: true,
+      replace: true,
+      value: jsonObject(body.hotProducts)
+    };
+  }
+
+  const fields = {
+    enabled: ['hotProducts_enabled', 'hot_products_enabled'],
+    trigger: ['hotProducts_trigger', 'hot_products_trigger'],
+    maxItems: ['hotProducts_maxItems', 'hot_products_max_items'],
+    cooldownMs: ['hotProducts_cooldownMs', 'hot_products_cooldown_ms'],
+    productCodes: ['hotProducts_productCodes', 'hot_products_product_codes']
+  };
+  const patch = {};
+  let provided = false;
+  for (const [key, names] of Object.entries(fields)) {
+    const result = readFirstPresentField(body, names);
+    if (!result.found) continue;
+    patch[key] = result.value;
+    provided = true;
+  }
+  return {
+    provided,
+    replace: false,
+    value: patch
+  };
+}
+
 function assertTextLength(field, value) {
   const limit = TEXT_LIMITS[field] || 1000;
   if (String(value || '').length > limit) {
@@ -79,6 +203,13 @@ function normalizeSettingsInput(existing = {}, body = {}) {
     ...jsonObject(jsonObject(existingSettingsJson.botMode)),
     ...jsonObject(existingSettingsJson.ruleToggles)
   };
+  const hotProductsPatch = readHotProductsPatch(body);
+  const existingHotProducts = normalizeHotProductsConfig(existingSettingsJson.hotProducts);
+  const hotProducts = hotProductsPatch.provided
+    ? normalizeHotProductsConfig(hotProductsPatch.replace
+      ? hotProductsPatch.value
+      : { ...existingHotProducts, ...hotProductsPatch.value })
+    : existingHotProducts;
   const ruleToggles = mergeRuleToggleInput(existingRuleToggles, body);
   const botMode = has('bot_mode')
     ? normalizeBotMode(body.bot_mode)
@@ -107,6 +238,7 @@ function normalizeSettingsInput(existing = {}, body = {}) {
     fallback_text: fallbackText,
     settings_json: {
       ...existingSettingsJson,
+      hotProducts,
       ruleToggles
     }
   };
@@ -287,7 +419,15 @@ function createPostgresShopSettingsWriteService({
             menu_intro_text_length: input.menu_intro_text.length,
             fallback_text_length: input.fallback_text.length
           },
-          rule_toggles: normalizeRuleToggles(input.settings_json.ruleToggles)
+          rule_toggles: normalizeRuleToggles(input.settings_json.ruleToggles),
+          hot_products: {
+            enabled: Boolean(input.settings_json.hotProducts?.enabled),
+            maxItems: Number(input.settings_json.hotProducts?.maxItems || HOT_PRODUCTS_DEFAULTS.maxItems),
+            cooldownMs: Number(input.settings_json.hotProducts?.cooldownMs || HOT_PRODUCTS_DEFAULTS.cooldownMs),
+            product_code_count: Array.isArray(input.settings_json.hotProducts?.productCodes)
+              ? input.settings_json.hotProducts.productCodes.length
+              : 0
+          }
         },
         requestContext
       });
@@ -302,12 +442,15 @@ function createPostgresShopSettingsWriteService({
 
 module.exports = {
   BOT_MODES,
+  HOT_PRODUCTS_DEFAULTS,
+  HOT_PRODUCTS_LIMITS,
   SHOP_SETTINGS_WRITE_ACTIONS,
   TEXT_LIMITS,
   createPostgresShopSettingsWriteService,
   createShopSettingsWriteError,
   createShopSettingsWriteRepository,
   isMissingShopSettingsWriteSchemaError: isMissingMultiShopSchemaError,
+  normalizeHotProductsConfig,
   normalizeSettingsInput,
   presentShopSettings
 };
