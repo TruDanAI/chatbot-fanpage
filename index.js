@@ -101,12 +101,63 @@ function getDbAssetImageRuntime({ config, products, rules, sendCarousel }) {
   const assets = config.__assets || {};
   const menuImages = Array.isArray(assets.menuImages) ? assets.menuImages : [];
   const productImagesByCode = assets.productImagesByCode || {};
+  const productImagesByProductId = assets.productImagesByProductId || {};
+  const productByCode = new Map(
+    (Array.isArray(products) ? products : [])
+      .map(product => [productCodeKey(product.code), product])
+      .filter(([key]) => key)
+  );
 
   function imageItem(asset) {
     return {
       file: asset.id || asset.storageKey || asset.publicUrl,
       url: asset.url
     };
+  }
+
+  function productCodeKey(code = '') {
+    return String(code || '').trim().toUpperCase();
+  }
+
+  function getAssetList(group, key) {
+    const normalized = String(key || '').trim();
+    const list = normalized ? group[normalized] : [];
+    return Array.isArray(list) ? list : [];
+  }
+
+  function foldProductCode(value = '') {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .toUpperCase();
+  }
+
+  function numericProductCodeFallbackKeys(code = '') {
+    const compact = foldProductCode(code).replace(/\s+/g, '');
+    const match = compact.match(/^(?:MA|M)0*(\d{1,4})$/) || compact.match(/^0*(\d{1,4})$/);
+    if (!match) return [];
+    const number = Number(match[1]);
+    if (!Number.isFinite(number) || number <= 0) return [];
+    return [`MÃ${number}`, `MA${number}`, `M${number}`, String(number)]
+      .map(productCodeKey)
+      .filter((value, index, list) => value && list.indexOf(value) === index);
+  }
+
+  function getProductImagesForCode(code) {
+    const key = productCodeKey(code);
+    const product = productByCode.get(key);
+    const byProductId = product?.id ? getAssetList(productImagesByProductId, product.id) : [];
+    if (byProductId.length) return byProductId;
+
+    const byExactCode = getAssetList(productImagesByCode, key);
+    if (byExactCode.length) return byExactCode;
+
+    for (const fallbackKey of numericProductCodeFallbackKeys(code)) {
+      const byFallbackCode = getAssetList(productImagesByCode, fallbackKey);
+      if (byFallbackCode.length) return byFallbackCode;
+    }
+    return [];
   }
 
   function isGreetingText(text) {
@@ -127,9 +178,7 @@ function getDbAssetImageRuntime({ config, products, rules, sendCarousel }) {
     const requestedCodes = rules.extractRequestedProductCodes(userText);
     const images = [];
     for (const code of requestedCodes) {
-      const key = String(code || '').toUpperCase();
-      const productImages = Array.isArray(productImagesByCode[key]) ? productImagesByCode[key] : [];
-      images.push(...productImages.map(imageItem));
+      images.push(...getProductImagesForCode(code).map(imageItem));
     }
     return images.filter(item => item.url).slice(0, 6);
   }
@@ -142,7 +191,7 @@ function getDbAssetImageRuntime({ config, products, rules, sendCarousel }) {
     for (const code of wantedCodes) {
       const product = byCode.get(String(code || '').toUpperCase());
       if (!product) continue;
-      const image = (productImagesByCode[String(product.code || '').toUpperCase()] || [])[0];
+      const image = getProductImagesForCode(product.code)[0];
       if (!image?.url) continue;
       elements.push({
         title: `${product.code} - ${product.price}`.slice(0, 80),
@@ -711,6 +760,7 @@ function buildDbShopRuntime(resolved, options = {}) {
   return {
     storage: runtimeStorage,
     shopConfig: dbConfig,
+    products: dbProducts,
     messengerDryRun,
     useGemini: USE_GEMINI && isAiFallbackEnabled(dbConfig),
     buildDeterministicReply: dbRules.buildDeterministicReply,
@@ -891,6 +941,7 @@ if (WEBHOOK_QUEUE_ENABLED) {
 const webhook = createWebhook({
   storage,
   shopConfig,
+  products,
   fbVerifyToken: FB_VERIFY_TOKEN,
   fbAppSecret: FB_APP_SECRET,
   webhookRateLimiter,

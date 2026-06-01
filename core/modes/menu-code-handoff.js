@@ -7,7 +7,12 @@ const MENU_CODE_HANDOFF_MESSAGE = [
 
 const MENU_CODE_MENU_PRICE_REPLY = 'Dạ sản phẩm bên em từ 150k tuỳ mã ạ. Em gửi mình xem qua menu, ưng mã nào nhắn em tư vấn kỹ hơn nhé.';
 const { uniqueImagesForRequest } = require('../runtime-image-dedupe');
-const { pageRef } = require('../utils/log-refs');
+const {
+  buildHotProductsReply,
+  isHotProductsKeyword,
+  resolveHotProducts
+} = require('../hot-products');
+const { pageRef, shopRef } = require('../utils/log-refs');
 
 // Khách quay lại sau ngần này mới được tự động chào lại bằng menu+cap.
 const MENU_CODE_REENGAGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -24,6 +29,7 @@ function getMenuCodeHandoffMessage(config = {}) {
 function createMenuCodeHandoffHandler({
   storage,
   shopConfig,
+  products = [],
   handoffMs,
   productCodeLookupEnabled,
   menuSendingEnabled = true,
@@ -38,8 +44,12 @@ function createMenuCodeHandoffHandler({
   getMenuImageUrls,
   buildRequestedImageUrls,
   shouldSkipRecentMenuSend = () => false,
-  clearRecentMenuSend = () => {}
+  clearRecentMenuSend = () => {},
+  shouldSkipRecentHotProductsSend,
+  clearRecentHotProductsSend
 }) {
+  const localHotProductsCooldown = new Map();
+
   function isMenuQuestion(userText) {
     const t = normalizeText(userText).replace(/\s+/g, ' ').trim();
     if (!t) return false;
@@ -99,17 +109,65 @@ function createMenuCodeHandoffHandler({
       .slice(0, 120) || 'unknown';
   }
 
+  function getShopIdForLogs() {
+    return String(
+      shopConfig?.__dbShop?.shopId
+      || shopConfig?.shopId
+      || shopConfig?.shop_id
+      || shopConfig?.shopName
+      || ''
+    ).trim();
+  }
+
+  function hotProductsCooldownKey({ pageId, senderId, shopId }) {
+    return JSON.stringify([
+      String(pageId || ''),
+      String(senderId || ''),
+      String(shopId || '')
+    ]);
+  }
+
+  function pruneLocalHotProductsCooldown(nowMs = Date.now()) {
+    for (const [key, expiresAt] of localHotProductsCooldown) {
+      if (expiresAt > nowMs) continue;
+      localHotProductsCooldown.delete(key);
+    }
+  }
+
+  function shouldSkipLocalHotProductsSend({ pageId, senderId, shopId, cooldownMs }) {
+    if (!senderId || !cooldownMs) return false;
+
+    const nowMs = Date.now();
+    pruneLocalHotProductsCooldown(nowMs);
+    const key = hotProductsCooldownKey({ pageId, senderId, shopId });
+    const expiresAt = localHotProductsCooldown.get(key);
+    if (expiresAt && expiresAt > nowMs) {
+      console.log(
+        `[hot_products] skipped cooldown page_ref=${pageRef(pageId)} sender_ref=${pageRef(senderId)} shop_ref=${shopRef(shopId)}`
+      );
+      return true;
+    }
+
+    localHotProductsCooldown.set(key, nowMs + cooldownMs);
+    return false;
+  }
+
+  function clearLocalHotProductsSend({ pageId, senderId, shopId }) {
+    localHotProductsCooldown.delete(hotProductsCooldownKey({ pageId, senderId, shopId }));
+  }
+
   async function sendImages(senderId, images, sentImages, options = {}) {
     for (const { file, url } of uniqueImagesForRequest(senderId, images, sentImages)) {
+      const imageRef = pageRef(file || url);
       try {
         await sendImage(senderId, url);
         const phase = safeLogToken(options.phase || 'image');
         console.log(
-          `[${phase}] image sent file=${safeLogToken(file)} page_ref=${pageRef(options.pageId)} sender_ref=${pageRef(senderId)}`
+          `[${phase}] image sent image_ref=${imageRef} page_ref=${pageRef(options.pageId)} sender_ref=${pageRef(senderId)}`
         );
       } catch (e) {
         const msg = e.response?.data?.error?.message || e.message;
-        console.error(`❌ Gửi ảnh ${file} fail: ${msg}`);
+        console.error(`❌ Gửi ảnh fail image_ref=${imageRef}: ${msg}`);
       }
     }
   }
@@ -136,6 +194,54 @@ function createMenuCodeHandoffHandler({
     return true;
   }
 
+  function getHotProductImageUrls(product, senderId, baseUrlOverride) {
+    if (!product?.code || typeof buildRequestedImageUrls !== 'function') return [];
+    const images = buildRequestedImageUrls(product.code, senderId, baseUrlOverride);
+    return Array.isArray(images) ? images.filter(image => image?.url).slice(0, 1) : [];
+  }
+
+  async function sendHotProducts(senderId, baseUrlOverride, options = {}) {
+    const resolved = resolveHotProducts({ shopConfig, products });
+    if (!resolved.enabled) return false;
+
+    const shopId = getShopIdForLogs();
+    const cooldownArgs = {
+      pageId: options.pageId,
+      senderId,
+      shopId,
+      cooldownMs: resolved.config.cooldownMs
+    };
+    const shouldSkipHotProducts = typeof shouldSkipRecentHotProductsSend === 'function'
+      ? shouldSkipRecentHotProductsSend
+      : shouldSkipLocalHotProductsSend;
+    if (shouldSkipHotProducts(cooldownArgs)) return true;
+
+    const clearHotProductsSend = typeof clearRecentHotProductsSend === 'function'
+      ? clearRecentHotProductsSend
+      : clearLocalHotProductsSend;
+
+    try {
+      showTyping(senderId);
+      await sendMessage(senderId, buildHotProductsReply(resolved.products));
+      console.log(
+        `[hot_products] text sent count=${resolved.products.length} page_ref=${pageRef(options.pageId)} sender_ref=${pageRef(senderId)} shop_ref=${shopRef(shopId)}`
+      );
+    } catch (err) {
+      clearHotProductsSend(cooldownArgs);
+      throw err;
+    }
+
+    const images = [];
+    for (const product of resolved.products) {
+      images.push(...getHotProductImageUrls(product, senderId, baseUrlOverride));
+    }
+    await sendImages(senderId, images, options.requestImageDedupe || new Set(), {
+      pageId: options.pageId,
+      phase: 'hot_products'
+    });
+    return true;
+  }
+
   function getSuccessfulRequestedProductCodes(userText, senderId) {
     if (!productCodeLookupEnabled) return [];
     const requestedCodes = extractRequestedProductCodes(userText)
@@ -148,9 +254,37 @@ function createMenuCodeHandoffHandler({
     return requestedCodes.filter(code => code === lastCode);
   }
 
-  function buildProductImageLookupText(code) {
-    const number = String(code || '').match(/\d+/)?.[0];
-    return number ? `ma ${number}` : String(code || '');
+  function foldProductCode(value = '') {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .toUpperCase();
+  }
+
+  function buildNumericProductImageFallbackText(code) {
+    const compact = foldProductCode(code).replace(/\s+/g, '');
+    const match = compact.match(/^(?:MA|M)0*(\d{1,4})$/) || compact.match(/^0*(\d{1,4})$/);
+    if (!match) return '';
+    const number = Number(match[1]);
+    return Number.isFinite(number) && number > 0 ? `ma ${number}` : '';
+  }
+
+  function buildProductImageLookupTexts(code) {
+    const exact = String(code || '').trim();
+    const fallback = buildNumericProductImageFallbackText(exact);
+    return [exact, fallback]
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index);
+  }
+
+  function buildProductImageUrls(code, senderId, baseUrlOverride) {
+    if (typeof buildRequestedImageUrls !== 'function') return [];
+    for (const lookupText of buildProductImageLookupTexts(code)) {
+      const images = buildRequestedImageUrls(lookupText, senderId, baseUrlOverride);
+      if (Array.isArray(images) && images.length) return images;
+    }
+    return [];
   }
 
   async function handleReferralOnly(senderId, baseUrlOverride, options = {}) {
@@ -189,7 +323,7 @@ function createMenuCodeHandoffHandler({
         showTyping(senderId);
         await sendImages(
           senderId,
-          buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride),
+          buildProductImageUrls(codes[0], senderId, baseUrlOverride),
           sentImages,
           { pageId: options.pageId, phase: 'product' }
         );
@@ -199,6 +333,17 @@ function createMenuCodeHandoffHandler({
           storage.setHandoff(senderId, Date.now() + handoffMs);
           console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): sender_ref=${pageRef(senderId)}`);
         }
+        markLastUserAt(senderId);
+        return true;
+      }
+    }
+
+    if (isHotProductsKeyword(userText, normalizeText)) {
+      const sent = await sendHotProducts(senderId, baseUrlOverride, {
+        ...options,
+        requestImageDedupe: sentImages
+      });
+      if (sent) {
         markLastUserAt(senderId);
         return true;
       }

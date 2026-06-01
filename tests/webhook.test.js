@@ -11,6 +11,7 @@ const {
   MENU_CODE_MENU_PRICE_REPLY,
   applyBotModeConfig
 } = require('../core/bot-mode');
+const { HOT_PRODUCTS_EMPTY_REPLY } = require('../core/hot-products');
 
 const products = loadProducts(path.join(__dirname, '..', 'shops', 'adult-shop', 'products.csv'));
 
@@ -99,6 +100,20 @@ function buildAdultRuntimeConfig() {
   });
 }
 
+function buildHotProductsRuntimeConfig(hotProducts, overrides = {}) {
+  const base = buildAdultRuntimeConfig();
+  const { botMode, ...restOverrides } = overrides;
+  return {
+    ...base,
+    ...restOverrides,
+    botMode: {
+      ...(base.botMode || {}),
+      ...(botMode || {})
+    },
+    hotProducts
+  };
+}
+
 function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`, pageId = '') {
   return {
     sender: { id: senderId },
@@ -179,7 +194,8 @@ async function waitFor(predicate, message = 'condition was not met') {
 
 function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) {
   const storage = options.storage || makeStorage();
-  const rules = createRuleEngine({ products, config, contextStore: storage });
+  const runtimeProducts = options.products || products;
+  const rules = createRuleEngine({ products: runtimeProducts, config, contextStore: storage });
   const sent = [];
   let geminiCalls = 0;
   let leadParserCalls = 0;
@@ -196,6 +212,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   const webhook = createWebhook({
     storage,
     shopConfig: config,
+    products: runtimeProducts,
     fbVerifyToken: 'verify',
     fbAppSecret: options.fbAppSecret || '',
     webhookRateLimiter: (_req, _res, next) => next(),
@@ -350,6 +367,7 @@ function buildDbRuntimeForWebhook(fallbackRuntime, overrides = {}) {
   return {
     storage: overrides.storage || fallbackRuntime.storage,
     shopConfig: dbConfig,
+    products: dbProducts,
     useGemini: false,
     buildDeterministicReply: dbRules.buildDeterministicReply,
     buildFallbackReply: dbRules.buildFallbackReply,
@@ -1035,6 +1053,99 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getTelegramOperationalAlertCalls()).toBe(0);
     expect(h.getFallbackAttentionCalls()).toBe(0);
     expect(h.getConversationTurnCalls()).toBe(0);
+  });
+
+  it('custom product code lookup uses exact code for product image lookup', async () => {
+    const lookups = [];
+    const h = createWebhookHarness(undefined, {
+      products: [{
+        id: 'prod-smoke-1',
+        code: 'smoke-1',
+        name: 'Smoke One',
+        price: '120k',
+        description: 'Custom smoke product',
+        size: '',
+        weight: '',
+        gift: '',
+        preorder: false,
+        status: 'active'
+      }],
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        lookups.push(String(text || ''));
+        if (String(text || '').toLowerCase() === 'smoke-1') {
+          return [{ file: 'smoke-1.png', url: `${base}/media/smoke-1.png` }];
+        }
+        if (String(text || '').toLowerCase() === 'ma 1') {
+          return [{ file: 'wrong-ma1.png', url: `${base}/media/wrong-ma1.png` }];
+        }
+        return [];
+      }
+    });
+
+    await h.handleText('smoke-1', 'custom_code_image_user', 'm_custom_code_image');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('smoke-1.png'))).toBeTrue();
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('wrong-ma1.png'))).toBeFalse();
+    expect(lookups).toEqual(['SMOKE-1']);
+    expect(textMessages[0]).toContain('120k');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('custom_code_image_user')).toBeTrue();
+  });
+
+  it('custom product code without image does not fall back to numeric product image', async () => {
+    const lookups = [];
+    const h = createWebhookHarness(undefined, {
+      products: [{
+        id: 'prod-noimg-1',
+        code: 'noimg-1',
+        name: 'No Image One',
+        price: '130k',
+        description: 'Custom product without image',
+        size: '',
+        weight: '',
+        gift: '',
+        preorder: false,
+        status: 'active'
+      }],
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        lookups.push(String(text || ''));
+        return String(text || '').toLowerCase() === 'ma 1'
+          ? [{ file: 'wrong-ma1.png', url: `${base}/media/wrong-ma1.png` }]
+          : [];
+      }
+    });
+
+    await h.handleText('noimg-1', 'custom_code_no_image_user', 'm_custom_code_no_image');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image')).toBeFalse();
+    expect(lookups).toEqual(['NOIMG-1']);
+    expect(textMessages[0]).toContain('130k');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('custom_code_no_image_user')).toBeTrue();
+  });
+
+  it('numeric-style product code keeps ma-number image fallback', async () => {
+    const lookups = [];
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        lookups.push(String(text || ''));
+        return String(text || '').toLowerCase() === 'ma 10'
+          ? [{ file: 'ma10.jpg', url: `${base}/media/ma10.jpg` }]
+          : [];
+      }
+    });
+
+    await h.handleText('cho xem MÃ10', 'numeric_code_fallback_user', 'm_numeric_code_fallback');
+
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma10.jpg'))).toBeTrue();
+    expect(lookups).toEqual(['MÃ10', 'ma 10']);
+    expect(h.storage.getLastProductCode('numeric_code_fallback_user')).toBe('MÃ10');
+    expect(h.storage.inHandoff('numeric_code_fallback_user')).toBeTrue();
   });
 
   it('product-code wording for product 11 sends the product image', async () => {
@@ -1904,6 +2015,169 @@ describe('webhook: menu_code_handoff mode', () => {
     const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
     expect(textMessages.includes(MENU_CODE_MENU_PRICE_REPLY)).toBeFalse();
     expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+  });
+
+  it('hotProducts disabled leaves keyword text on the existing Basic path', async () => {
+    const config = buildHotProductsRuntimeConfig({
+      enabled: false,
+      trigger: 'keyword',
+      maxItems: 3,
+      cooldownMs: 60000,
+      productCodes: ['MÃ10', 'MÃ8']
+    });
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'hot_disabled_user', 1);
+
+    await h.handleText('hàng hot', 'hot_disabled_user', 'm_hot_disabled');
+
+    expect(h.sent.length).toBe(0);
+    expect(h.storage.inHandoff('hot_disabled_user')).toBeFalse();
+  });
+
+  it('hotProducts enabled keyword sends configured list and images without handoff', async () => {
+    const config = buildHotProductsRuntimeConfig({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 2,
+      cooldownMs: 60000,
+      productCodes: ['MÃ10', 'MÃ8', 'MÃ2']
+    });
+    const h = createWebhookHarness(config, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        const value = String(text || '').toUpperCase();
+        if (value.includes('MÃ10')) return [{ file: 'ma10.jpg', url: `${base}/media/ma10.jpg` }];
+        if (value.includes('MÃ8')) return [{ file: 'ma8.png', url: `${base}/media/ma8.png` }];
+        return [];
+      }
+    });
+    markReturningCustomer(h.storage, 'hot_enabled_user', 1);
+
+    await h.handleText('sản phẩm nổi bật', 'hot_enabled_user', 'm_hot_enabled', 'page_hot_enabled');
+
+    const text = h.sent.find(item => item.type === 'text').text;
+    expect(text).toContain('🔥 Hàng hot hôm nay');
+    expect(text.indexOf('MÃ10') < text.indexOf('MÃ8')).toBeTrue();
+    expect(text).toContain('MÃ10 - 150k');
+    expect(text).toContain('MÃ8 - 680k');
+    expect(text).toContain('Nhắn mã sản phẩm, ví dụ MÃ10, để xem chi tiết.');
+    expect(h.sent.filter(item => item.type === 'image').map(item => item.url)).toEqual([
+      'https://example.test/media/ma10.jpg',
+      'https://example.test/media/ma8.png'
+    ]);
+    expect(h.storage.inHandoff('hot_enabled_user')).toBeFalse();
+    expect(h.storage.getLastProductCode('hot_enabled_user')).toBe('');
+  });
+
+  it('product code still wins over hotProducts keyword ambiguity and activates handoff', async () => {
+    const config = buildHotProductsRuntimeConfig({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 3,
+      cooldownMs: 60000,
+      productCodes: ['MÃ10', 'MÃ8']
+    });
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    await h.handleText('sản phẩm hot MÃ8', 'hot_code_user', 'm_hot_code', 'page_hot_code');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(textMessages.some(text => text.includes('🔥 Hàng hot hôm nay'))).toBeFalse();
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('hot_code_user')).toBeTrue();
+    expect(h.storage.getLastProductCode('hot_code_user')).toBe('MÃ8');
+  });
+
+  it('hotProducts preserves configured order, skips inactive/missing products, and respects maxItems', async () => {
+    const customProducts = [
+      { code: 'HIDE1', name: 'Hidden Product', price: '100k', status: 'hidden' },
+      { code: 'ACT2', name: 'Active Two', price: '200k', status: 'active' },
+      { code: 'ARCH1', name: 'Archived Product', price: '300k', status: 'archived' },
+      { code: 'ACT1', name: 'Active One', price: '150k', status: 'active' },
+      { code: 'ACT3', name: 'Active Three', price: '350k', status: 'active' }
+    ];
+    const config = buildHotProductsRuntimeConfig({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 2,
+      cooldownMs: 60000,
+      productCodes: ['HIDE1', 'ACT2', 'MISSING', 'ARCH1', 'ACT1', 'ACT3']
+    });
+    const h = createWebhookHarness(config, {
+      products: customProducts,
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: () => []
+    });
+    markReturningCustomer(h.storage, 'hot_order_user', 1);
+
+    await h.handleText('goi y san pham', 'hot_order_user', 'm_hot_order', 'page_hot_order');
+
+    const text = h.sent.find(item => item.type === 'text').text;
+    expect(text.indexOf('ACT2 - Active Two - 200k') < text.indexOf('ACT1 - Active One - 150k')).toBeTrue();
+    expect(text.includes('HIDE1')).toBeFalse();
+    expect(text.includes('ARCH1')).toBeFalse();
+    expect(text.includes('MISSING')).toBeFalse();
+    expect(text.includes('ACT3')).toBeFalse();
+    expect(h.storage.inHandoff('hot_order_user')).toBeFalse();
+  });
+
+  it('hotProducts keyword sends safe fallback when no configured active products are valid and ignores legacy carousel codes', async () => {
+    const config = buildHotProductsRuntimeConfig({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 3,
+      cooldownMs: 60000,
+      productCodes: []
+    }, {
+      hotCarouselProductCodes: ['MÃ8']
+    });
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+    markReturningCustomer(h.storage, 'hot_empty_user', 1);
+
+    await h.handleText('hang hot', 'hot_empty_user', 'm_hot_empty', 'page_hot_empty');
+
+    expect(h.sent).toEqual([{ type: 'text', senderId: 'hot_empty_user', text: HOT_PRODUCTS_EMPTY_REPLY }]);
+    expect(h.sent[0].text.includes('MÃ8')).toBeFalse();
+    expect(h.storage.inHandoff('hot_empty_user')).toBeFalse();
+  });
+
+  it('hotProducts cooldown is per page sender shop and logs safe refs only', async () => {
+    const logs = [];
+    const originalLog = console.log;
+    const config = buildHotProductsRuntimeConfig({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 1,
+      cooldownMs: 60000,
+      productCodes: ['MÃ10']
+    });
+    const h = createWebhookHarness(config, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: () => []
+    });
+    const senderId = 'hot_cooldown_sender';
+    markReturningCustomer(h.storage, senderId, 1);
+
+    console.log = message => logs.push(String(message));
+    try {
+      await h.handleText('hang hot', senderId, 'm_hot_cd_1', 'page_hot_cd_a');
+      await h.handleText('goi y san pham', senderId, 'm_hot_cd_2', 'page_hot_cd_a');
+      await h.handleText('san pham noi bat', senderId, 'm_hot_cd_3', 'page_hot_cd_b');
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(h.sent.filter(item => item.type === 'text').length).toBe(2);
+    expect(h.sent[0].text).toContain('MÃ10');
+    expect(h.sent[1].text).toContain('MÃ10');
+    const logText = logs.join('\n');
+    expect(logText).toContain('[hot_products] skipped cooldown');
+    expect(logText).toContain('page_ref=');
+    expect(logText).toContain('sender_ref=');
+    expect(logText.includes('page_hot_cd_a')).toBeFalse();
+    expect(logText.includes(senderId)).toBeFalse();
+    expect(logText.includes('postgres://')).toBeFalse();
+    expect(logText.includes('EAAB')).toBeFalse();
   });
 
   it('does not run Gemini, Telegram, order, export, follow-up, or alert side effects in this mode', async () => {

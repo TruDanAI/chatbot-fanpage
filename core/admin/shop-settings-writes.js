@@ -6,6 +6,11 @@ const {
 const { insertAuditLogEntry } = require('./audit');
 const { isMissingMultiShopSchemaError } = require('./dashboard-repository');
 const { mergeRuleToggleInput, normalizeRuleToggles } = require('../rule-toggles');
+const {
+  HOT_PRODUCTS_DEFAULTS,
+  HOT_PRODUCTS_LIMITS,
+  normalizeHotProductsConfig
+} = require('../hot-products');
 
 const SHOP_SETTINGS_WRITE_ACTIONS = Object.freeze({
   UPDATE: 'admin.shop_settings.update'
@@ -22,22 +27,6 @@ const TEXT_LIMITS = Object.freeze({
   handoff_message: 1000,
   menu_intro_text: 1000,
   fallback_text: 1000
-});
-
-const HOT_PRODUCTS_DEFAULTS = Object.freeze({
-  enabled: false,
-  trigger: 'keyword',
-  maxItems: 3,
-  cooldownMs: 60000,
-  productCodes: []
-});
-
-const HOT_PRODUCTS_LIMITS = Object.freeze({
-  maxItemsMin: 1,
-  maxItemsMax: 5,
-  cooldownMsMin: 10000,
-  cooldownMsMax: 300000,
-  productCodesMax: 20
 });
 
 function loadPgClient() {
@@ -61,73 +50,6 @@ function normalizeBoolean(value, fallback = false) {
   if (value == null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
   return /^(1|true|yes|on|enabled|active)$/i.test(String(value).trim());
-}
-
-function firstSubmittedValue(value) {
-  if (!Array.isArray(value)) return value;
-  for (let index = value.length - 1; index >= 0; index -= 1) {
-    const item = value[index];
-    if (item != null && String(item).trim() !== '') return item;
-  }
-  return value[value.length - 1];
-}
-
-function normalizeInteger(value, fallback, min, max) {
-  const submitted = firstSubmittedValue(value);
-  if (submitted == null || String(submitted).trim() === '') return fallback;
-  const number = Number(submitted);
-  if (!Number.isFinite(number)) return fallback;
-  const integer = Math.floor(number);
-  return Math.min(max, Math.max(min, integer));
-}
-
-function productCodeCandidates(value) {
-  if (value == null) return [];
-  if (Array.isArray(value)) return value.flatMap(productCodeCandidates);
-  if (typeof value === 'object') return [];
-  return String(value)
-    .split(/[\r\n,]+/)
-    .map(item => item.trim());
-}
-
-function normalizeHotProductCodes(value) {
-  const seen = new Set();
-  const codes = [];
-  for (const code of productCodeCandidates(value)) {
-    if (!code) continue;
-    const key = code.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    codes.push(code);
-    if (codes.length >= HOT_PRODUCTS_LIMITS.productCodesMax) break;
-  }
-  return codes;
-}
-
-function normalizeHotProductsTrigger(value) {
-  const trigger = normalizeText(firstSubmittedValue(value), 80).toLowerCase();
-  return trigger === 'keyword' ? 'keyword' : HOT_PRODUCTS_DEFAULTS.trigger;
-}
-
-function normalizeHotProductsConfig(value = {}) {
-  const input = jsonObject(value);
-  return {
-    enabled: normalizeBoolean(input.enabled, HOT_PRODUCTS_DEFAULTS.enabled),
-    trigger: normalizeHotProductsTrigger(input.trigger),
-    maxItems: normalizeInteger(
-      input.maxItems,
-      HOT_PRODUCTS_DEFAULTS.maxItems,
-      HOT_PRODUCTS_LIMITS.maxItemsMin,
-      HOT_PRODUCTS_LIMITS.maxItemsMax
-    ),
-    cooldownMs: normalizeInteger(
-      input.cooldownMs,
-      HOT_PRODUCTS_DEFAULTS.cooldownMs,
-      HOT_PRODUCTS_LIMITS.cooldownMsMin,
-      HOT_PRODUCTS_LIMITS.cooldownMsMax
-    ),
-    productCodes: normalizeHotProductCodes(input.productCodes)
-  };
 }
 
 function jsonObject(value) {
