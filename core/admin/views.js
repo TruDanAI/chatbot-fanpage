@@ -1,6 +1,7 @@
 const { normalizeRuleToggles } = require('../rule-toggles');
 const { pageRef } = require('../utils/log-refs');
 const { renderEmptyState, renderGuidanceCard } = require('./wizard-ui');
+const { normalizeHotProductsConfig } = require('./shop-settings-writes');
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -415,10 +416,18 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .settings-form button { width: fit-content; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 7px 11px; cursor: pointer; }
     .settings-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
     .product-operator-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .9fr); gap: 14px; margin: 0 0 18px; align-items: start; }
+    .product-side-stack { display: grid; gap: 14px; }
     .product-work-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
     .product-work-card h2, .product-work-card h3 { margin: 0; color: #17202a; }
     .product-work-card p { margin: 0; }
     .product-work-card > .settings-form, .product-work-card > .product-form { border: 0; padding: 0; margin: 0; background: transparent; }
+    .hot-products-copy { margin: 0; padding-left: 18px; color: #334155; font-size: 13px; line-height: 1.45; }
+    .hot-products-selected-list { display: grid; gap: 8px; }
+    .hot-product-row { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 10px; align-items: center; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 8px; }
+    .hot-product-row strong, .hot-product-row code { overflow-wrap: anywhere; }
+    .hot-product-thumb { width: 48px; height: 48px; border-radius: 6px; border: 1px solid var(--border); background: #ffffff; object-fit: cover; box-sizing: border-box; }
+    .hot-product-thumb-placeholder { display: inline-flex; align-items: center; justify-content: center; color: #64748b; font-size: 12px; border-style: dashed; background: #f1f5f9; }
+    .hot-products-warning-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
     .product-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
     .product-status-item { border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 10px; }
     .product-status-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
@@ -2527,6 +2536,148 @@ function renderAssetStatusActions(shopId = '', asset = {}) {
   `;
 }
 
+function findActiveProductImage(product = {}, assets = []) {
+  return (assets || []).find(asset =>
+    asset.asset_type === 'product_image' &&
+    asset.status === 'active' &&
+    (
+      (asset.product_id && String(asset.product_id) === String(product.id)) ||
+      (asset.product_code && String(asset.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
+    )
+  ) || null;
+}
+
+function productByCode(products = []) {
+  const result = new Map();
+  for (const product of products || []) {
+    const key = String(product.code || '').trim().toLowerCase();
+    if (key && !result.has(key)) result.set(key, product);
+  }
+  return result;
+}
+
+function renderHotProductThumb(product = {}, productImage = null) {
+  if (productImage?.public_url) {
+    return `<img class="hot-product-thumb" src="${escapeHtml(productImage.public_url)}" alt="${escapeHtml(product.name || product.code || 'product')}" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true; this.nextElementSibling.hidden=false;"><span class="hot-product-thumb hot-product-thumb-placeholder" hidden>Ảnh</span>`;
+  }
+  return '<span class="hot-product-thumb hot-product-thumb-placeholder">Ảnh</span>';
+}
+
+function renderHotProductsSelectedList(hotProducts = {}, products = [], assets = []) {
+  const codes = Array.isArray(hotProducts.productCodes) ? hotProducts.productCodes : [];
+  if (!codes.length) {
+    return '<div class="empty">Chưa chọn mã sản phẩm nổi bật.</div>';
+  }
+
+  const byCode = productByCode(products);
+  const warnings = [];
+  const rows = codes.map(code => {
+    const product = byCode.get(String(code || '').trim().toLowerCase());
+    if (!product) {
+      warnings.push(`Mã ${code} không còn trong danh mục hoặc chưa được tạo; đây là cảnh báo stale, không chặn lưu cấu hình.`);
+      return `
+        <div class="hot-product-row" data-hot-product-code="${escapeHtml(code)}">
+          ${renderHotProductThumb({}, null)}
+          <div>
+            <code>${escapeHtml(code)}</code>
+            <div class="meta">Không tìm thấy sản phẩm tương ứng.</div>
+          </div>
+        </div>
+      `;
+    }
+
+    const status = String(product.status || '').toLowerCase();
+    const productImage = findActiveProductImage(product, assets);
+    if (status !== 'active') {
+      warnings.push(`Mã ${product.code} đang ở trạng thái ${status || 'unknown'}; cấu hình vẫn lưu nhưng sẽ cần rà soát trước bước gửi thật.`);
+    } else if (!productImage?.public_url) {
+      warnings.push(`Mã ${product.code} đang hoạt động nhưng thiếu ảnh minh họa.`);
+    }
+
+    return `
+      <div class="hot-product-row" data-hot-product-code="${escapeHtml(product.code || code)}">
+        ${renderHotProductThumb(product, productImage)}
+        <div>
+          <code>${escapeHtml(product.code || code)}</code>
+          <strong>${escapeHtml(product.name || '')}</strong>
+          <div class="meta">${escapeHtml(renderProductStatusText(product.status || 'unknown'))}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const warningHtml = warnings.length
+    ? `<div class="product-catalog-note"><strong>Cảnh báo cấu hình:</strong><ul class="hot-products-warning-list">${warnings.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>`
+    : '<p class="meta">Các mã đã chọn đều đang hoạt động và có ảnh minh họa.</p>';
+
+  return `
+    <div class="hot-products-selected-list">
+      ${rows}
+      ${warningHtml}
+    </div>
+  `;
+}
+
+function renderProductStatusText(value = '') {
+  const status = String(value || '').toLowerCase();
+  if (status === 'active') return 'Hoạt động';
+  if (status === 'hidden') return 'Tạm ẩn';
+  if (status === 'archived') return 'Đã lưu trữ';
+  return status || 'unknown';
+}
+
+function renderHotProductsCard(shopId = '', settings = {}, products = [], assets = []) {
+  const action = `/admin/shops/${encodeRoutePart(shopId)}/settings`;
+  const hotProducts = normalizeHotProductsConfig(settings?.settings_json?.hotProducts || {});
+  const productCodesText = hotProducts.productCodes.join('\n');
+  return `
+    <section class="product-work-card hot-products-card" aria-labelledby="hot-products-heading">
+      <div>
+        <h3 id="hot-products-heading">Hàng hot / Sản phẩm nổi bật</h3>
+        <p class="meta">Chuẩn bị cấu hình; gửi thật sẽ được bật ở bước sau.</p>
+      </div>
+      <ul class="hot-products-copy">
+        <li>Chỉ gửi khi khách hỏi sản phẩm hot trong slice runtime sau.</li>
+        <li>Không thay thế trả lời theo mã sản phẩm.</li>
+        <li>Không tự động chốt đơn.</li>
+      </ul>
+      <form class="settings-form compact hot-products-form" method="post" action="${escapeHtml(action)}">
+        <label class="checkbox-label">
+          <input type="hidden" name="hotProducts_enabled" value="false">
+          <input type="checkbox" name="hotProducts_enabled" value="true"${hotProducts.enabled ? ' checked' : ''}>
+          <span>Bật cấu hình<span class="toggle-desc">Chưa gửi thật qua Messenger ở bước này.</span></span>
+        </label>
+        <label>Trigger
+          <select name="hotProducts_trigger">
+            <option value="keyword"${hotProducts.trigger === 'keyword' ? ' selected' : ''}>keyword</option>
+          </select>
+          <span class="help">Nguồn kích hoạt cố định cho Basic Hot Products.</span>
+        </label>
+        <label>Max items
+          <input name="hotProducts_maxItems" type="number" min="1" max="5" value="${escapeHtml(hotProducts.maxItems)}">
+          <span class="help">Lưu trong khoảng 1-5.</span>
+        </label>
+        <label>Cooldown ms
+          <input name="hotProducts_cooldownMs" type="number" min="10000" max="300000" step="1000" value="${escapeHtml(hotProducts.cooldownMs)}">
+          <span class="help">Lưu trong khoảng 10000-300000.</span>
+        </label>
+        <label class="wide">Mã sản phẩm theo thứ tự
+          <textarea name="hotProducts_productCodes" rows="5" maxlength="1200" placeholder="DB1&#10;DB2">${escapeHtml(productCodesText)}</textarea>
+          <span class="help">Mỗi dòng một mã. Hệ thống tự bỏ trống, dedupe không phân biệt hoa thường và lưu tối đa 20 mã.</span>
+        </label>
+        <div class="form-actions">
+          <button type="submit">Lưu cấu hình hàng hot</button>
+          <span class="meta">Chỉ cập nhật settings_json.hotProducts.</span>
+        </div>
+      </form>
+      <div>
+        <h4 style="margin: 0 0 8px; color: #17202a;">Sản phẩm đã chọn</h4>
+        ${renderHotProductsSelectedList(hotProducts, products, assets)}
+      </div>
+    </section>
+  `;
+}
+
 function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/settings`;
   const botMode = String(settings?.bot_mode || 'disabled');
@@ -3147,26 +3298,29 @@ function renderShopDetailHtml(model = {}) {
               ${renderJsonBlock(model.settings?.settings_json || {})}
             </details>
           </section>
-          <aside class="product-work-card" aria-label="Product catalog status">
-            <div>
-              <h3>Tình trạng danh mục</h3>
-              <p class="meta">Ưu tiên xử lý sản phẩm đang hoạt động trước.</p>
-            </div>
-            <div class="product-status-grid">
-              <div class="product-status-item"><span>Hoạt động</span><strong>${escapeHtml(productStats.active)}</strong></div>
-              <div class="product-status-item"><span>Thiếu ảnh</span><strong>${escapeHtml(productStats.missingImages)}</strong></div>
-              <div class="product-status-item"><span>Ẩn/lưu trữ</span><strong>${escapeHtml(productStats.secondary)}</strong></div>
-            </div>
-            ${productStats.missingImages > 0
-              ? '<div class="product-catalog-note"><strong>Thiếu ảnh:</strong> chỉ là cảnh báo cho sản phẩm đang hoạt động. Bot vẫn có thể tư vấn bằng chữ; bổ sung ảnh ở tab Hình ảnh khi cần.</div>'
-              : '<p class="meta">Sản phẩm đang hoạt động đều có ảnh minh họa.</p>'
-            }
-            <div class="product-primary-actions" aria-label="Primary product actions">
-              <a href="#add-product-section" class="button-link">+ Thêm sản phẩm</a>
-              <a href="#csv-import-section" class="button-link secondary-button">Nhập hàng loạt</a>
-              <a href="#assets" class="button-link secondary-button">Quản lý ảnh</a>
-            </div>
-          </aside>
+          <div class="product-side-stack">
+            <aside class="product-work-card" aria-label="Product catalog status">
+              <div>
+                <h3>Tình trạng danh mục</h3>
+                <p class="meta">Ưu tiên xử lý sản phẩm đang hoạt động trước.</p>
+              </div>
+              <div class="product-status-grid">
+                <div class="product-status-item"><span>Hoạt động</span><strong>${escapeHtml(productStats.active)}</strong></div>
+                <div class="product-status-item"><span>Thiếu ảnh</span><strong>${escapeHtml(productStats.missingImages)}</strong></div>
+                <div class="product-status-item"><span>Ẩn/lưu trữ</span><strong>${escapeHtml(productStats.secondary)}</strong></div>
+              </div>
+              ${productStats.missingImages > 0
+                ? '<div class="product-catalog-note"><strong>Thiếu ảnh:</strong> chỉ là cảnh báo cho sản phẩm đang hoạt động. Bot vẫn có thể tư vấn bằng chữ; bổ sung ảnh ở tab Hình ảnh khi cần.</div>'
+                : '<p class="meta">Sản phẩm đang hoạt động đều có ảnh minh họa.</p>'
+              }
+              <div class="product-primary-actions" aria-label="Primary product actions">
+                <a href="#add-product-section" class="button-link">+ Thêm sản phẩm</a>
+                <a href="#csv-import-section" class="button-link secondary-button">Nhập hàng loạt</a>
+                <a href="#assets" class="button-link secondary-button">Quản lý ảnh</a>
+              </div>
+            </aside>
+            ${renderHotProductsCard(shop.id, model.settings || {}, assetProducts, assetRows)}
+          </div>
         </div>
 
         <section class="product-section">

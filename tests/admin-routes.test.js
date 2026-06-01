@@ -18,6 +18,7 @@ const { createPostgresInternalNoteService } = require('../core/admin/internal-no
 const { createPostgresProductWriteService } = require('../core/admin/product-writes');
 const {
   createPostgresShopSettingsWriteService,
+  normalizeHotProductsConfig,
   normalizeSettingsInput
 } = require('../core/admin/shop-settings-writes');
 const { pageRef } = require('../core/utils/log-refs');
@@ -8171,6 +8172,102 @@ describe('admin dashboard PostgreSQL reader', () => {
     });
   });
 
+  it('shop settings normalization preserves settings and writes hotProducts safely', () => {
+    const input = normalizeSettingsInput({
+      bot_mode: 'menu_code_handoff',
+      handoff_enabled: true,
+      settings_json: {
+        minAge: 18,
+        policies: { privacy: 'masked' },
+        hotCarouselProductCodes: ['LEGACY1', 'legacy2'],
+        ruleToggles: {
+          productCodeLookupEnabled: true,
+          menuSendingEnabled: true,
+          postProductHandoffEnabled: true,
+          fallbackEnabled: true,
+          leadCaptureEnabled: false
+        }
+      }
+    }, {
+      hotProducts_enabled: 'true',
+      hotProducts_trigger: 'keyword',
+      hotProducts_maxItems: '4',
+      hotProducts_cooldownMs: '45000',
+      hotProducts_productCodes: ' DB2 \n db2 \n DB1 \n \n Db3 '
+    });
+
+    expect(input.settings_json.minAge).toBe(18);
+    expect(input.settings_json.policies.privacy).toBe('masked');
+    expect(input.settings_json.hotCarouselProductCodes).toEqual(['LEGACY1', 'legacy2']);
+    expect(input.settings_json.hotProducts).toEqual({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 4,
+      cooldownMs: 45000,
+      productCodes: ['DB2', 'DB1', 'Db3']
+    });
+    expect(input.settings_json.ruleToggles.productCodeLookupEnabled).toBeTrue();
+  });
+
+  it('invalid hotProducts settings input normalizes to defaults', () => {
+    const input = normalizeSettingsInput({
+      bot_mode: 'menu_code_handoff',
+      settings_json: {
+        hotProducts: {
+          enabled: true,
+          trigger: 'keyword',
+          maxItems: 5,
+          cooldownMs: 300000,
+          productCodes: ['DB1']
+        },
+        hotCarouselProductCodes: ['KEEP-ME']
+      }
+    }, {
+      hotProducts: 'not-an-object'
+    });
+
+    expect(input.settings_json.hotProducts).toEqual({
+      enabled: false,
+      trigger: 'keyword',
+      maxItems: 3,
+      cooldownMs: 60000,
+      productCodes: []
+    });
+    expect(input.settings_json.hotCarouselProductCodes).toEqual(['KEEP-ME']);
+  });
+
+  it('hotProducts maxItems cooldown and productCodes are clamped and deduped', () => {
+    const tooHigh = normalizeSettingsInput({}, {
+      hotProducts: {
+        enabled: 'on',
+        trigger: 'ignored',
+        maxItems: 99,
+        cooldownMs: 999999,
+        productCodes: [
+          ' P1 ',
+          'p1',
+          ...Array.from({ length: 25 }, (_, index) => `P${index + 2}`)
+        ]
+      }
+    }).settings_json.hotProducts;
+    const tooLow = normalizeHotProductsConfig({
+      maxItems: 0,
+      cooldownMs: 1,
+      productCodes: [' A ', '', 'a', 'B']
+    });
+
+    expect(tooHigh.enabled).toBeTrue();
+    expect(tooHigh.trigger).toBe('keyword');
+    expect(tooHigh.maxItems).toBe(5);
+    expect(tooHigh.cooldownMs).toBe(300000);
+    expect(tooHigh.productCodes.length).toBe(20);
+    expect(tooHigh.productCodes.slice(0, 3)).toEqual(['P1', 'P2', 'P3']);
+    expect(tooHigh.productCodes[19]).toBe('P20');
+    expect(tooLow.maxItems).toBe(1);
+    expect(tooLow.cooldownMs).toBe(10000);
+    expect(tooLow.productCodes).toEqual(['A', 'B']);
+  });
+
   it('shop settings write service updates settings, writes audit, and commits atomically', async () => {
     const queries = [];
     class FakeClient {
@@ -8531,6 +8628,147 @@ describe('admin audit PostgreSQL writer', () => {
 });
 
 describe('Product Add/Edit Drawer UI', () => {
+  async function createHotProductsModel(hotProducts, overrides = {}) {
+    const baseReader = createDashboardReaderStub();
+    const model = await baseReader.getShopDetail('adult-shop');
+    model.settings.settings_json.hotProducts = hotProducts;
+    if (overrides.settings_json) {
+      model.settings.settings_json = {
+        ...model.settings.settings_json,
+        ...overrides.settings_json
+      };
+    }
+    if (overrides.products) model.products = overrides.products;
+    if (overrides.assets) model.assets = overrides.assets;
+    if (overrides.pages) model.pages = overrides.pages;
+    if (overrides.credentials) model.credentials = overrides.credentials;
+    return model;
+  }
+
+  async function renderHotProductsDetail(model) {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createShopDetailReader(model),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+    return res;
+  }
+
+  it('shop detail HTML includes Hot Products card and renders selected products in configured order', async () => {
+    const model = await createHotProductsModel({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 2,
+      cooldownMs: 45000,
+      productCodes: ['DB2', 'DB1']
+    });
+
+    const res = await renderHotProductsDetail(model);
+    const db2Index = res.body.indexOf('data-hot-product-code="DB2"');
+    const db1Index = res.body.indexOf('data-hot-product-code="DB1"');
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Hàng hot / Sản phẩm nổi bật');
+    expect(res.body).toContain('Chuẩn bị cấu hình; gửi thật sẽ được bật ở bước sau.');
+    expect(res.body).toContain('Chỉ gửi khi khách hỏi sản phẩm hot trong slice runtime sau.');
+    expect(res.body).toContain('Không thay thế trả lời theo mã sản phẩm.');
+    expect(res.body).toContain('Không tự động chốt đơn.');
+    expect(res.body).toContain('class="settings-form compact hot-products-form" method="post" action="/admin/shops/adult-shop/settings"');
+    expect(res.body).toContain('name="hotProducts_enabled" value="true" checked');
+    expect(res.body).toContain('name="hotProducts_trigger"');
+    expect(res.body).toContain('name="hotProducts_maxItems" type="number" min="1" max="5" value="2"');
+    expect(res.body).toContain('name="hotProducts_cooldownMs" type="number" min="10000" max="300000" step="1000" value="45000"');
+    expect(res.body).toContain('textarea name="hotProducts_productCodes"');
+    expect(db2Index >= 0).toBeTrue();
+    expect(db1Index >= 0).toBeTrue();
+    expect(db2Index < db1Index).toBeTrue();
+    expect(res.body).toContain('Hidden Product');
+    expect(res.body).toContain('DB Product');
+    expect(res.body).toContain('https://cdn.example.test/db1.jpg');
+    expect(res.body).toContain('Mã DB2 đang ở trạng thái hidden');
+  });
+
+  it('shop detail Hot Products card warns for missing images hidden archived and missing selected codes', async () => {
+    const base = await createHotProductsModel({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 5,
+      cooldownMs: 60000,
+      productCodes: ['DB1', 'DB2', 'DB3', 'DB4', 'NOPE']
+    });
+    base.products = [
+      ...base.products,
+      {
+        id: 'prod-4',
+        code: 'DB4',
+        name: 'No Image Product',
+        description: 'active selected product without image',
+        price_text: '440k',
+        status: 'active',
+        sort_order: 4,
+        metadata_json: {},
+        updated_at: '2026-05-12T00:40:00.000Z'
+      }
+    ];
+
+    const res = await renderHotProductsDetail(base);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Mã DB4 đang hoạt động nhưng thiếu ảnh minh họa.');
+    expect(res.body).toContain('Mã DB2 đang ở trạng thái hidden');
+    expect(res.body).toContain('Mã DB3 đang ở trạng thái archived');
+    expect(res.body).toContain('Mã NOPE không còn trong danh mục hoặc chưa được tạo; đây là cảnh báo stale, không chặn lưu cấu hình.');
+    expect(res.body).toContain('cấu hình vẫn lưu nhưng sẽ cần rà soát trước bước gửi thật');
+  });
+
+  it('shop detail Hot Products HTML does not expose DB URLs tokens encrypted values or raw Page IDs', async () => {
+    const model = await createHotProductsModel({
+      enabled: true,
+      trigger: 'keyword',
+      maxItems: 1,
+      cooldownMs: 60000,
+      productCodes: ['DB1']
+    }, {
+      settings_json: {
+        databaseUrl: 'postgres://secret-user@localhost/db',
+        token: 'EAAB-secret-token'
+      },
+      pages: [{
+        id: 'adult-page',
+        page_id: '123456789012345',
+        page_name: 'Adult Page',
+        status: 'active',
+        created_at: '2026-05-11T00:00:00.000Z',
+        updated_at: '2026-05-12T00:00:00.000Z'
+      }],
+      credentials: {
+        available: true,
+        active_fb_page_token_count: 1,
+        encrypted_value: 'do-not-return',
+        access_token: 'EAAB-secret-token'
+      }
+    });
+
+    const res = await renderHotProductsDetail(model);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.includes('postgres://secret-user')).toBeFalse();
+    expect(res.body.includes('EAAB-secret-token')).toBeFalse();
+    expect(res.body.includes('encrypted_value')).toBeFalse();
+    expect(res.body.includes('access_token')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+    expect(res.body.includes('123456789012345')).toBeFalse();
+  });
+
   it('shop detail HTML renders reusable drawer/modal markup and keeps form inputs unchanged', async () => {
     const app = createApp();
     registerAdminRoutes(app, {
@@ -8564,7 +8802,20 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('.drawer-backdrop');
     expect(res.body).toContain('.drawer-panel');
 
-    // 3. Verify add product form action/method/input names remain unchanged
+    // 3. Verify settings form action/method/input names remain unchanged
+    expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/settings"');
+    expect(res.body).toContain('name="bot_mode"');
+    expect(res.body).toContain('name="handoff_enabled"');
+    expect(res.body).toContain('name="handoff_message"');
+    expect(res.body).toContain('name="menu_intro_text"');
+    expect(res.body).toContain('name="fallback_text"');
+    expect(res.body).toContain('name="productCodeLookupEnabled"');
+    expect(res.body).toContain('name="menuSendingEnabled"');
+    expect(res.body).toContain('name="postProductHandoffEnabled"');
+    expect(res.body).toContain('name="fallbackEnabled"');
+    expect(res.body).toContain('name="leadCaptureEnabled"');
+
+    // 4. Verify add product form action/method/input names remain unchanged
     expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products"');
     expect(res.body).toContain('name="code"');
     expect(res.body).toContain('name="name"');
@@ -8575,17 +8826,17 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('name="tags"');
     expect(res.body).toContain('name="description"');
 
-    // 4. Verify product edit form action/method/input names remain unchanged
+    // 5. Verify product edit form action/method/input names remain unchanged
     expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/prod-1"');
     expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/prod-2"');
 
-    // 4b. Verify CSV preview form action/method/input names remain unchanged
+    // 5b. Verify CSV preview form action/method/input names remain unchanged
     expect(res.body).toContain('method="post" action="/admin/shops/adult-shop/products/import" data-product-import-form');
     expect(res.body).toContain('textarea name="csv"');
     expect(res.body).toContain('name="validate_only" value="true"');
     expect(res.body).toContain('Xem trước CSV');
 
-    // 5. Verify progressive-enhancement markup: edit trigger + inline fallback form
+    // 6. Verify progressive-enhancement markup: edit trigger + inline fallback form
     expect(res.body).toContain('class="js-edit-product-btn');
     expect(res.body).toContain('class="js-fallback-form-container"');
     expect(res.body).toContain('body.js-enabled #add-product-section');
@@ -8594,9 +8845,10 @@ describe('Product Add/Edit Drawer UI', () => {
     expect(res.body).toContain('Điều khiển nội bộ');
     expect(res.body).toContain('Kịch bản phản hồi Bot');
     expect(res.body).toContain('Tình trạng danh mục');
+    expect(res.body).toContain('Hàng hot / Sản phẩm nổi bật');
     expect(res.body).toContain('Nhập hàng loạt');
 
-    // 6. Verify no raw secrets/DB URLs/tokens/Page IDs in HTML
+    // 7. Verify no raw secrets/DB URLs/tokens/Page IDs in HTML
     expect(res.body.includes('postgres://')).toBeFalse();
     expect(res.body.includes('postgresql://')).toBeFalse();
     expect(res.body.toLowerCase().includes('page_access_token')).toBeFalse();
