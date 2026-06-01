@@ -254,9 +254,37 @@ function createMenuCodeHandoffHandler({
     return requestedCodes.filter(code => code === lastCode);
   }
 
-  function buildProductImageLookupText(code) {
-    const number = String(code || '').match(/\d+/)?.[0];
-    return number ? `ma ${number}` : String(code || '');
+  function foldProductCode(value = '') {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .toUpperCase();
+  }
+
+  function buildNumericProductImageFallbackText(code) {
+    const compact = foldProductCode(code).replace(/\s+/g, '');
+    const match = compact.match(/^(?:MA|M)0*(\d{1,4})$/) || compact.match(/^0*(\d{1,4})$/);
+    if (!match) return '';
+    const number = Number(match[1]);
+    return Number.isFinite(number) && number > 0 ? `ma ${number}` : '';
+  }
+
+  function buildProductImageLookupTexts(code) {
+    const exact = String(code || '').trim();
+    const fallback = buildNumericProductImageFallbackText(exact);
+    return [exact, fallback]
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index);
+  }
+
+  function buildProductImageUrls(code, senderId, baseUrlOverride) {
+    if (typeof buildRequestedImageUrls !== 'function') return [];
+    for (const lookupText of buildProductImageLookupTexts(code)) {
+      const images = buildRequestedImageUrls(lookupText, senderId, baseUrlOverride);
+      if (Array.isArray(images) && images.length) return images;
+    }
+    return [];
   }
 
   async function handleReferralOnly(senderId, baseUrlOverride, options = {}) {
@@ -295,7 +323,7 @@ function createMenuCodeHandoffHandler({
         showTyping(senderId);
         await sendImages(
           senderId,
-          buildRequestedImageUrls(buildProductImageLookupText(codes[0]), senderId, baseUrlOverride),
+          buildProductImageUrls(codes[0], senderId, baseUrlOverride),
           sentImages,
           { pageId: options.pageId, phase: 'product' }
         );

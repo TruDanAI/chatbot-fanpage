@@ -112,35 +112,57 @@ function normalizeAsset(row = {}, productsById = new Map()) {
     id: trimText(row.id),
     shopId: trimText(row.shop_id),
     productId: trimText(row.product_id),
-    productCode: product?.code || '',
+    productCode: product?.code || trimText(row.product_code || row.productCode),
     type: trimText(row.asset_type),
     provider: trimText(row.storage_provider),
     storageKey,
     publicUrl,
     url: publicUrl || (/^https?:\/\//i.test(storageKey) ? storageKey : ''),
     contentType: trimText(row.content_type),
+    status: trimText(row.status),
     sortOrder: numberValue(row.sort_order) || 0
   };
 }
 
+function isActiveAsset(asset = {}) {
+  const status = trimText(asset.status).toLowerCase();
+  return !status || status === 'active';
+}
+
+function productCodeKey(code = '') {
+  return trimText(code).toUpperCase();
+}
+
+function pushGroupedAsset(group, key, asset) {
+  const normalized = trimText(key);
+  if (!normalized) return;
+  if (!group[normalized]) group[normalized] = [];
+  group[normalized].push(asset);
+}
+
+function sortGroupedAssets(group = {}) {
+  for (const list of Object.values(group)) {
+    list.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
+  }
+}
+
 function groupAssets(assets = []) {
   const menuImages = assets
-    .filter(asset => asset.type === 'menu_image' && asset.url)
+    .filter(asset => isActiveAsset(asset) && asset.type === 'menu_image' && asset.url)
     .sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
 
   const productImagesByCode = {};
+  const productImagesByProductId = {};
   for (const asset of assets) {
-    if (asset.type !== 'product_image' || !asset.url || !asset.productCode) continue;
-    const key = String(asset.productCode).toUpperCase();
-    if (!productImagesByCode[key]) productImagesByCode[key] = [];
-    productImagesByCode[key].push(asset);
+    if (!isActiveAsset(asset) || asset.type !== 'product_image' || !asset.url) continue;
+    pushGroupedAsset(productImagesByProductId, asset.productId, asset);
+    pushGroupedAsset(productImagesByCode, productCodeKey(asset.productCode), asset);
   }
 
-  for (const list of Object.values(productImagesByCode)) {
-    list.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
-  }
+  sortGroupedAssets(productImagesByProductId);
+  sortGroupedAssets(productImagesByCode);
 
-  return { menuImages, productImagesByCode };
+  return { menuImages, productImagesByCode, productImagesByProductId };
 }
 
 function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [], assets = [], tenantId = '' } = {}) {
@@ -350,7 +372,7 @@ async function resolveShopConfigForPage({ pageId, tenantId = '', db, client } = 
   const assetResult = await queryable.query(
     `
       SELECT id, shop_id, product_id, asset_type, storage_provider, storage_key,
-             public_url, content_type, sort_order
+             public_url, content_type, status, sort_order
       FROM shop_assets
       WHERE shop_id = $1
         AND status = 'active'

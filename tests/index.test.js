@@ -10,6 +10,7 @@ process.env.USE_GEMINI = 'false';
 
 const {
   buildAbandonedCartReminderText,
+  buildDbShopRuntime,
   createRuntimeAllowlist,
   evaluateDbShopRuntimeAdmission,
   evaluateDbShopRuntimeLiveGate,
@@ -155,6 +156,107 @@ describe('index: Gemini context smoothing', () => {
     expect(history[2].parts[0].text).toContain('MÃ10 giá 150k');
     expect(history[2].parts[0].text).toContain('Tin nhắn khách cần trả lời');
     expect(history[2].parts[0].text).toContain('mẫu đó dùng sao shop');
+  });
+});
+
+function makeNoopMessenger() {
+  return {
+    sendCarousel: async () => {},
+    sendImage: async () => {},
+    sendMessage: async () => {},
+    sendQuickReplies: async () => {},
+    showTyping: () => {}
+  };
+}
+
+function makeDbImageRuntime({ products, assets }) {
+  return buildDbShopRuntime({
+    products,
+    config: {
+      shopName: 'DB Image Shop',
+      botMode: {
+        name: 'menu_code_handoff',
+        aiFallbackEnabled: false,
+        productCodeLookupEnabled: true,
+        menuSendingEnabled: false,
+        postProductHandoffEnabled: true
+      },
+      __assets: assets
+    }
+  }, {
+    storage,
+    messenger: makeNoopMessenger()
+  });
+}
+
+describe('index: DB asset image runtime', () => {
+  it('prefers product-id image assets before product-code and numeric fallback assets', () => {
+    const runtime = makeDbImageRuntime({
+      products: [{
+        id: 'prod-smoke-1',
+        code: 'smoke-1',
+        name: 'Smoke One',
+        price: '120k',
+        description: 'Custom code product'
+      }],
+      assets: {
+        productImagesByProductId: {
+          'prod-smoke-1': [{ id: 'asset-by-id', url: 'https://cdn.example.test/smoke-by-id.png' }]
+        },
+        productImagesByCode: {
+          'SMOKE-1': [{ id: 'asset-by-code', url: 'https://cdn.example.test/smoke-by-code.png' }],
+          'MÃ1': [{ id: 'asset-ma1', url: 'https://cdn.example.test/ma1.png' }]
+        }
+      }
+    });
+
+    const images = runtime.buildRequestedImageUrls('smoke-1');
+
+    expect(images.map(image => image.url)).toEqual(['https://cdn.example.test/smoke-by-id.png']);
+  });
+
+  it('uses normalized product-code image assets when no product-id asset exists', () => {
+    const runtime = makeDbImageRuntime({
+      products: [{
+        id: 'prod-smoke-1',
+        code: 'smoke-1',
+        name: 'Smoke One',
+        price: '120k',
+        description: 'Custom code product'
+      }],
+      assets: {
+        productImagesByProductId: {},
+        productImagesByCode: {
+          'SMOKE-1': [{ id: 'asset-by-code', url: 'https://cdn.example.test/smoke-by-code.png' }]
+        }
+      }
+    });
+
+    const images = runtime.buildRequestedImageUrls('smoke-1');
+
+    expect(images.map(image => image.url)).toEqual(['https://cdn.example.test/smoke-by-code.png']);
+  });
+
+  it('keeps numeric-style product-code fallback for legacy code-keyed assets', () => {
+    const runtime = makeDbImageRuntime({
+      products: [{
+        id: 'prod-10',
+        code: '10',
+        name: 'Numeric Ten',
+        price: '150k',
+        description: 'Numeric code product'
+      }],
+      assets: {
+        productImagesByProductId: {},
+        productImagesByCode: {
+          'MÃ10': [{ id: 'asset-ma10', url: 'https://cdn.example.test/ma10.png' }]
+        }
+      }
+    });
+
+    const images = runtime.buildRequestedImageUrls('10');
+
+    expect(images.map(image => image.url)).toEqual(['https://cdn.example.test/ma10.png']);
   });
 });
 

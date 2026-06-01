@@ -194,7 +194,8 @@ async function waitFor(predicate, message = 'condition was not met') {
 
 function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) {
   const storage = options.storage || makeStorage();
-  const rules = createRuleEngine({ products, config, contextStore: storage });
+  const runtimeProducts = options.products || products;
+  const rules = createRuleEngine({ products: runtimeProducts, config, contextStore: storage });
   const sent = [];
   let geminiCalls = 0;
   let leadParserCalls = 0;
@@ -211,7 +212,7 @@ function createWebhookHarness(config = buildAdultRuntimeConfig(), options = {}) 
   const webhook = createWebhook({
     storage,
     shopConfig: config,
-    products: options.products || products,
+    products: runtimeProducts,
     fbVerifyToken: 'verify',
     fbAppSecret: options.fbAppSecret || '',
     webhookRateLimiter: (_req, _res, next) => next(),
@@ -1052,6 +1053,99 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.getTelegramOperationalAlertCalls()).toBe(0);
     expect(h.getFallbackAttentionCalls()).toBe(0);
     expect(h.getConversationTurnCalls()).toBe(0);
+  });
+
+  it('custom product code lookup uses exact code for product image lookup', async () => {
+    const lookups = [];
+    const h = createWebhookHarness(undefined, {
+      products: [{
+        id: 'prod-smoke-1',
+        code: 'smoke-1',
+        name: 'Smoke One',
+        price: '120k',
+        description: 'Custom smoke product',
+        size: '',
+        weight: '',
+        gift: '',
+        preorder: false,
+        status: 'active'
+      }],
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        lookups.push(String(text || ''));
+        if (String(text || '').toLowerCase() === 'smoke-1') {
+          return [{ file: 'smoke-1.png', url: `${base}/media/smoke-1.png` }];
+        }
+        if (String(text || '').toLowerCase() === 'ma 1') {
+          return [{ file: 'wrong-ma1.png', url: `${base}/media/wrong-ma1.png` }];
+        }
+        return [];
+      }
+    });
+
+    await h.handleText('smoke-1', 'custom_code_image_user', 'm_custom_code_image');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('smoke-1.png'))).toBeTrue();
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('wrong-ma1.png'))).toBeFalse();
+    expect(lookups).toEqual(['SMOKE-1']);
+    expect(textMessages[0]).toContain('120k');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('custom_code_image_user')).toBeTrue();
+  });
+
+  it('custom product code without image does not fall back to numeric product image', async () => {
+    const lookups = [];
+    const h = createWebhookHarness(undefined, {
+      products: [{
+        id: 'prod-noimg-1',
+        code: 'noimg-1',
+        name: 'No Image One',
+        price: '130k',
+        description: 'Custom product without image',
+        size: '',
+        weight: '',
+        gift: '',
+        preorder: false,
+        status: 'active'
+      }],
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        lookups.push(String(text || ''));
+        return String(text || '').toLowerCase() === 'ma 1'
+          ? [{ file: 'wrong-ma1.png', url: `${base}/media/wrong-ma1.png` }]
+          : [];
+      }
+    });
+
+    await h.handleText('noimg-1', 'custom_code_no_image_user', 'm_custom_code_no_image');
+
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(h.sent.some(item => item.type === 'image')).toBeFalse();
+    expect(lookups).toEqual(['NOIMG-1']);
+    expect(textMessages[0]).toContain('130k');
+    expect(textMessages[textMessages.length - 1]).toBe(MENU_CODE_HANDOFF_MESSAGE);
+    expect(h.storage.inHandoff('custom_code_no_image_user')).toBeTrue();
+  });
+
+  it('numeric-style product code keeps ma-number image fallback', async () => {
+    const lookups = [];
+    const h = createWebhookHarness(undefined, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        lookups.push(String(text || ''));
+        return String(text || '').toLowerCase() === 'ma 10'
+          ? [{ file: 'ma10.jpg', url: `${base}/media/ma10.jpg` }]
+          : [];
+      }
+    });
+
+    await h.handleText('cho xem MÃ10', 'numeric_code_fallback_user', 'm_numeric_code_fallback');
+
+    expect(h.sent.some(item => item.type === 'image' && item.url.includes('ma10.jpg'))).toBeTrue();
+    expect(lookups).toEqual(['MÃ10', 'ma 10']);
+    expect(h.storage.getLastProductCode('numeric_code_fallback_user')).toBe('MÃ10');
+    expect(h.storage.inHandoff('numeric_code_fallback_user')).toBeTrue();
   });
 
   it('product-code wording for product 11 sends the product image', async () => {

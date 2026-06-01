@@ -225,7 +225,77 @@ describe('db shop config resolver', () => {
     expect(result.products[0].price).toBe('150k');
     expect(result.config.__assets.menuImages.length).toBe(1);
     expect(result.config.__assets.productImagesByCode.DB1.length).toBe(1);
+    expect(result.config.__assets.productImagesByProductId['prod-db-1'].length).toBe(1);
     expect(JSON.stringify(result.config).includes('hidden.png')).toBeFalse();
+  });
+
+  it('groups active product images by product id and normalized product code within the shop', async () => {
+    const seed = makeSeed();
+    seed.products.push({
+      id: 'prod-smoke-1',
+      shop_id: 'adult-shop',
+      code: 'smoke-1',
+      name: 'Smoke Product 1',
+      description: 'Custom code product',
+      price: 220000,
+      currency: 'VND',
+      status: 'active',
+      sort_order: 2,
+      metadata_json: {}
+    });
+    seed.assets.push(
+      {
+        id: 'smoke-asset-active',
+        shop_id: 'adult-shop',
+        product_id: 'prod-smoke-1',
+        asset_type: 'product_image',
+        storage_provider: 'public_url',
+        storage_key: '',
+        public_url: 'https://cdn.example.test/smoke-1.png',
+        content_type: 'image/png',
+        status: 'active',
+        sort_order: 1
+      },
+      {
+        id: 'smoke-asset-hidden',
+        shop_id: 'adult-shop',
+        product_id: 'prod-smoke-1',
+        asset_type: 'product_image',
+        storage_provider: 'public_url',
+        storage_key: '',
+        public_url: 'https://cdn.example.test/smoke-hidden.png',
+        content_type: 'image/png',
+        status: 'hidden',
+        sort_order: 2
+      },
+      {
+        id: 'smoke-asset-other-shop',
+        shop_id: 'other-shop',
+        product_id: 'prod-smoke-1',
+        asset_type: 'product_image',
+        storage_provider: 'public_url',
+        storage_key: '',
+        public_url: 'https://cdn.example.test/other-shop.png',
+        content_type: 'image/png',
+        status: 'active',
+        sort_order: 1
+      }
+    );
+
+    const client = new FakeShopConfigClient(seed);
+    const result = await resolveShopConfigForPage({
+      pageId: 'page_adult',
+      tenantId: 'tenant_test',
+      client
+    });
+
+    const byProductId = result.config.__assets.productImagesByProductId['prod-smoke-1'];
+    const byCode = result.config.__assets.productImagesByCode['SMOKE-1'];
+    expect(byProductId.map(asset => asset.url)).toEqual(['https://cdn.example.test/smoke-1.png']);
+    expect(byCode.map(asset => asset.url)).toEqual(['https://cdn.example.test/smoke-1.png']);
+    const serialized = JSON.stringify(result.config.__assets);
+    expect(serialized.includes('smoke-hidden.png')).toBeFalse();
+    expect(serialized.includes('other-shop.png')).toBeFalse();
   });
 
   it('falls back to legacy mapping query when control-plane columns are missing', async () => {
