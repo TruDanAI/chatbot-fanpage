@@ -12,6 +12,7 @@ const {
   isHotProductsKeyword,
   resolveHotProducts
 } = require('../hot-products');
+const { createProductDetailResponseHelper } = require('./product-detail-response');
 const { pageRef, shopRef } = require('../utils/log-refs');
 
 // Khách quay lại sau ngần này mới được tự động chào lại bằng menu+cap.
@@ -242,50 +243,20 @@ function createMenuCodeHandoffHandler({
     return true;
   }
 
-  function getSuccessfulRequestedProductCodes(userText, senderId) {
-    if (!productCodeLookupEnabled) return [];
-    const requestedCodes = extractRequestedProductCodes(userText)
-      .map(code => String(code || '').trim().toUpperCase())
-      .filter(Boolean);
-    if (!requestedCodes.length) return [];
-
-    const lastCode = String(storage.getLastProductCode(senderId) || '').trim().toUpperCase();
-    if (!lastCode) return [];
-    return requestedCodes.filter(code => code === lastCode);
-  }
-
-  function foldProductCode(value = '') {
-    return String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[đĐ]/g, 'd')
-      .toUpperCase();
-  }
-
-  function buildNumericProductImageFallbackText(code) {
-    const compact = foldProductCode(code).replace(/\s+/g, '');
-    const match = compact.match(/^(?:MA|M)0*(\d{1,4})$/) || compact.match(/^0*(\d{1,4})$/);
-    if (!match) return '';
-    const number = Number(match[1]);
-    return Number.isFinite(number) && number > 0 ? `ma ${number}` : '';
-  }
-
-  function buildProductImageLookupTexts(code) {
-    const exact = String(code || '').trim();
-    const fallback = buildNumericProductImageFallbackText(exact);
-    return [exact, fallback]
-      .filter(Boolean)
-      .filter((value, index, list) => list.indexOf(value) === index);
-  }
-
-  function buildProductImageUrls(code, senderId, baseUrlOverride) {
-    if (typeof buildRequestedImageUrls !== 'function') return [];
-    for (const lookupText of buildProductImageLookupTexts(code)) {
-      const images = buildRequestedImageUrls(lookupText, senderId, baseUrlOverride);
-      if (Array.isArray(images) && images.length) return images;
-    }
-    return [];
-  }
+  const productDetailResponse = createProductDetailResponseHelper({
+    storage,
+    handoffMs,
+    productCodeLookupEnabled,
+    postProductHandoffEnabled,
+    buildDeterministicReply,
+    extractRequestedProductCodes,
+    buildRequestedImageUrls,
+    sendMessage,
+    sendImages,
+    showTyping,
+    getHandoffMessage: () => getMenuCodeHandoffMessage(shopConfig),
+    markLastUserAt
+  });
 
   async function handleReferralOnly(senderId, baseUrlOverride, options = {}) {
     if (storage.inHandoff(senderId)) {
@@ -312,31 +283,10 @@ function createMenuCodeHandoffHandler({
       return true;
     }
 
-    const requestedCodes = productCodeLookupEnabled
-      ? extractRequestedProductCodes(userText)
-      : [];
-
-    if (requestedCodes.length) {
-      const reply = buildDeterministicReply(userText, senderId);
-      const codes = getSuccessfulRequestedProductCodes(userText, senderId);
-      if (reply && codes.length) {
-        showTyping(senderId);
-        await sendImages(
-          senderId,
-          buildProductImageUrls(codes[0], senderId, baseUrlOverride),
-          sentImages,
-          { pageId: options.pageId, phase: 'product' }
-        );
-        await sendMessage(senderId, reply);
-        if (postProductHandoffEnabled) {
-          await sendMessage(senderId, getMenuCodeHandoffMessage(shopConfig));
-          storage.setHandoff(senderId, Date.now() + handoffMs);
-          console.log(`⏸️  Bật handoff sau khi gửi mã sản phẩm (${codes[0]}): sender_ref=${pageRef(senderId)}`);
-        }
-        markLastUserAt(senderId);
-        return true;
-      }
-    }
+    if (await productDetailResponse.handleProductCodeRequest(senderId, userText, baseUrlOverride, {
+      pageId: options.pageId,
+      requestImageDedupe: sentImages
+    })) return true;
 
     if (isHotProductsKeyword(userText, normalizeText)) {
       const sent = await sendHotProducts(senderId, baseUrlOverride, {
