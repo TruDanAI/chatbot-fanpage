@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const {
   isAiFallbackEnabled,
   isFallbackEnabled,
+  isBasicSalesV2Mode,
   isLeadCaptureEnabled,
   isMenuSendingEnabled,
   isMenuCodeHandoffMode,
@@ -9,6 +10,7 @@ const {
   isPostProductHandoffEnabled,
   isProductCodeLookupEnabled
 } = require('./bot-mode');
+const { createBasicSalesFlowV2Handler } = require('./flows/basic-sales-flow-v2');
 const { createMenuCodeHandoffHandler } = require('./modes/menu-code-handoff');
 const {
   getMessengerSendBlockReason,
@@ -400,6 +402,31 @@ function createWebhook({
     });
   }
 
+  function createRuntimeBasicSalesFlowV2Handler(runtime) {
+    const productCodeLookupEnabled = isProductCodeLookupEnabled(runtime.shopConfig);
+    const menuSendingEnabled = isMenuSendingEnabled(runtime.shopConfig);
+    const postProductHandoffEnabled = isPostProductHandoffEnabled(runtime.shopConfig);
+    return createBasicSalesFlowV2Handler({
+      storage: runtime.storage,
+      shopConfig: runtime.shopConfig,
+      products: runtime.products,
+      handoffMs,
+      productCodeLookupEnabled,
+      menuSendingEnabled,
+      postProductHandoffEnabled,
+      buildDeterministicReply: runtime.buildDeterministicReply,
+      extractRequestedProductCodes: runtime.extractRequestedProductCodes,
+      normalizeText: runtime.normalizeText,
+      sendMessage: runtime.sendMessage,
+      sendImage: runtime.sendImage,
+      showTyping: runtime.showTyping,
+      isGreetingText: runtime.isGreetingText,
+      buildRequestedImageUrls: runtime.buildRequestedImageUrls,
+      shouldSkipRecentHotProductsSend,
+      clearRecentHotProductsSend
+    });
+  }
+
   function materializeRuntime(overrides = {}) {
     const runtime = { ...defaultRuntime, ...overrides };
     runtime.products = Array.isArray(runtime.products)
@@ -412,7 +439,11 @@ function createWebhook({
     runtime.orderFlowEnabled = isOrderFlowEnabled(runtime.shopConfig);
     runtime.fallbackEnabled = isFallbackEnabled(runtime.shopConfig);
     runtime.productCodeLookupEnabled = isProductCodeLookupEnabled(runtime.shopConfig);
-    runtime.menuCodeHandoffMode = isMenuCodeHandoffMode(runtime.shopConfig);
+    runtime.basicSalesV2Mode = isBasicSalesV2Mode(runtime.shopConfig);
+    runtime.menuCodeHandoffMode = !runtime.basicSalesV2Mode && isMenuCodeHandoffMode(runtime.shopConfig);
+    runtime.basicSalesV2Handler = runtime.basicSalesV2Mode
+      ? (runtime.basicSalesV2Handler || createRuntimeBasicSalesFlowV2Handler(runtime))
+      : null;
     runtime.menuCodeHandoffHandler = runtime.menuCodeHandoffMode
       ? (runtime.menuCodeHandoffHandler || createRuntimeMenuCodeHandoffHandler(runtime))
       : null;
@@ -666,6 +697,7 @@ function createWebhook({
       leadCaptureEnabled,
       orderFlowEnabled,
       fallbackEnabled,
+      basicSalesV2Handler,
       menuCodeHandoffMode,
       menuCodeHandoffHandler,
       resolveQuickReplyPayload,
@@ -745,6 +777,22 @@ function createWebhook({
     }
 
     console.log(`📩 customer_message page_ref=${pageRef(pageId)} text_len=${String(userText || '').length}`);
+    if (basicSalesV2Handler) {
+      try {
+        await basicSalesV2Handler.handleEvent(senderId, userText, baseUrlOverride, {
+          pageId,
+          requestImageDedupe
+        });
+      } catch (err) {
+        if (isNonRetryableMessengerSendError(err)) {
+          logMessengerSendBlock({ pageId, senderId, phase: 'basic_sales_v2' }, err);
+          return;
+        }
+        throw err;
+      }
+      return;
+    }
+
     if (menuCodeHandoffHandler) {
       let handled = false;
       try {

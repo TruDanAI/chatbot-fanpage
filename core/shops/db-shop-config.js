@@ -215,6 +215,7 @@ function normalizeShopConfig({ shop = {}, page = {}, settings = {}, products = [
       menuIntroText,
       fallbackText: fallbackReply
     },
+    basicSalesV2: jsonObject(settingsJson.basicSalesV2 || settingsJson.basic_sales_v2),
     hotProducts: normalizeHotProductsConfig(settingsJson.hotProducts),
     hotCarouselProductCodes: jsonArray(settingsJson.hotCarouselProductCodes),
     keywordProducts: {},

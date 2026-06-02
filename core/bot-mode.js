@@ -1,3 +1,4 @@
+const BASIC_SALES_V2 = 'basic_sales_v2';
 const MENU_CODE_HANDOFF = 'menu_code_handoff';
 const {
   MENU_CODE_HANDOFF_MESSAGE,
@@ -56,52 +57,69 @@ function getBotModeName(config = {}) {
   return String(mode.name || '').trim();
 }
 
+function getBasicSalesV2Config(config = {}) {
+  const settingsJson = config.settings_json || config.settingsJson || {};
+  const options = config.basicSalesV2 || settingsJson.basicSalesV2 || settingsJson.basic_sales_v2 || {};
+  return options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+}
+
+function isBasicSalesV2Mode(config = {}) {
+  const options = getBasicSalesV2Config(config);
+  if (options.enabled === false) return false;
+  if (getBotModeName(config) === BASIC_SALES_V2) return true;
+  return options.enabled === true;
+}
+
 function isMenuCodeHandoffMode(config = {}) {
   return getBotModeName(config) === MENU_CODE_HANDOFF;
 }
 
+function isMinimalSalesRuntimeMode(config = {}) {
+  return isMenuCodeHandoffMode(config) || isBasicSalesV2Mode(config);
+}
+
 function isAiFallbackEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'aiFallbackEnabled', false) === true;
 }
 
 function isLeadCaptureEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'leadCaptureEnabled', false) === true;
 }
 
 function isOrderFlowEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'orderFlowEnabled', false) === true;
 }
 
 function isFollowUpEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'followUpEnabled', false) === true;
 }
 
 function isProductCodeLookupEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'productCodeLookupEnabled', true) !== false;
 }
 
 function isMenuSendingEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'menuSendingEnabled', true) !== false;
 }
 
 function isPostProductHandoffEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'postProductHandoffEnabled', true) !== false;
 }
 
 function isFallbackEnabled(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return true;
+  if (!isMinimalSalesRuntimeMode(config)) return true;
   return getFeatureFlag(config, 'fallbackEnabled', true) !== false;
 }
 
 function applyBotModeConfig(config = {}) {
-  if (!isMenuCodeHandoffMode(config)) return config;
+  if (!isMinimalSalesRuntimeMode(config)) return config;
 
   const intents = config.intents || {};
   return {
@@ -130,13 +148,16 @@ function applyBotModeConfig(config = {}) {
 }
 
 module.exports = {
+  BASIC_SALES_V2,
   MENU_CODE_HANDOFF,
   MENU_CODE_HANDOFF_MESSAGE,
   MENU_CODE_MENU_PRICE_REPLY,
   applyBotModeConfig,
+  getBasicSalesV2Config,
   getBotModeName,
   getMenuCodeHandoffMessage,
   isAiFallbackEnabled,
+  isBasicSalesV2Mode,
   isFallbackEnabled,
   isFollowUpEnabled,
   isLeadCaptureEnabled,

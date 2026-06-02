@@ -7,10 +7,13 @@ const { buildQuickReplies, resolveQuickReplyPayload } = require('../core/quick-r
 const shopConfig = require('../shops/adult-shop/config');
 const adultCustomIntents = require('../shops/adult-shop/custom-intents');
 const {
+  BASIC_SALES_V2,
   MENU_CODE_HANDOFF_MESSAGE,
   MENU_CODE_MENU_PRICE_REPLY,
-  applyBotModeConfig
+  applyBotModeConfig,
+  isBasicSalesV2Mode
 } = require('../core/bot-mode');
+const { BASIC_SALES_V2_MENU_REPLY } = require('../core/flows/basic-sales-flow-v2');
 const { HOT_PRODUCTS_EMPTY_REPLY } = require('../core/hot-products');
 
 const products = loadProducts(path.join(__dirname, '..', 'shops', 'adult-shop', 'products.csv'));
@@ -112,6 +115,44 @@ function buildHotProductsRuntimeConfig(hotProducts, overrides = {}) {
     },
     hotProducts
   };
+}
+
+function buildBasicSalesV2RuntimeConfig(overrides = {}) {
+  const {
+    basicSalesV2,
+    botMode,
+    hotProducts,
+    ...restOverrides
+  } = overrides;
+  return applyBotModeConfig({
+    shopName: 'Pilot Test Shop',
+    shopId: 'pilot-test-shop',
+    policies: {
+      ...(shopConfig.policies || {})
+    },
+    recommendations: {},
+    intents: {},
+    templates: {
+      productDetail: '{{productCode}} is {{price}}. {{pitch}}'
+    },
+    ...restOverrides,
+    botMode: {
+      name: BASIC_SALES_V2,
+      aiFallbackEnabled: false,
+      orderFlowEnabled: false,
+      leadCaptureEnabled: false,
+      productCodeLookupEnabled: true,
+      menuSendingEnabled: true,
+      postProductHandoffEnabled: true,
+      handoffMessage: 'Pilot handoff after product detail.',
+      ...(botMode || {})
+    },
+    basicSalesV2: {
+      enabled: true,
+      ...(basicSalesV2 || {})
+    },
+    ...(hotProducts ? { hotProducts } : {})
+  });
 }
 
 function makeEvent(text, senderId = 'sender_1', mid = `mid_${Math.random()}`, pageId = '') {
@@ -2215,6 +2256,112 @@ describe('webhook: menu_code_handoff mode', () => {
     expect(h.storage._customers.length).toBe(0);
     expect(h.getTelegramOperationalAlertCalls()).toBe(0);
     expect(h.getGeminiCalls()).toBe(0);
+  });
+});
+
+describe('webhook: basic_sales_v2 mode', () => {
+  it('adult-shop config remains classic menu_code_handoff, not v2', async () => {
+    const config = buildAdultRuntimeConfig();
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    expect(isBasicSalesV2Mode(config)).toBeFalse();
+
+    await h.handleText('chào shop', 'adult_classic_boundary', 'm_adult_classic_boundary');
+
+    expect(h.sent.length).toBe(3);
+    expect(h.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(h.sent.some(item => item.type === 'text' && item.text === BASIC_SALES_V2_MENU_REPLY)).toBeFalse();
+  });
+
+  it('explicit pilot config selects v2 before classic menu mode', async () => {
+    const config = buildBasicSalesV2RuntimeConfig({
+      botMode: { name: 'menu_code_handoff' },
+      basicSalesV2: { enabled: true }
+    });
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    expect(isBasicSalesV2Mode(config)).toBeTrue();
+
+    await h.handleText('chào shop', 'v2_selected_user', 'm_v2_selected', 'page_v2_selected');
+
+    expect(h.sent).toEqual([{
+      type: 'text',
+      senderId: 'v2_selected_user',
+      text: BASIC_SALES_V2_MENU_REPLY
+    }]);
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+  });
+
+  it('v2 product-code path sends image, detail, and handoff', async () => {
+    const config = buildBasicSalesV2RuntimeConfig();
+    const h = createWebhookHarness(config, { throwOnLeadParse: true });
+
+    await h.handleText('cho xem MÃ8', 'v2_code_user', 'm_v2_code', 'page_v2_code');
+
+    expect(h.sent[0].type).toBe('image');
+    expect(h.sent[0].url).toContain('ma8.png');
+    const textMessages = h.sent.filter(item => item.type === 'text').map(item => item.text);
+    expect(textMessages[0]).toContain('680k');
+    expect(textMessages[1]).toBe('Pilot handoff after product detail.');
+    expect(h.storage.getLastProductCode('v2_code_user')).toBe('MÃ8');
+    expect(h.storage.inHandoff('v2_code_user')).toBeTrue();
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+  });
+
+  it('v2 Hot Products keyword sends configured list and does not hand off', async () => {
+    const config = buildBasicSalesV2RuntimeConfig({
+      hotProducts: {
+        enabled: true,
+        trigger: 'keyword',
+        maxItems: 2,
+        cooldownMs: 60000,
+        productCodes: ['MÃ10', 'MÃ8']
+      }
+    });
+    const h = createWebhookHarness(config, {
+      throwOnLeadParse: true,
+      buildRequestedImageUrls: (text, _senderId, base) => {
+        const value = String(text || '').toUpperCase();
+        if (value.includes('MÃ10')) return [{ file: 'ma10.jpg', url: `${base}/media/ma10.jpg` }];
+        if (value.includes('MÃ8')) return [{ file: 'ma8.png', url: `${base}/media/ma8.png` }];
+        return [];
+      }
+    });
+
+    await h.handleText('sản phẩm nổi bật', 'v2_hot_user', 'm_v2_hot', 'page_v2_hot');
+
+    const text = h.sent.find(item => item.type === 'text').text;
+    expect(text).toContain('🔥 Hàng hot hôm nay');
+    expect(text.indexOf('MÃ10') < text.indexOf('MÃ8')).toBeTrue();
+    expect(text).toContain('MÃ10 - 150k');
+    expect(text).toContain('MÃ8 - 680k');
+    expect(h.sent.filter(item => item.type === 'image').map(item => item.url)).toEqual([
+      'https://example.test/media/ma10.jpg',
+      'https://example.test/media/ma8.png'
+    ]);
+    expect(h.storage.inHandoff('v2_hot_user')).toBeFalse();
+    expect(h.getGeminiCalls()).toBe(0);
+    expect(h.getLeadParserCalls()).toBe(0);
+  });
+
+  it('missing or disabled v2 config stays on classic behavior', async () => {
+    const missing = createWebhookHarness(buildAdultRuntimeConfig(), { throwOnLeadParse: true });
+    await missing.handleText('chào shop', 'v2_missing_user', 'm_v2_missing');
+
+    expect(missing.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(missing.sent.length).toBe(3);
+
+    const disabledConfig = buildAdultRuntimeConfig();
+    disabledConfig.basicSalesV2 = { enabled: false };
+    const disabled = createWebhookHarness(disabledConfig, { throwOnLeadParse: true });
+
+    await disabled.handleText('chào shop', 'v2_disabled_user', 'm_v2_disabled');
+
+    expect(isBasicSalesV2Mode(disabledConfig)).toBeFalse();
+    expect(disabled.sent[0].text).toBe(MENU_CODE_MENU_PRICE_REPLY);
+    expect(disabled.sent.length).toBe(3);
   });
 });
 
