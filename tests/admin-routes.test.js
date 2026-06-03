@@ -4284,9 +4284,52 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('name="postProductHandoffEnabled"');
     expect(res.body).toContain('name="fallbackEnabled"');
     expect(res.body).toContain('name="leadCaptureEnabled"');
+    expect(res.body).toContain('Basic Sales v2 pilot:');
+    expect(res.body).toContain('Basic Sales v2 passed staging smoke');
+    expect(res.body).toContain('No enable-v2 toggle is exposed here');
+    expect(res.body).toContain('AI fallback, order flow, lead capture, follow-up jobs, Telegram alerts, and Sheets writes remain disabled');
+    expect(res.body.includes('value="basic_sales_v2"')).toBeFalse();
+    expect(res.body.includes('name="basicSalesV2')).toBeFalse();
+    expect(res.body.includes('name="basic_sales_v2')).toBeFalse();
     expect(res.body).toContain('Save settings');
     expect(res.body).toContain('Chat behavior settings updated.');
     expect(res.body.includes('do-not-return')).toBeFalse();
+  });
+
+  it('shop detail HTML shows active v2 overlay copy without exposing an enable toggle', async () => {
+    const dashboardReader = createDashboardReaderStub();
+    const getShopDetail = dashboardReader.getShopDetail.bind(dashboardReader);
+    dashboardReader.getShopDetail = async shopId => {
+      const model = await getShopDetail(shopId);
+      model.settings.settings_json.basicSalesV2 = {
+        enabled: true,
+        menuReply: 'Do not render as an input value'
+      };
+      return model;
+    };
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'wizard-smoke-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('V2 pilot overlay active');
+    expect(res.body).toContain('Canonical bot mode remains menu_code_handoff.');
+    expect(res.body).toContain('This shop is using the approved Basic Sales v2 overlay.');
+    expect(res.body).toContain('Rollback: set settings_json.basicSalesV2.enabled=false');
+    expect(res.body.includes('value="basic_sales_v2"')).toBeFalse();
+    expect(res.body.includes('name="basicSalesV2')).toBeFalse();
+    expect(res.body.includes('name="basic_sales_v2')).toBeFalse();
   });
 
   it('shop settings API reads current sanitized settings', async () => {

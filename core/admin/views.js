@@ -415,6 +415,9 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .settings-form .help { color: var(--muted); font-size: 12px; font-weight: 400; text-transform: none; }
     .settings-form button { width: fit-content; min-height: 34px; border: 1px solid var(--primary); border-radius: 6px; background: var(--primary); color: #ffffff; font: inherit; font-size: 13px; font-weight: 700; padding: 7px 11px; cursor: pointer; }
     .settings-form .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+    .v2-pilot-notice { display: grid; gap: 8px; line-height: 1.45; }
+    .v2-pilot-notice p { margin: 0; }
+    .v2-pilot-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
     .product-operator-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .9fr); gap: 14px; margin: 0 0 18px; align-items: start; }
     .product-side-stack { display: grid; gap: 14px; }
     .product-work-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
@@ -2678,6 +2681,44 @@ function renderHotProductsCard(shopId = '', settings = {}, products = [], assets
   `;
 }
 
+function getBasicSalesV2OverlayConfig(settingsJson = {}) {
+  const camel = settingsJson?.basicSalesV2;
+  const snake = settingsJson?.basic_sales_v2;
+  if (camel && typeof camel === 'object' && !Array.isArray(camel)) return camel;
+  if (snake && typeof snake === 'object' && !Array.isArray(snake)) return snake;
+  return {};
+}
+
+function renderBasicSalesV2PilotNotice(settings = {}) {
+  const settingsJson = settings?.settings_json || {};
+  const overlay = getBasicSalesV2OverlayConfig(settingsJson);
+  const overlayEnabled = overlay.enabled === true;
+  const overlayDisabled = overlay.enabled === false;
+  const botMode = String(settings?.bot_mode || 'disabled');
+  const statusHtml = overlayEnabled
+    ? renderStatusLabel('warning', 'V2 pilot overlay active')
+    : renderStatusLabel(overlayDisabled ? 'disabled' : 'neutral', overlayDisabled ? 'V2 overlay off' : 'Classic Basic path');
+  const modeCopy = botMode === 'menu_code_handoff'
+    ? 'Canonical bot mode remains menu_code_handoff.'
+    : `Current canonical bot mode is ${botMode || 'unknown'}; keep approved v2 pilots on menu_code_handoff.`;
+  const stateCopy = overlayEnabled
+    ? 'This shop is using the approved Basic Sales v2 overlay. Menu requests use the v2 text fallback; product codes still send detail, image, and staff handoff.'
+    : 'Basic Sales v2 passed staging smoke, but this shop is still using the classic Basic path until an approved overlay change is made.';
+
+  return `
+    <div class="banner banner-warning wide v2-pilot-notice" role="note" aria-label="Basic Sales v2 pilot status">
+      <strong>Basic Sales v2 pilot:</strong> ${statusHtml}
+      <p>${escapeHtml(stateCopy)}</p>
+      <ul class="v2-pilot-list">
+        <li>${escapeHtml(modeCopy)}</li>
+        <li>No enable-v2 toggle is exposed here; activation requires an approved settings_json.basicSalesV2.enabled change and staging/rollback notes.</li>
+        <li>AI fallback, order flow, lead capture, follow-up jobs, Telegram alerts, and Sheets writes remain disabled for this pilot path.</li>
+        <li>Rollback: set settings_json.basicSalesV2.enabled=false or remove the overlay key; do not switch the bot mode dropdown to a new v2 mode.</li>
+      </ul>
+    </div>
+  `;
+}
+
 function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
   const action = `/admin/shops/${encodeRoutePart(shopId)}/settings`;
   const botMode = String(settings?.bot_mode || 'disabled');
@@ -2711,6 +2752,7 @@ function renderChatBehaviorSettingsForm(shopId = '', settings = {}) {
     .join('');
 
   return `<form class="settings-form" method="post" action="${escapeHtml(action)}">
+    ${renderBasicSalesV2PilotNotice(settings)}
     <label>Bot mode
       <select name="bot_mode">${modeOptions}</select>
       <span class="help">Controls which runtime behavior mode this shop uses. Each mode changes how the bot responds to customer messages.</span>

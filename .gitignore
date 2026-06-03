@@ -4,3 +4,6 @@ data/
 *.log
 .DS_Store
 vars.txt
+
+# Generated smoke/UI artifacts, screenshots, and temporary captures.
+output/
