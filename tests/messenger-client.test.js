@@ -1,6 +1,6 @@
 const { describe, it, expect } = require('./harness');
 const axios = require('axios');
-const { createMessengerClient } = require('../core/messenger-client');
+const { STANDARD_MESSAGING_TYPE, createMessengerClient } = require('../core/messenger-client');
 
 async function withMockedPost(fn) {
   const calls = [];
@@ -166,6 +166,26 @@ describe('messenger client dry-run', () => {
     } finally {
       axios.post = originalPost;
     }
+  });
+
+  it('sends standard automated messages as Messenger RESPONSE payloads without tags', async () => {
+    await withMockedPost(async calls => {
+      const client = createMessengerClient({
+        fbPageToken: 'page-token',
+        dryRun: false
+      });
+
+      await client.sendMessage('sender_1', 'hello');
+      await client.sendQuickReplies('sender_1', 'choose', [{ content_type: 'text', title: 'A', payload: 'A' }]);
+      await client.sendImage('sender_1', 'https://example.test/image.jpg');
+      await client.sendCarousel('sender_1', [{ title: 'Item', image_url: 'https://example.test/item.jpg' }]);
+
+      expect(calls.length).toBe(4);
+      for (const call of calls) {
+        expect(call.payload.messaging_type).toBe(STANDARD_MESSAGING_TYPE);
+        expect(call.payload.tag).toBe(undefined);
+      }
+    });
   });
 
   it('does not fallback to the legacy token when a page-scoped token is empty', async () => {

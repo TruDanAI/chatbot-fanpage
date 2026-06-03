@@ -28,6 +28,7 @@ const {
   resolveDbShopRuntimeForPage,
   resolveEffectiveMessengerDryRun,
   recordConversationTurn,
+  shouldEnableReminderWorkersForShop,
   validateRuntimeAllowlistOnStartup
 } = require('../index');
 const storage = require('../core/storage');
@@ -1136,6 +1137,33 @@ describe('index/storage: nhắc giỏ bỏ dở', () => {
 
     expect(reset).toBeFalse();
     expect(storage.getOrderDraft(userId).cartItems.length).toBe(1);
+  });
+});
+
+describe('index: Messenger reminder worker policy gate', () => {
+  it('keeps automated reminder workers disabled for Basic/minimal sales modes', () => {
+    expect(shouldEnableReminderWorkersForShop({
+      botMode: {
+        name: 'menu_code_handoff',
+        followUpEnabled: true
+      }
+    })).toBeFalse();
+
+    expect(shouldEnableReminderWorkersForShop({
+      botMode: {
+        name: 'menu_code_handoff',
+        followUpEnabled: true
+      },
+      settings_json: {
+        basicSalesV2: { enabled: true }
+      }
+    })).toBeFalse();
+  });
+
+  it('keeps existing non-minimal follow-up worker eligibility', () => {
+    expect(shouldEnableReminderWorkersForShop({
+      botMode: { name: 'full_sales' }
+    })).toBeTrue();
   });
 });
 

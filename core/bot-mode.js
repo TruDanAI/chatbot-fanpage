@@ -163,6 +163,7 @@ module.exports = {
   isLeadCaptureEnabled,
   isMenuSendingEnabled,
   isMenuCodeHandoffMode,
+  isMinimalSalesRuntimeMode,
   isOrderFlowEnabled,
   isPostProductHandoffEnabled,
   isProductCodeLookupEnabled

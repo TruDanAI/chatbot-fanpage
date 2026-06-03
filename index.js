@@ -40,7 +40,8 @@ const {
 const {
   applyBotModeConfig,
   isAiFallbackEnabled,
-  isFollowUpEnabled
+  isFollowUpEnabled,
+  isMinimalSalesRuntimeMode
 } = require('./core/bot-mode');
 const { pageRef, shopRef } = require('./core/utils/log-refs');
 
@@ -370,6 +371,11 @@ function createRuntimeAllowlist(env = process.env) {
 
 function hasRuntimeAllowlist(allowlist = RUNTIME_ALLOWLIST) {
   return Boolean(allowlist?.shopIds?.size || allowlist?.pageIds?.size);
+}
+
+function shouldEnableReminderWorkersForShop(config = {}) {
+  if (isMinimalSalesRuntimeMode(config)) return false;
+  return isFollowUpEnabled(config);
 }
 
 function isAllowedResolvedRuntime({ shopId, pageId } = {}, allowlist = RUNTIME_ALLOWLIST) {
@@ -916,11 +922,11 @@ const {
   STATES,
   trackEvent,
   config: {
-    enabled: ABANDONED_CART_REMINDER_ENABLED && isFollowUpEnabled(shopConfig),
+    enabled: ABANDONED_CART_REMINDER_ENABLED && shouldEnableReminderWorkersForShop(shopConfig),
     reminderMs: ABANDONED_CART_REMINDER_MS,
     scanMs: ABANDONED_CART_REMINDER_SCAN_MS,
     maxAgeMs: ABANDONED_CART_REMINDER_MAX_AGE_MS,
-    engagedFollowUpEnabled: ENGAGED_FOLLOWUP_REMINDER_ENABLED && isFollowUpEnabled(shopConfig),
+    engagedFollowUpEnabled: ENGAGED_FOLLOWUP_REMINDER_ENABLED && shouldEnableReminderWorkersForShop(shopConfig),
     engagedFollowUpMs: ENGAGED_FOLLOWUP_REMINDER_MS,
     engagedFollowUpScanMs: ENGAGED_FOLLOWUP_REMINDER_SCAN_MS,
     engagedFollowUpMaxAgeMs: ENGAGED_FOLLOWUP_REMINDER_MAX_AGE_MS
@@ -1121,6 +1127,7 @@ module.exports = {
   maybeResetTimedOutSession,
   scanAbandonedCartReminders,
   scanEngagedFollowUpReminders,
+  shouldEnableReminderWorkersForShop,
   startAbandonedCartReminderWorker,
   startEngagedFollowUpReminderWorker,
   validateRuntimeAllowlistOnStartup

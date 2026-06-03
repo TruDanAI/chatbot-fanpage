@@ -1,5 +1,8 @@
 const { describe, it, expect } = require('./harness');
-const { createReminderService } = require('../core/reminder-service');
+const {
+  MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS,
+  createReminderService
+} = require('../core/reminder-service');
 
 function createMockStorage() {
   const state = {
@@ -20,10 +23,19 @@ function createMockStorage() {
     listEngagedFollowUpCandidates() {
       return state.candidates.map(item => ({ ...item }));
     },
+    listAbandonedCartReminderCandidates() {
+      return state.candidates.map(item => ({ ...item }));
+    },
     markEngagedFollowUpReminderSent(userId, details) {
       state.sent.push({ userId, ...details });
     },
     markEngagedFollowUpReminderFailed(userId, details) {
+      state.failed.push({ userId, ...details });
+    },
+    markAbandonedCartReminderSent(userId, details) {
+      state.sent.push({ userId, ...details });
+    },
+    markAbandonedCartReminderFailed(userId, details) {
       state.failed.push({ userId, ...details });
     }
   };
@@ -95,6 +107,82 @@ describe('reminder service: engaged follow-up worker', () => {
     expect(sentMessages[0].text.includes('MÃ8')).toBeTrue();
     expect(storage.state.sent.length).toBe(1);
     expect(events.some(event => event.type === 'engaged_followup_reminder_sent')).toBeTrue();
+  });
+
+  it('does not send engaged follow-up after the standard automation window', async () => {
+    const storage = createMockStorage();
+    storage.state.candidates = [{
+      userId: 'u_outside_24h',
+      idleMs: MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS + 60 * 1000,
+      lastProductCode: 'MÃ8'
+    }];
+    let sendCount = 0;
+    const service = createReminderService({
+      storage,
+      shopConfig: {},
+      buildAbandonedCartReminderText: () => '',
+      buildQuickReplies: () => [{ title: 'Xem mẫu hot', payload: 'HOT_PRODUCTS' }],
+      sendQuickReplies: async () => {
+        sendCount += 1;
+      },
+      deriveSessionState: () => 'PRODUCT_SELECTED',
+      STATES: { CONFIRMED: 'CONFIRMED' },
+      trackEvent: () => {},
+      config: {
+        engagedFollowUpEnabled: true,
+        engagedFollowUpMs: 2 * 60 * 60 * 1000,
+        engagedFollowUpMaxAgeMs: 3 * 24 * 60 * 60 * 1000
+      }
+    });
+
+    const count = await service.scanEngagedFollowUpReminders({
+      idleMs: 2 * 60 * 60 * 1000,
+      maxAgeMs: 3 * 24 * 60 * 60 * 1000
+    });
+
+    expect(count).toBe(0);
+    expect(sendCount).toBe(0);
+    expect(storage.state.sent.length).toBe(0);
+  });
+
+  it('does not send abandoned-cart reminders after the standard automation window', async () => {
+    const storage = createMockStorage();
+    storage.state.orderDraft = {
+      cartItems: [{ code: 'MÃ8', name: 'MÃ8', qty: 1 }],
+      phone: '0987654321'
+    };
+    storage.state.candidates = [{
+      userId: 'u_abandoned_outside_24h',
+      idleMs: MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS + 60 * 1000,
+      missingFields: ['name', 'address']
+    }];
+    let sendCount = 0;
+    const service = createReminderService({
+      storage,
+      shopConfig: {},
+      buildAbandonedCartReminderText: () => 'Reminder text',
+      buildQuickReplies: () => [{ title: 'Tiếp tục', payload: 'CHECKOUT_CONTINUE' }],
+      sendQuickReplies: async () => {
+        sendCount += 1;
+      },
+      deriveSessionState: () => 'COLLECTING_INFO',
+      STATES: { CONFIRMED: 'CONFIRMED' },
+      trackEvent: () => {},
+      config: {
+        enabled: true,
+        reminderMs: 20 * 60 * 1000,
+        maxAgeMs: 3 * 24 * 60 * 60 * 1000
+      }
+    });
+
+    const count = await service.scanAbandonedCartReminders({
+      idleMs: 20 * 60 * 1000,
+      maxAgeMs: 3 * 24 * 60 * 60 * 1000
+    });
+
+    expect(count).toBe(0);
+    expect(sendCount).toBe(0);
+    expect(storage.state.sent.length).toBe(0);
   });
 
   it('does not send engaged follow-up when candidate no longer eligible', async () => {

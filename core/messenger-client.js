@@ -1,6 +1,7 @@
 const axios = require('axios');
 
 const BOT_MESSAGE_METADATA = 'shop-bot:auto-reply';
+const STANDARD_MESSAGING_TYPE = 'RESPONSE';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -56,6 +57,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     for (const chunk of chunks) {
       await postFb({
         recipient: { id: recipientId },
+        messaging_type: STANDARD_MESSAGING_TYPE,
         message: { text: chunk, metadata: BOT_MESSAGE_METADATA }
       }, 2, options);
     }
@@ -78,6 +80,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
       if (i === chunks.length - 1) message.quick_replies = replies;
       await postFb({
         recipient: { id: recipientId },
+        messaging_type: STANDARD_MESSAGING_TYPE,
         message
       }, 2, options);
     }
@@ -87,6 +90,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     if (!imageUrl) return;
     await postFb({
       recipient: { id: recipientId },
+      messaging_type: STANDARD_MESSAGING_TYPE,
       message: {
         metadata: BOT_MESSAGE_METADATA,
         attachment: {
@@ -101,6 +105,7 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
     if (!Array.isArray(elements) || !elements.length) return;
     await postFb({
       recipient: { id: recipientId },
+      messaging_type: STANDARD_MESSAGING_TYPE,
       message: {
         metadata: BOT_MESSAGE_METADATA,
         attachment: {
@@ -179,5 +184,6 @@ function createMessengerClient({ fbPageToken, dryRun = false }) {
 
 module.exports = {
   BOT_MESSAGE_METADATA,
+  STANDARD_MESSAGING_TYPE,
   createMessengerClient
 };

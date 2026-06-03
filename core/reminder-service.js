@@ -1,3 +1,21 @@
+const MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+
+function positiveNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function resolveMessengerAutomationMaxAgeMs(value, fallback = MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS, options = {}) {
+  const resolved = positiveNumber(value, fallback);
+  if (options.allowOutsideWindowAutomation === true) return resolved;
+  return Math.min(resolved, MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS);
+}
+
+function isWithinMessengerAutomationWindow(candidate = {}, maxAgeMs = MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS) {
+  const idleMs = Number(candidate.idleMs);
+  return Number.isFinite(idleMs) && idleMs >= 0 && idleMs <= maxAgeMs;
+}
+
 function createReminderService({
   storage,
   shopConfig,
@@ -17,8 +35,15 @@ function createReminderService({
     engagedFollowUpEnabled = false,
     engagedFollowUpMs = 2 * 60 * 60 * 1000,
     engagedFollowUpScanMs = 60 * 1000,
-    engagedFollowUpMaxAgeMs = 3 * 24 * 60 * 60 * 1000
+    engagedFollowUpMaxAgeMs = 3 * 24 * 60 * 60 * 1000,
+    allowOutsideWindowAutomation = false
   } = config;
+  const abandonedCartMaxAgeMs = resolveMessengerAutomationMaxAgeMs(maxAgeMs, MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS, {
+    allowOutsideWindowAutomation
+  });
+  const engagedFollowUpSafeMaxAgeMs = resolveMessengerAutomationMaxAgeMs(engagedFollowUpMaxAgeMs, MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS, {
+    allowOutsideWindowAutomation
+  });
 
   let abandonedCartReminderTimer = null;
   let abandonedCartReminderKickoffTimer = null;
@@ -47,6 +72,10 @@ function createReminderService({
   async function sendAbandonedCartReminder(candidate) {
     const senderId = candidate?.userId;
     if (!senderId || storage.inHandoff(senderId)) return false;
+    const maxSendAgeMs = resolveMessengerAutomationMaxAgeMs(candidate?.maxAgeMs, abandonedCartMaxAgeMs, {
+      allowOutsideWindowAutomation
+    });
+    if (!isWithinMessengerAutomationWindow(candidate, maxSendAgeMs)) return false;
 
     const draft = storage.getOrderDraft(senderId);
     if (draft.abandonedCartReminderSentAt) return false;
@@ -80,15 +109,21 @@ function createReminderService({
     let sent = 0;
 
     try {
+      const effectiveMaxAgeMs = resolveMessengerAutomationMaxAgeMs(options.maxAgeMs, abandonedCartMaxAgeMs, {
+        allowOutsideWindowAutomation
+      });
       const candidates = storage.listAbandonedCartReminderCandidates({
         idleMs: options.idleMs || reminderMs,
-        maxAgeMs: options.maxAgeMs || maxAgeMs,
+        maxAgeMs: effectiveMaxAgeMs,
         limit: options.limit || 50
       });
 
       for (const candidate of candidates) {
         try {
-          if (await sendAbandonedCartReminder(candidate)) sent += 1;
+          if (await sendAbandonedCartReminder({
+            ...candidate,
+            maxAgeMs: effectiveMaxAgeMs
+          })) sent += 1;
         } catch (err) {
           const status = err.response?.status;
           const msg = err.response?.data?.error?.message || err.message;
@@ -117,14 +152,18 @@ function createReminderService({
   async function sendEngagedFollowUpReminder(candidate) {
     const senderId = candidate?.userId;
     if (!senderId || storage.inHandoff(senderId)) return false;
+    const maxSendAgeMs = resolveMessengerAutomationMaxAgeMs(candidate?.maxAgeMs, engagedFollowUpSafeMaxAgeMs, {
+      allowOutsideWindowAutomation
+    });
 
     const latest = storage.listEngagedFollowUpCandidates({
       now: Date.now(),
       idleMs: candidate.idleThresholdMs || engagedFollowUpMs,
-      maxAgeMs: candidate.maxAgeMs || engagedFollowUpMaxAgeMs,
+      maxAgeMs: maxSendAgeMs,
       limit: 200
     }).find(item => item.userId === senderId);
     if (!latest) return false;
+    if (!isWithinMessengerAutomationWindow(latest, maxSendAgeMs)) return false;
 
     const state = deriveSessionState(senderId, storage.getOrderDraft(senderId));
     if (state === STATES.CONFIRMED) return false;
@@ -152,7 +191,9 @@ function createReminderService({
     let sent = 0;
     try {
       const effectiveIdleMs = options.idleMs || engagedFollowUpMs;
-      const effectiveMaxAgeMs = options.maxAgeMs || engagedFollowUpMaxAgeMs;
+      const effectiveMaxAgeMs = resolveMessengerAutomationMaxAgeMs(options.maxAgeMs, engagedFollowUpSafeMaxAgeMs, {
+        allowOutsideWindowAutomation
+      });
       const candidates = storage.listEngagedFollowUpCandidates({
         idleMs: effectiveIdleMs,
         maxAgeMs: effectiveMaxAgeMs,
@@ -211,8 +252,11 @@ function createReminderService({
     abandonedCartReminderKickoffTimer.unref?.();
     abandonedCartReminderTimer = setInterval(run, intervalMs);
     abandonedCartReminderTimer.unref?.();
+    const maxAgeMinutes = Math.round(resolveMessengerAutomationMaxAgeMs(options.maxAgeMs, abandonedCartMaxAgeMs, {
+      allowOutsideWindowAutomation
+    }) / 60000);
     console.log(
-      `🛒 Nhắc giỏ bỏ dở bật: sau ${Math.round((options.idleMs || reminderMs) / 60000)} phút, quét mỗi ${Math.round(intervalMs / 1000)} giây.`
+      `🛒 Nhắc giỏ bỏ dở bật: sau ${Math.round((options.idleMs || reminderMs) / 60000)} phút, tối đa ${maxAgeMinutes} phút, quét mỗi ${Math.round(intervalMs / 1000)} giây.`
     );
     return abandonedCartReminderTimer;
   }
@@ -243,8 +287,11 @@ function createReminderService({
     engagedFollowUpReminderKickoffTimer.unref?.();
     engagedFollowUpReminderTimer = setInterval(run, intervalMs);
     engagedFollowUpReminderTimer.unref?.();
+    const maxAgeMinutes = Math.round(resolveMessengerAutomationMaxAgeMs(options.maxAgeMs, engagedFollowUpSafeMaxAgeMs, {
+      allowOutsideWindowAutomation
+    }) / 60000);
     console.log(
-      `📨 Nhắc mời chào bật: sau ${Math.round((options.idleMs || engagedFollowUpMs) / 60000)} phút, quét mỗi ${Math.round(intervalMs / 1000)} giây.`
+      `📨 Nhắc mời chào bật: sau ${Math.round((options.idleMs || engagedFollowUpMs) / 60000)} phút, tối đa ${maxAgeMinutes} phút, quét mỗi ${Math.round(intervalMs / 1000)} giây.`
     );
     return engagedFollowUpReminderTimer;
   }
@@ -269,5 +316,7 @@ function createReminderService({
 }
 
 module.exports = {
-  createReminderService
+  MESSENGER_STANDARD_AUTOMATION_MAX_AGE_MS,
+  createReminderService,
+  resolveMessengerAutomationMaxAgeMs
 };
