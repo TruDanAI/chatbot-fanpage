@@ -17,6 +17,17 @@ config, data, or assets.
 - [x] No Messenger send errors were observed during the staging test.
 - [x] No wrong-shop routing was observed during the staging test.
 - [x] No `adult-shop` or `demo-shop` side effects were observed.
+- [x] Shop detail Safety tab now includes a read-only Real Page Pilot Gate for
+      P3 dry-run-first setup checks. It does not create mappings, save
+      credentials, change dry-run, call Meta, send Messenger messages, or
+      approve a live window.
+- [x] The Real Page Pilot Gate includes read-only counts for other
+      active/non-archived shops that are dry-run, not dry-run, or live-capable
+      so operators can confirm any exception is intentionally live before the
+      pilot.
+- [x] The Real Page Pilot Gate keeps the P3.2 dry-run-only setup signal
+      incomplete when another active/non-archived shop is not dry-run or is
+      live-capable, until the exception is intentionally reviewed.
 
 ## P0.2 Emergency Control Checkpoint
 
@@ -53,18 +64,31 @@ config, data, or assets.
 
 ## Preconditions Before Touching The Real Page
 
-- [ ] Shop owner has explicitly approved using the real Page.
-- [ ] Shop owner has approved the product/menu content for the pilot.
-- [ ] Staff are online and ready to take over conversations.
-- [ ] Rollback owner is named: `TBD`.
-- [ ] Pilot operator is named: `TBD`.
-- [ ] Monitoring owner is named: `TBD`.
-- [ ] Real Page identity is confirmed by the shop owner without printing raw
+Current status 2026-06-04: P3.1 manual approval gate is complete for P3.2
+dry-run only. Page target is Nem Bui Xa. Trung approved the Page target,
+approved the current menu plus product code `1`, and is the staff tester,
+rollback owner, pilot operator, and monitoring owner for the current test
+window. P3.3 live remains blocked and requires separate explicit approval.
+The `multiple_menu_images` readiness warning is accepted for dry-run only.
+
+- [x] Shop owner has explicitly approved using the real Page.
+- [x] Shop owner has approved the product/menu content for the pilot: current
+      menu plus product code `1`.
+- [x] Staff are online and ready to take over conversations: Trung self-tests
+      and monitors in the current window.
+- [x] Rollback owner is named: `Trung`.
+- [x] Pilot operator is named: `Trung`.
+- [x] Monitoring owner is named: `Trung`.
+- [x] Real Page identity is confirmed by the shop owner without printing raw
       Page IDs in chat or logs.
 - [ ] Real Page has no conflicting active mapping for another shop.
-- [ ] All operators understand the no-go conditions in this checklist.
+- [x] All operators understand the no-go conditions in this checklist.
 
-Do not continue if any item above is incomplete.
+Do not continue to production Page mapping, credential writes, dry-run
+simulation writes, or any live-window work until the remaining conflict check
+and dry-run-only technical gates below are verified. Production DB writes still
+require a fresh verified backup and separate explicit production DB write
+approval.
 
 ## Real Page Dry-Run-Only Steps
 
@@ -80,6 +104,13 @@ are for the approved future pilot window, not for this documentation update.
 - [ ] Add the approved real Page credential for `nem-bui-xa`.
 - [ ] Confirm exactly one active Page mapping exists for `nem-bui-xa`.
 - [ ] Confirm exactly one active Page credential exists for that mapping.
+- [ ] Open the shop detail Safety tab and confirm the Real Page Pilot Gate
+      shows global Messenger dry-run safe, target shop `dry_run=true`,
+      `live_enabled=false`, exactly one active mapping, exactly one active
+      credential, readiness passed, and manual dry-run simulation passed.
+- [ ] Confirm the Real Page Pilot Gate shows either all other active shops are
+      dry-run or every not-dry-run/live-capable exception is intentionally
+      live for the pilot window.
 - [ ] Run a dry-run webhook simulation for the real Page mapping.
 - [ ] Confirm the dry-run menu response resolves to `nem-bui-xa`.
 - [ ] Confirm dry-run code `1` resolves to the approved product and image.

@@ -101,6 +101,7 @@ function createDashboardRepository({
         rows: []
       },
       credentials: createUnavailableSection('multi_shop_schema_not_ready'),
+      pilotIsolation: createUnavailablePilotIsolation(),
       message
     };
   }
@@ -131,6 +132,13 @@ function createDashboardRepository({
       needsSetup: null,
       dryRun: null,
       message
+    };
+  }
+
+  function createUnavailablePilotIsolation(reason = 'multi_shop_schema_not_ready') {
+    return {
+      available: false,
+      reason
     };
   }
 
@@ -234,7 +242,8 @@ function createDashboardRepository({
         settings: null,
         products: [],
         assets: { summary: {}, rows: [] },
-        credentials: createUnavailableSection('shop_not_found')
+        credentials: createUnavailableSection('shop_not_found'),
+        pilotIsolation: createUnavailablePilotIsolation('shop_not_found')
       };
     }
 
@@ -258,7 +267,8 @@ function createDashboardRepository({
           settings: null,
           products: [],
           assets: { summary: {}, rows: [] },
-          credentials: createUnavailableSection('shop_not_found')
+          credentials: createUnavailableSection('shop_not_found'),
+          pilotIsolation: createUnavailablePilotIsolation('shop_not_found')
         };
       }
 
@@ -301,6 +311,29 @@ function createDashboardRepository({
         LEFT JOIN shop_products p ON p.id = a.product_id AND p.shop_id = a.shop_id
         WHERE a.shop_id = $1
         ORDER BY a.asset_type ASC, a.sort_order ASC, a.id ASC
+      `, params);
+      const pilotIsolationResult = await client.query(`
+        SELECT
+          COUNT(*) FILTER (
+            WHERE id <> $1
+              AND COALESCE(status, '') <> 'archived'
+          )::int AS other_shop_count,
+          COUNT(*) FILTER (
+            WHERE id <> $1
+              AND COALESCE(status, '') <> 'archived'
+              AND dry_run IS TRUE
+          )::int AS other_dry_run_count,
+          COUNT(*) FILTER (
+            WHERE id <> $1
+              AND COALESCE(status, '') <> 'archived'
+              AND dry_run IS NOT TRUE
+          )::int AS other_not_dry_run_count,
+          COUNT(*) FILTER (
+            WHERE id <> $1
+              AND COALESCE(status, '') <> 'archived'
+              AND (live_enabled IS TRUE OR COALESCE(lifecycle, '') = 'live')
+          )::int AS other_live_capable_count
+        FROM shops
       `, params);
 
       const summary = {
@@ -375,7 +408,14 @@ function createDashboardRepository({
           summary,
           rows: assetsResult.rows
         },
-        credentials
+        credentials,
+        pilotIsolation: {
+          available: true,
+          other_shop_count: Number(pilotIsolationResult.rows[0]?.other_shop_count || 0),
+          other_dry_run_count: Number(pilotIsolationResult.rows[0]?.other_dry_run_count || 0),
+          other_not_dry_run_count: Number(pilotIsolationResult.rows[0]?.other_not_dry_run_count || 0),
+          other_live_capable_count: Number(pilotIsolationResult.rows[0]?.other_live_capable_count || 0)
+        }
       };
     } catch (err) {
       if (!isMissingMultiShopSchemaError(err)) throw err;

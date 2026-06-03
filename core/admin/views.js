@@ -188,6 +188,127 @@ function getShopBotModeLabel(value = '') {
   return SHOP_BOT_MODE_LABELS[mode] || (mode ? formatLabel(mode) : 'Chưa cấu hình');
 }
 
+function resolveShopListNextAction(shop = {}) {
+  const shopId = shop.id || shop.slug || '';
+  const detailHref = `/admin/shops/${encodeRoutePart(shopId)}`;
+  const status = normalizeStatusText(shop.status, '');
+  const lifecycle = normalizeStatusText(shop.lifecycle, '');
+  const readiness = normalizeStatusText(shop.last_readiness_status);
+  const manualTest = normalizeStatusText(shop.last_manual_test_status);
+  const activePages = Number(shop.active_page_count || 0);
+  const products = Number(shop.product_count || 0);
+  const assets = Number(shop.asset_count || 0);
+  const isLive = shop.live_enabled === true || lifecycle === 'live';
+
+  if (status === 'archived' || lifecycle === 'archived') {
+    return {
+      state: 'archived',
+      stateLabel: 'Đã lưu trữ',
+      title: 'Không thao tác live',
+      href: detailHref,
+      label: 'Xem chi tiết',
+      detail: 'Chỉ xem lại lịch sử hoặc dữ liệu đã lưu.'
+    };
+  }
+  if (status === 'paused' || lifecycle === 'paused') {
+    return {
+      state: 'paused',
+      stateLabel: 'Đang tạm dừng',
+      title: 'Kiểm tra Safety',
+      href: `${detailHref}#safety`,
+      label: 'Mở Safety',
+      detail: 'Resume chỉ khi chủ shop và người trực đã sẵn sàng.'
+    };
+  }
+  if (activePages < 1) {
+    return {
+      state: 'failed',
+      stateLabel: 'Thiếu Fanpage',
+      title: 'Kết nối Fanpage',
+      href: `${detailHref}#pages`,
+      label: 'Mở Fanpage Connection',
+      detail: 'Giữ dry-run khi chuẩn bị Page mapping.'
+    };
+  }
+  if (products < 1) {
+    return {
+      state: 'failed',
+      stateLabel: 'Thiếu sản phẩm',
+      title: 'Thêm sản phẩm',
+      href: `${detailHref}#products`,
+      label: 'Mở Products',
+      detail: 'Cần ít nhất một sản phẩm trước khi test.'
+    };
+  }
+  if (assets < 1) {
+    return {
+      state: 'paused',
+      stateLabel: 'Thiếu ảnh',
+      title: 'Kiểm tra ảnh',
+      href: `${detailHref}#assets`,
+      label: 'Mở Images',
+      detail: 'Xác nhận menu/product image trước pilot.'
+    };
+  }
+  if (readiness !== 'passed') {
+    return {
+      state: 'failed',
+      stateLabel: 'Cần readiness',
+      title: 'Chạy readiness',
+      href: `${detailHref}#safety`,
+      label: 'Mở Safety',
+      detail: 'Chỉ cập nhật trạng thái kiểm tra, không gửi Messenger.'
+    };
+  }
+  if (manualTest !== 'passed') {
+    return {
+      state: 'paused',
+      stateLabel: 'Cần test',
+      title: 'Chạy dry-run simulation',
+      href: `/admin/wizard/${encodeRoutePart(shopId)}/step/6`,
+      label: 'Mở simulation',
+      detail: 'Giữ global và shop dry-run khi test.'
+    };
+  }
+  if (isLive) {
+    return {
+      state: 'active',
+      stateLabel: 'Đang live',
+      title: 'Giám sát vận hành',
+      href: `${detailHref}#overview`,
+      label: 'Mở overview',
+      detail: 'Theo dõi lỗi gửi, handoff và routing.'
+    };
+  }
+  if (shop.dry_run === true) {
+    return {
+      state: 'paused',
+      stateLabel: 'Pilot blocked',
+      title: 'Kiểm tra P3 gate',
+      href: `${detailHref}#real-page-pilot-gate`,
+      label: 'Mở Pilot Gate',
+      detail: 'Live window vẫn chờ real Page, content, staff và owners.'
+    };
+  }
+  return {
+    state: 'paused',
+    stateLabel: 'Cần xác nhận',
+    title: 'Xem Safety',
+    href: `${detailHref}#safety`,
+    label: 'Mở Safety',
+    detail: 'Xác nhận trạng thái dry-run/live trước thao tác tiếp.'
+  };
+}
+
+function renderShopListNextAction(shop = {}) {
+  const action = resolveShopListNextAction(shop);
+  return `<div class="shop-next-action">
+    <strong>${renderStatusLabel(action.state, action.stateLabel)} ${escapeHtml(action.title)}</strong>
+    <a href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a><br>
+    <span class="meta">${escapeHtml(action.detail)}</span>
+  </div>`;
+}
+
 function shopNeedsSetup(shop = {}) {
   const status = normalizeStatusText(shop.status, '');
   if (status === 'archived') return false;
@@ -473,6 +594,9 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .shop-state-stack { display: flex; gap: 6px; flex-wrap: wrap; }
     .shop-metrics { color: #334155; font-size: 13px; line-height: 1.45; }
     .shop-metrics strong { color: #17202a; }
+    .shop-next-action { min-width: 190px; color: #334155; font-size: 13px; line-height: 1.45; }
+    .shop-next-action strong { display: block; color: #17202a; margin-bottom: 4px; }
+    .shop-next-action a { font-weight: 700; }
     .login-branding { margin-bottom: 14px; }
     .login-branding h2 { font-size: 20px; margin: 0 0 4px; color: #17202a; }
     .login-branding p { margin: 0; color: var(--muted); font-size: 13px; }
@@ -1235,7 +1359,7 @@ function renderShopsHtml(model = {}) {
     : '';
   const wizardLink = '<a class="button-link secondary" href="/admin/wizard/new">Mở Setup Wizard</a>';
   const shopsContent = shops.length
-    ? renderTable(['shop', 'trạng thái', 'chạy live/test', 'readiness', 'kết nối', 'dữ liệu', 'bot', 'cập nhật'], shops, shop => `
+    ? renderTable(['shop', 'trạng thái', 'chạy live/test', 'readiness', 'bước an toàn', 'kết nối', 'dữ liệu', 'bot', 'cập nhật'], shops, shop => `
       <tr>
         <td>
           <a class="shop-name-link" href="/admin/shops/${encodeRoutePart(shop.id)}">${escapeHtml(getShopPrimaryLabel(shop))}</a><br>
@@ -1244,6 +1368,7 @@ function renderShopsHtml(model = {}) {
         <td><div class="shop-state-stack">${renderShopStatusBadge(shop.status)}${renderShopLifecycleBadge(shop.lifecycle || 'unknown')}</div></td>
         <td>${renderShopLiveBadge(shop)}</td>
         <td>${renderShopReadinessBadge(shop.last_readiness_status || 'unknown')}</td>
+        <td>${renderShopListNextAction(shop)}</td>
         <td class="shop-metrics"><strong>${escapeHtml(shop.active_page_count || 0)}</strong> trang active / ${escapeHtml(shop.page_count || 0)} tổng</td>
         <td class="shop-metrics"><strong>${escapeHtml(shop.product_count || 0)}</strong> sản phẩm<br><strong>${escapeHtml(shop.asset_count || 0)}</strong> ảnh</td>
         <td>${escapeHtml(getShopBotModeLabel(shop.bot_mode || ''))}</td>
@@ -2231,6 +2356,109 @@ function renderDeleteDraftShopSection(shop = {}, model = {}) {
   }
 }
 
+function resolveGlobalMessengerDryRunState(env = process.env) {
+  const raw = String(env.MESSENGER_DRY_RUN || '').trim().toLowerCase();
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  return null;
+}
+
+function renderPilotGateStatus(passed) {
+  if (passed === true) return renderStatus('pass');
+  if (passed === false) return renderStatus('fail');
+  return renderStatusLabel('unknown', 'manual check');
+}
+
+function renderPilotGateRow(label = '', passed = null, detail = '') {
+  return `<tr><th>${escapeHtml(label)}</th><td>${renderPilotGateStatus(passed)}${detail ? `<br><span class="meta">${escapeHtml(detail)}</span>` : ''}</td></tr>`;
+}
+
+function resolvePilotIsolationGate(pilotIsolation = {}) {
+  if (!pilotIsolation || pilotIsolation.available === false) {
+    return {
+      status: null,
+      detail: `Other-shop isolation counts are unavailable (${pilotIsolation?.reason || 'unknown'}). Verify from the shop list before pilot.`
+    };
+  }
+  const otherShopCount = Number(pilotIsolation.other_shop_count || 0);
+  const otherDryRunCount = Number(pilotIsolation.other_dry_run_count || 0);
+  const otherNotDryRunCount = Number(pilotIsolation.other_not_dry_run_count || 0);
+  const otherLiveCapableCount = Number(pilotIsolation.other_live_capable_count || 0);
+  const detail = `${otherDryRunCount}/${otherShopCount} other active/non-archived shop(s) are dry-run; ${otherNotDryRunCount} not dry-run; ${otherLiveCapableCount} live-capable.`;
+  if (otherShopCount === 0 || (otherNotDryRunCount === 0 && otherLiveCapableCount === 0)) {
+    return { status: true, detail };
+  }
+  return {
+    status: null,
+    detail: `${detail} Confirm every exception is intentionally live before this pilot.`
+  };
+}
+
+function renderRealPagePilotGate(shop = {}, model = {}) {
+  const pages = Array.isArray(model.pages) ? model.pages : [];
+  const activeMappings = pages.filter(page => pageStatus(page) === 'active');
+  const activeCredentialCount = resolveActiveCredentialCount(model, activeMappings);
+  const pilotIsolationGate = resolvePilotIsolationGate(model.pilotIsolation || {});
+  const globalDryRun = resolveGlobalMessengerDryRunState();
+  const readinessPassed = String(shop.last_readiness_status || '').trim().toLowerCase() === 'passed';
+  const manualTestPassed = String(shop.last_manual_test_status || '').trim().toLowerCase() === 'passed';
+  const shopDryRunSafe = shop.dry_run === true;
+  const liveFlagSafe = shop.live_enabled === false;
+  const activeMappingReady = activeMappings.length === 1;
+  const credentialReady = activeCredentialCount === 1;
+  const dryRunSetupReady = globalDryRun === true
+    && shopDryRunSafe
+    && liveFlagSafe
+    && activeMappingReady
+    && credentialReady
+    && readinessPassed
+    && manualTestPassed
+    && pilotIsolationGate.status === true;
+  const globalDryRunDetail = globalDryRun === true
+    ? 'MESSENGER_DRY_RUN=true in this running admin process.'
+    : (globalDryRun === false
+      ? 'MESSENGER_DRY_RUN=false in this running admin process; do not run real Page simulation from this state.'
+      : 'Global Messenger dry-run is not visible to this process. Verify environment before simulation.');
+  const simulationLink = shop.id && !isAdultShopView(shop)
+    ? `<a class="button-link secondary-button" href="/admin/wizard/${escapeHtml(encodeRoutePart(shop.id || ''))}/step/6">Open dry-run simulation</a>`
+    : '<button type="button" class="connection-action-disabled" disabled>Dry-run simulation unavailable for protected shop</button>';
+
+  return `<section class="safety-section" id="real-page-pilot-gate" aria-labelledby="real-page-pilot-gate-title">
+    <h3 id="real-page-pilot-gate-title">Real Page Pilot Gate</h3>
+    <p class="meta">Read-only P3 checkpoint for the next shop pilot. This panel does not create mappings, save credentials, change dry-run, call Meta, or send Messenger messages.</p>
+    <table class="safety-status-table"><tbody>
+      ${renderPilotGateRow('Owner/Page approval', null, 'Must be recorded for the specific Page before real Page setup.')}
+      ${renderPilotGateRow('Product/menu approval', null, 'Shop owner must approve customer-facing product and menu content.')}
+      ${renderPilotGateRow('Staff and owners named', null, 'Staff online, rollback owner, pilot operator, and monitoring owner must be known for the window.')}
+      ${renderPilotGateRow('Global Messenger dry-run', globalDryRun == null ? null : globalDryRun === true, globalDryRunDetail)}
+      ${renderPilotGateRow('Target shop dry_run', shopDryRunSafe, shopDryRunSafe ? 'Target shop is still in test-safe mode.' : 'Target shop dry_run is not true. Re-enable dry-run before dry-run-only setup.')}
+      ${renderPilotGateRow('live_enabled', liveFlagSafe, liveFlagSafe ? 'Live flag is off for dry-run-only setup.' : 'live_enabled is on. Disable or pause before dry-run-only setup.')}
+      ${renderPilotGateRow('Active Page mappings', activeMappingReady, `${activeMappings.length} active mapping(s); expected exactly 1 for the target shop.`)}
+      ${renderPilotGateRow('Active Page credentials', credentialReady, `${activeCredentialCount} active credential(s); expected exactly 1 for the active mapping.`)}
+      ${renderPilotGateRow('Readiness check', readinessPassed, `Current readiness: ${shop.last_readiness_status || 'unknown'}.`)}
+      ${renderPilotGateRow('Dry-run simulation/manual test', manualTestPassed, `Current manual test: ${shop.last_manual_test_status || 'unknown'}.`)}
+      ${renderPilotGateRow('All other shops dry-run', pilotIsolationGate.status, pilotIsolationGate.detail)}
+    </tbody></table>
+    <div class="safety-callouts">
+      <div class="banner ${dryRunSetupReady ? 'banner-success' : 'banner-warning'}" role="status">
+        <strong>${dryRunSetupReady ? 'P3.2 dry-run-only setup signals are complete.' : 'P3.2 dry-run-only setup is not fully ready.'}</strong>
+        ${dryRunSetupReady
+          ? 'The controlled live window still requires separate explicit approval and the checklist owners above.'
+          : 'Complete failed signals and manual approvals before requesting a controlled live window.'}
+      </div>
+      <div class="banner banner-warning" role="status">
+        <strong>Controlled live window remains blocked.</strong>
+        Only test menu and one approved product code after explicit approval; roll back on send error, wrong product/image, wrong-shop routing, or staff unavailability.
+      </div>
+    </div>
+    <div class="form-actions">
+      <a class="button-link secondary-button" href="#pages">Review Fanpage Connection</a>
+      <a class="button-link secondary-button" href="#overview">Review health and readiness</a>
+      ${simulationLink}
+    </div>
+  </section>`;
+}
+
 function renderControlPlaneForm(shop = {}, model = {}) {
   const onboarding = model.onboarding || {};
   const action = `/admin/shops/${encodeRoutePart(shop.id)}/control-plane`;
@@ -2273,6 +2501,8 @@ function renderControlPlaneForm(shop = {}, model = {}) {
           </div>
         </form>
       </section>
+
+      ${renderRealPagePilotGate(shop, model)}
 
       <section class="safety-section" aria-labelledby="safety-operate">
         <h3 id="safety-operate">Operate</h3>

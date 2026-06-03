@@ -98,6 +98,16 @@ function makeClientClass({
         const id = params[0];
         return { rows: state.shops.filter(shop => shop.id === id || shop.slug === id).slice(0, 1) };
       }
+      if (normalized.includes('other_shop_count') && normalized.includes('FROM shops')) {
+        return {
+          rows: [{
+            other_shop_count: 0,
+            other_dry_run_count: 0,
+            other_not_dry_run_count: 0,
+            other_live_capable_count: 0
+          }]
+        };
+      }
       if (normalized.includes('FROM shop_pages')) return { rows: [] };
       if (normalized.includes('FROM shop_settings')) return { rows: [] };
       if (normalized.includes('FROM shop_assets')) return { rows: [] };

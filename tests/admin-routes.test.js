@@ -630,6 +630,13 @@ function createOnboardingShopDetailModel(overrides = {}) {
       active_fb_page_token_count: 0,
       encrypted_value: 'do-not-return',
       access_token: 'do-not-return'
+    },
+    pilotIsolation: {
+      available: true,
+      other_shop_count: 0,
+      other_dry_run_count: 0,
+      other_not_dry_run_count: 0,
+      other_live_capable_count: 0
     }
   };
   const assetOverrides = overrides.assets || {};
@@ -649,6 +656,10 @@ function createOnboardingShopDetailModel(overrides = {}) {
     credentials: {
       ...base.credentials,
       ...(overrides.credentials || {})
+    },
+    pilotIsolation: {
+      ...base.pilotIsolation,
+      ...(overrides.pilotIsolation || {})
     }
   };
 }
@@ -4137,6 +4148,172 @@ describe('admin dashboard routes', () => {
     expect(res.body.includes('do-not-return')).toBeFalse();
   });
 
+  it('shop detail Safety tab renders the real Page pilot gate safely', async () => {
+    const rawPageId = '123456789012345';
+    const previousDryRun = process.env.MESSENGER_DRY_RUN;
+    process.env.MESSENGER_DRY_RUN = 'true';
+    try {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+          shop: {
+            id: 'pilot-shop',
+            slug: 'pilot-shop',
+            status: 'active',
+            lifecycle: 'configuring',
+            dry_run: true,
+            live_enabled: false,
+            last_readiness_status: 'passed',
+            last_readiness_checked_at: '2026-05-12T00:30:00.000Z',
+            last_manual_test_status: 'passed',
+            last_manual_test_at: '2026-05-12T00:45:00.000Z'
+          },
+          settings: {
+            bot_mode: 'menu_code_handoff',
+            handoff_enabled: true,
+            settings_json: {}
+          },
+          pages: [{
+            id: 'page-map-1',
+            page_id: rawPageId,
+            page_ref: pageRef(rawPageId),
+            page_name: 'Pilot Page',
+            status: 'active',
+            active_credential_count: 1,
+            updated_at: '2026-05-12T00:20:00.000Z'
+          }],
+          products: [{
+            id: 'prod-1',
+            code: '1',
+            name: 'Pilot Product',
+            status: 'active',
+            sort_order: 1
+          }],
+          credentials: {
+            available: true,
+            active_fb_page_token_count: 1,
+            encrypted_value: 'do-not-return',
+            access_token: 'do-not-return'
+          },
+          pilotIsolation: {
+            available: true,
+            other_shop_count: 2,
+            other_dry_run_count: 2,
+            other_not_dry_run_count: 0,
+            other_live_capable_count: 0
+          }
+        })),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'pilot-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('Real Page Pilot Gate');
+      expect(res.body).toContain('Owner/Page approval');
+      expect(res.body).toContain('Product/menu approval');
+      expect(res.body).toContain('Staff and owners named');
+      expect(res.body).toContain('Global Messenger dry-run');
+      expect(res.body).toContain('MESSENGER_DRY_RUN=true in this running admin process.');
+      expect(res.body).toContain('Active Page mappings');
+      expect(res.body).toContain('1 active mapping(s); expected exactly 1 for the target shop.');
+      expect(res.body).toContain('Active Page credentials');
+      expect(res.body).toContain('1 active credential(s); expected exactly 1 for the active mapping.');
+      expect(res.body).toContain('All other shops dry-run');
+      expect(res.body).toContain('2/2 other active/non-archived shop(s) are dry-run; 0 not dry-run; 0 live-capable.');
+      expect(res.body).toContain('P3.2 dry-run-only setup signals are complete.');
+      expect(res.body).toContain('Controlled live window remains blocked.');
+      expect(res.body).toContain('href="/admin/wizard/pilot-shop/step/6"');
+      expect(res.body.includes(rawPageId)).toBeFalse();
+      expect(res.body.includes('encrypted_value')).toBeFalse();
+      expect(res.body.includes('access_token')).toBeFalse();
+      expect(res.body.includes('do-not-return')).toBeFalse();
+    } finally {
+      if (previousDryRun == null) {
+        delete process.env.MESSENGER_DRY_RUN;
+      } else {
+        process.env.MESSENGER_DRY_RUN = previousDryRun;
+      }
+    }
+  });
+
+  it('shop detail Safety tab keeps the real Page pilot gate blocked when other shops are live-capable', async () => {
+    const previousDryRun = process.env.MESSENGER_DRY_RUN;
+    process.env.MESSENGER_DRY_RUN = 'true';
+    try {
+      const app = createApp();
+      registerAdminRoutes(app, {
+        storage: createStorageStub(),
+        adminExportToken: 'secret',
+        getClientIp: () => '127.0.0.1',
+        dashboardReader: createShopDetailReader(createOnboardingShopDetailModel({
+          shop: {
+            id: 'pilot-shop',
+            slug: 'pilot-shop',
+            status: 'active',
+            lifecycle: 'configuring',
+            dry_run: true,
+            live_enabled: false,
+            last_readiness_status: 'passed',
+            last_manual_test_status: 'passed'
+          },
+          pages: [{
+            id: 'page-map-1',
+            page_ref: 'p:safe-ref',
+            page_name: 'Pilot Page',
+            status: 'active',
+            active_credential_count: 1
+          }],
+          products: [{
+            id: 'prod-1',
+            code: '1',
+            name: 'Pilot Product',
+            status: 'active',
+            sort_order: 1
+          }],
+          credentials: {
+            available: true,
+            active_fb_page_token_count: 1
+          },
+          pilotIsolation: {
+            available: true,
+            other_shop_count: 2,
+            other_dry_run_count: 1,
+            other_not_dry_run_count: 1,
+            other_live_capable_count: 1
+          }
+        })),
+        adminPrincipalRoles: ['maintainer']
+      });
+
+      const res = createRes();
+      await app.routes['/admin/shops/:shopId'](createReq({
+        headers: { authorization: 'Bearer secret' },
+        params: { shopId: 'pilot-shop' }
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('All other shops dry-run');
+      expect(res.body).toContain('1/2 other active/non-archived shop(s) are dry-run; 1 not dry-run; 1 live-capable.');
+      expect(res.body).toContain('Confirm every exception is intentionally live before this pilot.');
+      expect(res.body).toContain('P3.2 dry-run-only setup is not fully ready.');
+      expect(res.body.includes('P3.2 dry-run-only setup signals are complete.')).toBeFalse();
+    } finally {
+      if (previousDryRun == null) {
+        delete process.env.MESSENGER_DRY_RUN;
+      } else {
+        process.env.MESSENGER_DRY_RUN = previousDryRun;
+      }
+    }
+  });
+
   it('shop detail HTML shows current dry-run state and the matching emergency control', async () => {
     for (const item of [
       {
@@ -4586,6 +4763,23 @@ describe('admin dashboard routes', () => {
         asset_count: 0,
         bot_mode: 'handoff_only',
         updated_at: '2026-05-14T00:00:00.000Z'
+      }, {
+        id: 'pilot-ready-shop',
+        slug: 'pilot-ready-shop',
+        name: 'Pilot Ready Shop',
+        status: 'active',
+        package: 'basic',
+        lifecycle: 'configuring',
+        dry_run: true,
+        live_enabled: false,
+        last_readiness_status: 'passed',
+        last_manual_test_status: 'passed',
+        page_count: 1,
+        active_page_count: 1,
+        product_count: 1,
+        asset_count: 1,
+        bot_mode: 'menu_code_handoff',
+        updated_at: '2026-05-15T00:00:00.000Z'
       }]
     });
     const app = createApp();
@@ -4619,6 +4813,17 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Đang cấu hình');
     expect(res.body).toContain('Cần xử lý');
     expect(res.body).toContain('Chưa kiểm tra');
+    expect(res.body).toContain('bước an toàn');
+    expect(res.body).toContain('Thiếu Fanpage');
+    expect(res.body).toContain('Kết nối Fanpage');
+    expect(res.body).toContain('href="/admin/shops/needs-setup-shop#pages"');
+    expect(res.body).toContain('Đang tạm dừng');
+    expect(res.body).toContain('Kiểm tra Safety');
+    expect(res.body).toContain('href="/admin/shops/failed-shop#safety"');
+    expect(res.body).toContain('Pilot blocked');
+    expect(res.body).toContain('Kiểm tra P3 gate');
+    expect(res.body).toContain('href="/admin/shops/pilot-ready-shop#real-page-pilot-gate"');
+    expect(res.body).toContain('Live window vẫn chờ real Page, content, staff và owners.');
     expect(res.body).toContain('Menu + bàn giao');
     expect(res.body).toContain('Chỉ gửi menu');
     expect(res.body).toContain(pageRef(rawPageLikeValue));
@@ -7483,6 +7688,16 @@ describe('admin dashboard PostgreSQL reader', () => {
           if (sql.includes('FROM shop_products') && sql.includes('ORDER BY sort_order ASC')) return { rows: [] };
           if (sql.includes('FROM shop_assets') && sql.includes('GROUP BY asset_type')) return { rows: [] };
           if (sql.includes('FROM shop_assets a')) return { rows: [] };
+          if (sql.includes('other_shop_count') && sql.includes('FROM shops')) {
+            return {
+              rows: [{
+                other_shop_count: 2,
+                other_dry_run_count: 1,
+                other_not_dry_run_count: 1,
+                other_live_capable_count: 1
+              }]
+            };
+          }
           if (sql.includes('FROM shop_page_credentials')) {
             return { rows: [{ active_fb_page_token_count: 0 }] };
           }
@@ -7503,7 +7718,9 @@ describe('admin dashboard PostgreSQL reader', () => {
 
     expect(model.schemaReady).toBeTrue();
     expect(model.shop.id).toBe('adult-shop');
-    expect(queries.length).toBe(7);
+    expect(model.pilotIsolation.other_shop_count).toBe(2);
+    expect(model.pilotIsolation.other_not_dry_run_count).toBe(1);
+    expect(queries.length).toBe(8);
   });
 
   it('reader dùng filter parameterized và giới hạn limit', async () => {

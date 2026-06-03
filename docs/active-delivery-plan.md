@@ -1,6 +1,6 @@
 # Active Delivery Plan
 
-Last updated: 2026-06-03, Asia/Bangkok.
+Last updated: 2026-06-04, Asia/Bangkok.
 
 This is the first file to read at the start of a new Codex session. It is the
 working plan for moving ZenBot from a production pilot into a stable internal
@@ -375,7 +375,21 @@ Goal: make the current live `adult-shop` safer and easier to monitor.
 
 Goal: onboard one more shop safely without increasing blast radius.
 
-- [!] P3.1 Preconditions before real Page work.
+- [x] P3.1 Preconditions before real Page work.
+  - Status 2026-06-03: still blocked until the real Page, approved
+    product/menu content, online staff for the test window, rollback owner,
+    pilot operator, and monitoring owner are confirmed. Do not start real Page
+    setup or the controlled live window before these are complete.
+  - Completed 2026-06-04 for the manual approval gate: Page target is Nem Bui
+    Xa; owner approval was given by Trung; approved dry-run content is the
+    current menu plus product code `1`; Trung is the staff tester, rollback
+    owner, pilot operator, and monitoring owner for the current window. Scope
+    is P3.2 dry-run only; P3.3 live remains blocked. The
+    `multiple_menu_images` readiness warning is accepted for dry-run only.
+    Technical verification for active Page mapping, active credential,
+    conflicting mappings, and other-shop isolation remains part of P3.2 and
+    must not write production DB without a fresh verified backup plus separate
+    explicit production DB write approval.
   - Owner approval for the specific Page.
   - Product/menu content approved by shop owner.
   - Staff are online for the test window.
@@ -383,12 +397,30 @@ Goal: onboard one more shop safely without increasing blast radius.
   - Exactly one active Page mapping and one active credential expected.
   - All other shops remain dry-run unless intentionally live.
 
-- [ ] P3.2 Dry-run-only setup.
+- [>] P3.2 Dry-run-only setup.
   - Keep global `MESSENGER_DRY_RUN=true` if doing simulation.
   - Keep target shop `dry_run=true`.
   - Map Page and credential only through approved admin flow.
   - Run readiness check and dry-run simulation.
   - Confirm no wrong-shop routing and no Messenger send.
+  - Progress 2026-06-03: added a read-only Real Page Pilot Gate to the
+    shop detail Safety tab. It surfaces the P3 manual approvals
+    (owner/Page/content/staff/owners), current-shop dry-run/live state, global
+    Messenger dry-run state visible to the admin process, active Page
+    mapping/credential counts, readiness status, manual dry-run simulation
+    status, and read-only counts for other active/non-archived shops that are
+    dry-run, not dry-run, or live-capable. It links operators to Fanpage
+    Connection, health/readiness, and wizard dry-run simulation. This is not a
+    real Page setup completion: no Page mapping, credential, deploy, push, env
+    change, DB write, Meta call, Messenger send, or production action
+    happened.
+  - Progress 2026-06-04: tightened the Pilot Gate completion signal so it only
+    reports P3.2 dry-run-only setup complete when other active/non-archived
+    shops are also isolation-safe. Other-shop not-dry-run or live-capable
+    exceptions now keep the gate in "not fully ready" until the exception is
+    intentionally reviewed. This was a local read-only UI/test change only; no
+    Page mapping, credential, deploy, push, env change, DB write, Meta call,
+    Messenger send, or production action happened.
 
 - [!] P3.3 Controlled live window.
   - Requires explicit approval.
@@ -426,8 +458,17 @@ Goal: reduce operator mistakes and make onboarding repeatable.
 - [x] Setup Wizard MVP exists and was staging verified.
 - [x] Product/menu polish exists and was staging verified.
 - [x] Fanpage connection UI and credential replacement UX exist in staging.
-- [ ] Add shop-card dashboard status.
-- [ ] Add clear "safe next action" for every shop state.
+- [x] Add shop-card dashboard status.
+  - Completed 2026-06-03: `/admin/shops` now shows a read-only safe next
+    action per shop alongside live/test/readiness/status badges. The action
+    points operators to the relevant detail tab or dry-run simulation without
+    writing data, sending Messenger messages, calling Meta, changing env, or
+    touching production.
+- [x] Add clear "safe next action" for every shop state.
+  - Completed 2026-06-03: list-level next actions now cover archived,
+    paused, missing Fanpage, missing products, missing images, readiness not
+    passed, manual test not passed, live monitoring, P3 dry-run pilot blocked,
+    and dry-run/live state requiring confirmation.
 - [ ] Add multi-image upload polish if operators are uploading many product
   images.
 - [ ] Add better search/filter/pagination for product/admin pages as data

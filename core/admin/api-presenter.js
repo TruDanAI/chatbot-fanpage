@@ -537,6 +537,22 @@ function presentHealthStatusSummary(section = {}, statuses = []) {
   };
 }
 
+function presentPilotIsolation(section = {}) {
+  if (!section || section.available === false) {
+    return {
+      available: false,
+      reason: limitText(section?.reason || 'schema_not_ready', 80)
+    };
+  }
+  return {
+    available: true,
+    other_shop_count: Number(section.other_shop_count || 0),
+    other_dry_run_count: Number(section.other_dry_run_count || 0),
+    other_not_dry_run_count: Number(section.other_not_dry_run_count || 0),
+    other_live_capable_count: Number(section.other_live_capable_count || 0)
+  };
+}
+
 function presentProcessedMidsSummary(section) {
   if (!section || section.available === false) {
     return {
@@ -643,6 +659,7 @@ function presentShopDetailApi(model = {}) {
         .map(presentShopAsset)
     },
     onboarding: presentShopOnboarding(model, shop),
+    pilotIsolation: presentPilotIsolation(model.pilotIsolation || {}),
     ...(model.message ? { message: limitText(model.message, 160) } : {})
   };
 }
