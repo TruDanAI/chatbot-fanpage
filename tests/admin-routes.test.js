@@ -549,6 +549,18 @@ function createDashboardReaderStub() {
           active_handoff_count: 2,
           message_body: 'do-not-return'
         },
+        processedMids: {
+          available: true,
+          retention_days: 30,
+          total: 7,
+          older_than_7d: 3,
+          older_than_30d: 1,
+          cleanup_candidate_count: 1,
+          oldest_first_seen_at: '2026-04-10T00:00:00.000Z',
+          newest_first_seen_at: '2026-05-15T01:02:00.000Z',
+          mid: 'do-not-return',
+          sender_id: 'do-not-return'
+        },
         queue: {
           available: true,
           total: 4,
@@ -3240,11 +3252,18 @@ describe('admin dashboard routes', () => {
     expect(body.activity.last_successful_send_at).toBe('2026-05-15T01:01:00.000Z');
     expect(body.activity.send_error_rate_1h).toBe(0.25);
     expect(body.activity.active_handoff_count).toBe(2);
+    expect(body.processedMids.retention_days).toBe(30);
+    expect(body.processedMids.total).toBe(7);
+    expect(body.processedMids.older_than_7d).toBe(3);
+    expect(body.processedMids.cleanup_candidate_count).toBe(1);
+    expect(body.processedMids.oldest_first_seen_at).toBe('2026-04-10T00:00:00.000Z');
     expect(body.queue.byStatus.failed).toBe(1);
     expect(body.credentials.byStatus.active).toBe(1);
     expect(bodyText.includes('page_1')).toBeFalse();
     expect(bodyText.includes('raw_page_id')).toBeFalse();
     expect(bodyText.includes('page_id')).toBeFalse();
+    expect(bodyText.includes('sender_id')).toBeFalse();
+    expect(bodyText.includes('mid":"')).toBeFalse();
     expect(bodyText.includes('encrypted_value')).toBeFalse();
     expect(bodyText.toLowerCase().includes('token')).toBeFalse();
     expect(bodyText.includes('do-not-return')).toBeFalse();
@@ -3308,6 +3327,7 @@ describe('admin dashboard routes', () => {
     expect(body.queue.reason).toBe('webhook_queue_schema_not_ready');
     expect(body.credentials.available).toBeFalse();
     expect(body.credentials.reason).toBe('shop_page_credentials_schema_not_ready');
+    expect(body.processedMids.available).toBeFalse();
   });
 
   it('shop health API requires admin auth', async () => {
@@ -3935,6 +3955,121 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain("target.closest('.tab-section')");
     expect(res.body).toContain("const activeHash = activeSection ? '#' + activeSection.id : '#overview';");
     expect(res.body).toContain('/admin/api/shops/adult-shop/health');
+  });
+
+  it('shop detail HTML renders compact per-shop health metrics safely', async () => {
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader: createDashboardReaderStub(),
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Shop Health');
+    expect(res.body).toContain('<strong>Page mappings</strong>: active 1, paused 1, archived 0 (2 total)');
+    expect(res.body).toContain('<strong>Credentials</strong>: active 1, paused 0, archived 0 (1 total)');
+    expect(res.body).toContain('<strong>Last webhook</strong>: 2026-05-15T01:00:00.000Z');
+    expect(res.body).toContain('<strong>Last successful send</strong>: 2026-05-15T01:01:00.000Z');
+    expect(res.body).toContain('<strong>Send error rate 1h</strong>: 25.0% (1 failed / 4 attempts)');
+    expect(res.body).toContain('<strong>Active handoffs</strong>: 2');
+    expect(res.body).toContain('<strong>Processed MIDs retention</strong>: 7 total; 3 older than 7d; 1 cleanup candidate &gt;30d; oldest 2026-04-10T00:00:00.000Z');
+    expect(res.body).toContain('<strong>Queue</strong>: queued 1, processing 1, done 1, failed 1 (4 total)');
+    expect(res.body).toContain('Operational alert thresholds');
+    expect(res.body).toContain('High send error rate');
+    expect(res.body).toContain('25.0% (1 failed / 4 attempts) in the last hour.');
+    expect(res.body).toContain('Queue has failed jobs');
+    expect(res.body).toContain('1 failed queue job found.');
+    expect(res.body).toContain('Keep WEBHOOK_QUEUE_ENABLED unchanged');
+    expect(res.body.includes('raw_page_id')).toBeFalse();
+    expect(res.body.includes('message_body')).toBeFalse();
+    expect(res.body.includes('payload_json')).toBeFalse();
+    expect(res.body.includes('sender_id')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
+  });
+
+  it('shop detail HTML warns when webhook has no later successful send and credential status is stale', async () => {
+    const dashboardReader = createDashboardReaderStub();
+    dashboardReader.getShopHealth = async shopId => ({
+      schemaReady: true,
+      shop: {
+        id: shopId,
+        slug: 'adult-shop',
+        name: 'Adult Shop',
+        status: 'active',
+        package: 'basic',
+        lifecycle: 'live',
+        dry_run: false,
+        live_enabled: true,
+        last_readiness_status: 'passed',
+        last_manual_test_status: 'passed',
+        updated_at: '2026-05-12T00:00:00.000Z',
+        encrypted_value: 'do-not-return'
+      },
+      pageMappings: {
+        available: true,
+        total: 1,
+        byStatus: { active: 1, paused: 0, archived: 0 },
+        raw_page_id: 'page_1'
+      },
+      activity: {
+        available: true,
+        last_webhook_received_at: '2026-05-15T01:04:00.000Z',
+        last_successful_send_at: '2026-05-15T01:01:00.000Z',
+        send_error_rate_1h: 0,
+        send_errors_1h: 0,
+        successful_sends_1h: 2,
+        active_handoff_count: 0,
+        message_body: 'do-not-return'
+      },
+      queue: {
+        available: true,
+        total: 0,
+        byStatus: { queued: 0, processing: 0, done: 0, failed: 0 },
+        payload_json: { text: 'do-not-return' }
+      },
+      credentials: {
+        available: true,
+        total: 0,
+        byStatus: { active: 0, paused: 0, archived: 0 },
+        encrypted_value: 'do-not-return',
+        access_token: 'do-not-return'
+      }
+    });
+    const app = createApp();
+    registerAdminRoutes(app, {
+      storage: createStorageStub(),
+      adminExportToken: 'secret',
+      getClientIp: () => '127.0.0.1',
+      dashboardReader,
+      adminPrincipalRoles: ['maintainer']
+    });
+
+    const res = createRes();
+    await app.routes['/admin/shops/:shopId'](createReq({
+      headers: { authorization: 'Bearer secret' },
+      params: { shopId: 'adult-shop' }
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Latest webhook has no later successful send');
+    expect(res.body).toContain('Check routing, credentials, dry-run/live state, and Messenger delivery status.');
+    expect(res.body).toContain('Credential status stale or incomplete');
+    expect(res.body).toContain('Expected exactly 1 active Page credential; found 0.');
+    expect(res.body.includes('High send error rate')).toBeFalse();
+    expect(res.body.includes('Queue has failed jobs')).toBeFalse();
+    expect(res.body.includes('raw_page_id')).toBeFalse();
+    expect(res.body.includes('message_body')).toBeFalse();
+    expect(res.body.includes('payload_json')).toBeFalse();
+    expect(res.body.includes('do-not-return')).toBeFalse();
   });
 
   it('shop detail Safety tab renders calm sections and preserves operation form contracts', async () => {
@@ -7589,6 +7724,19 @@ describe('admin dashboard PostgreSQL reader', () => {
             }]
           };
         }
+        if (sql.includes('FROM processed_mids')) {
+          expect(params).toEqual(['default', ['raw-page-id-1', 'raw-page-id-2']]);
+          return {
+            rows: [{
+              total: 7,
+              older_than_7d: 3,
+              older_than_30d: 1,
+              oldest_first_seen_at: '2026-04-10T00:00:00.000Z',
+              newest_first_seen_at: '2026-05-15T01:02:00.000Z',
+              mid: 'do-not-return'
+            }]
+          };
+        }
         if (sql.includes('FROM webhook_queue')) {
           expect(params).toEqual(['adult-shop', 'default']);
           return { rows: [{ status: 'queued', total: 2 }, { status: 'failed', total: 1 }] };
@@ -7621,10 +7769,16 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(model.activity.last_webhook_received_at).toBe('2026-05-15T01:00:00.000Z');
     expect(model.activity.send_error_rate_1h).toBe(0.25);
     expect(model.activity.active_handoff_count).toBe(2);
+    expect(model.processedMids.retention_days).toBe(30);
+    expect(model.processedMids.total).toBe(7);
+    expect(model.processedMids.older_than_7d).toBe(3);
+    expect(model.processedMids.older_than_30d).toBe(1);
+    expect(model.processedMids.oldest_first_seen_at).toBe('2026-04-10T00:00:00.000Z');
     expect(model.queue.byStatus.queued).toBe(2);
     expect(model.queue.byStatus.failed).toBe(1);
     expect(model.credentials.byStatus.active).toBe(1);
     expect(text.includes('raw-page-id')).toBeFalse();
+    expect(text.includes('do-not-return')).toBeFalse();
     expect(text.includes('encrypted_value')).toBeFalse();
     expect(text.toLowerCase().includes('token')).toBeFalse();
     for (const { sql } of queries) {
@@ -7653,6 +7807,9 @@ describe('admin dashboard PostgreSQL reader', () => {
         }
         if (sql.includes('last_webhook_received_at')) {
           return { rows: [{ send_errors_1h: 0, successful_sends_1h: 0, active_handoff_count: 0 }] };
+        }
+        if (sql.includes('FROM processed_mids')) {
+          return { rows: [{ total: 0, older_than_7d: 0, older_than_30d: 0 }] };
         }
         if (sql.includes('FROM webhook_queue') || sql.includes('FROM shop_page_credentials')) {
           const err = new Error('relation missing at postgres://secret');

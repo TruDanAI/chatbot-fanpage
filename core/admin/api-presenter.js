@@ -537,6 +537,26 @@ function presentHealthStatusSummary(section = {}, statuses = []) {
   };
 }
 
+function presentProcessedMidsSummary(section) {
+  if (!section || section.available === false) {
+    return {
+      available: false,
+      reason: limitText(section?.reason || 'schema_not_ready', 80)
+    };
+  }
+  const olderThan30d = Number(section.older_than_30d || section.cleanup_candidate_count || 0);
+  return {
+    available: true,
+    retention_days: Number(section.retention_days || 30),
+    total: Number(section.total || 0),
+    older_than_7d: Number(section.older_than_7d || 0),
+    older_than_30d: olderThan30d,
+    cleanup_candidate_count: olderThan30d,
+    oldest_first_seen_at: section.oldest_first_seen_at || null,
+    newest_first_seen_at: section.newest_first_seen_at || null
+  };
+}
+
 function presentShopHealthApi(model = {}) {
   const shop = model.shop ? {
     id: model.shop.id || '',
@@ -574,6 +594,7 @@ function presentShopHealthApi(model = {}) {
       successful_sends_1h: Number(activity.successful_sends_1h || 0),
       active_handoff_count: Number(activity.active_handoff_count || 0)
     },
+    processedMids: presentProcessedMidsSummary(model.processedMids),
     queue: presentHealthStatusSummary(model.queue || {}, ['queued', 'processing', 'done', 'failed']),
     credentials: credentialSummary,
     ...(model.message ? { message: limitText(model.message, 160) } : {})

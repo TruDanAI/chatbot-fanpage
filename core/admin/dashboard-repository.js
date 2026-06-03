@@ -116,6 +116,7 @@ function createDashboardRepository({
         message
       },
       activity: createUnavailableSection('multi_shop_schema_not_ready'),
+      processedMids: createUnavailableSection('multi_shop_schema_not_ready'),
       queue: createUnavailableSection('multi_shop_schema_not_ready'),
       credentials: createUnavailableSection('multi_shop_schema_not_ready'),
       message
@@ -394,6 +395,7 @@ function createDashboardRepository({
           byStatus: {}
         },
         activity: createUnavailableSection('shop_not_found'),
+        processedMids: createUnavailableSection('shop_not_found'),
         queue: createUnavailableSection('shop_not_found'),
         credentials: createUnavailableSection('shop_not_found')
       };
@@ -419,6 +421,7 @@ function createDashboardRepository({
             byStatus: {}
           },
           activity: createUnavailableSection('shop_not_found'),
+          processedMids: createUnavailableSection('shop_not_found'),
           queue: createUnavailableSection('shop_not_found'),
           credentials: createUnavailableSection('shop_not_found')
         };
@@ -501,6 +504,33 @@ function createDashboardRepository({
         activity = createUnavailableSection('runtime_schema_not_ready');
       }
 
+      let processedMids = createUnavailableSection('runtime_schema_not_ready');
+      try {
+        const processedMidsResult = await client.query(`
+          SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE first_seen_at < now() - interval '7 days')::int AS older_than_7d,
+            COUNT(*) FILTER (WHERE first_seen_at < now() - interval '30 days')::int AS older_than_30d,
+            MIN(first_seen_at) AS oldest_first_seen_at,
+            MAX(first_seen_at) AS newest_first_seen_at
+          FROM processed_mids
+          WHERE tenant_id = $1
+            AND page_id = ANY($2::text[])
+        `, [tenantId, pageIds]);
+        const row = processedMidsResult.rows[0] || {};
+        processedMids = {
+          available: true,
+          retention_days: 30,
+          total: Number(row.total || 0),
+          older_than_7d: Number(row.older_than_7d || 0),
+          older_than_30d: Number(row.older_than_30d || 0),
+          oldest_first_seen_at: row.oldest_first_seen_at || null,
+          newest_first_seen_at: row.newest_first_seen_at || null
+        };
+      } catch (err) {
+        if (!isMissingMultiShopSchemaError(err)) throw err;
+      }
+
       let queue = createUnavailableSection('webhook_queue_schema_not_ready');
       try {
         const queueResult = await client.query(`
@@ -549,6 +579,7 @@ function createDashboardRepository({
         shop,
         pageMappings,
         activity,
+        processedMids,
         queue,
         credentials
       };

@@ -558,8 +558,13 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .tab-section.active { display: block; }
     .health-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 16px 0; }
     .health-card h2 { margin-top: 0; font-size: 16px; }
-    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-    .health-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .health-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.4; min-width: 0; }
+    .health-item .status { flex: 0 0 auto; margin-top: 1px; }
+    .health-item span:last-child { min-width: 0; overflow-wrap: anywhere; }
+    .health-alerts { display: grid; gap: 8px; margin: 0 0 12px; }
+    .health-alerts .banner { margin: 0; line-height: 1.45; }
+    .health-alerts p { margin: 3px 0 0; }
     .safety-stack { display: grid; gap: 16px; margin-top: 14px; }
     .safety-section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
     .safety-section h3, .safety-section h4 { margin: 0; color: #17202a; }
@@ -2795,6 +2800,128 @@ function healthTimestamp(value = '') {
   return value ? formatDate(value) : 'unknown';
 }
 
+function healthStatusCounts(section = {}, statuses = []) {
+  if (!section || section.available === false) return 'unknown';
+  const byStatus = section.byStatus || {};
+  const parts = statuses.map(status => `${formatLabel(status).toLowerCase()} ${healthCount(byStatus[status])}`);
+  return `${parts.join(', ')} (${healthCount(section.total)} total)`;
+}
+
+function healthSendErrorRateText(activity = {}, errorRate = NaN) {
+  if (!Number.isFinite(errorRate)) return 'unknown';
+  const errors = healthCount(activity.send_errors_1h);
+  const successes = healthCount(activity.successful_sends_1h);
+  return `${(errorRate * 100).toFixed(1)}% (${errors} failed / ${errors + successes} attempts)`;
+}
+
+function healthPageMappingState(mappings = {}) {
+  if (!mappings || mappings.available === false) return 'unknown';
+  return healthCount(mappings.byStatus?.active) > 0 ? 'ok' : 'error';
+}
+
+function healthCredentialState(credentials = {}) {
+  if (!credentials || credentials.available === false) return 'unknown';
+  return healthCount(credentials.byStatus?.active) > 0 ? 'ok' : 'error';
+}
+
+function healthQueueState(queue = {}) {
+  if (!queue || queue.available === false) return 'unknown';
+  if (healthCount(queue.byStatus?.failed) > 0) return 'error';
+  if (healthCount(queue.byStatus?.queued) > 0 || healthCount(queue.byStatus?.processing) > 0) return 'warning';
+  return 'ok';
+}
+
+function healthProcessedMidsState(processedMids = {}) {
+  if (!processedMids || processedMids.available === false) return 'unknown';
+  return healthCount(processedMids.cleanup_candidate_count ?? processedMids.older_than_30d) > 0 ? 'warning' : 'ok';
+}
+
+function healthProcessedMidsText(processedMids = {}) {
+  if (!processedMids || processedMids.available === false) return 'unknown';
+  const retentionDays = healthCount(processedMids.retention_days || 30);
+  const olderThan7d = healthCount(processedMids.older_than_7d);
+  const cleanupCandidates = healthCount(processedMids.cleanup_candidate_count ?? processedMids.older_than_30d);
+  const candidateLabel = cleanupCandidates === 1 ? 'cleanup candidate' : 'cleanup candidates';
+  const oldest = healthTimestamp(processedMids.oldest_first_seen_at);
+  return `${healthCount(processedMids.total)} total; ${olderThan7d} older than 7d; ${cleanupCandidates} ${candidateLabel} >${retentionDays}d; oldest ${oldest}`;
+}
+
+function healthTimeMs(value = '') {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+function buildHealthAlerts({ activity = {}, queue = {}, credentials = {}, errorRate = NaN } = {}) {
+  const alerts = [];
+  const activityAvailable = activity.available !== false;
+  const queueAvailable = queue.available !== false;
+  const credentialsAvailable = credentials.available !== false;
+
+  if (activityAvailable && Number.isFinite(errorRate) && errorRate > 0) {
+    alerts.push({
+      severity: errorRate > 0.1 ? 'error' : 'warning',
+      title: errorRate > 0.1 ? 'High send error rate' : 'Send errors detected',
+      detail: `${healthSendErrorRateText(activity, errorRate)} in the last hour. Review delivery logs and recent changes before increasing traffic.`
+    });
+  }
+
+  if (activityAvailable && activity.last_webhook_received_at) {
+    const webhookTime = healthTimeMs(activity.last_webhook_received_at);
+    const sendTime = healthTimeMs(activity.last_successful_send_at);
+    if (webhookTime != null && (sendTime == null || sendTime < webhookTime)) {
+      alerts.push({
+        severity: 'warning',
+        title: 'Latest webhook has no later successful send',
+        detail: 'A webhook was recorded after the last successful bot send. Check routing, credentials, dry-run/live state, and Messenger delivery status.'
+      });
+    }
+  }
+
+  if (queueAvailable) {
+    const failed = healthCount(queue.byStatus?.failed);
+    if (failed > 0) {
+      alerts.push({
+        severity: 'error',
+        title: 'Queue has failed jobs',
+        detail: `${failed} failed queue job${failed === 1 ? '' : 's'} found. Keep WEBHOOK_QUEUE_ENABLED unchanged and inspect queue handling before rollout.`
+      });
+    }
+  }
+
+  if (!credentialsAvailable) {
+    alerts.push({
+      severity: 'warning',
+      title: 'Credential status unavailable',
+      detail: `Credential schema/status could not be read (${credentials.reason || 'unknown'}). Treat credential freshness as stale until readiness can be checked.`
+    });
+  } else {
+    const activeCredentials = healthCount(credentials.byStatus?.active);
+    if (activeCredentials !== 1) {
+      alerts.push({
+        severity: 'error',
+        title: 'Credential status stale or incomplete',
+        detail: `Expected exactly 1 active Page credential; found ${activeCredentials}. Re-run readiness and credential setup before live traffic.`
+      });
+    }
+  }
+
+  return alerts;
+}
+
+function renderHealthAlerts(alerts = []) {
+  if (!alerts.length) return '';
+  return `
+    <div class="health-alerts" aria-label="Operational alert thresholds">
+      ${alerts.map(alert => {
+        const bannerClass = alert.severity === 'error' ? 'banner-error' : 'banner-warning';
+        const role = alert.severity === 'error' ? 'alert' : 'status';
+        return `<div class="banner ${bannerClass}" role="${role}"><strong>${escapeHtml(alert.title)}</strong><p>${escapeHtml(alert.detail)}</p></div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
 function renderHealthMetric(label = '', value = '', state = 'unknown') {
   const normalizedState = ['ok', 'warning', 'error', 'unknown'].includes(state) ? state : 'unknown';
   const status = normalizedState === 'ok'
@@ -2821,25 +2948,30 @@ function renderHealthCard(health = {}) {
   const mappings = health.pageMappings || {};
   const credentials = health.credentials || {};
   const activity = health.activity || {};
+  const processedMids = health.processedMids || {};
   const queue = health.queue || {};
   const mappingUnavailable = mappings.available === false;
   const credentialUnavailable = credentials.available === false;
   const activityUnavailable = activity.available === false;
+  const processedMidsUnavailable = processedMids.available === false;
   const queueUnavailable = queue.available === false;
   const errorRate = Number(activity.send_error_rate_1h);
   const hasErrorRate = Number.isFinite(errorRate);
+  const alerts = buildHealthAlerts({ activity, queue, credentials, errorRate });
 
   return `
     <section class="health-card">
       <h2>Shop Health</h2>
+      ${renderHealthAlerts(alerts)}
       <div class="health-grid">
-        ${renderHealthMetric('Page mappings', mappingUnavailable ? 'unknown' : `${healthCount(mappings.total)} total`, mappingUnavailable ? 'unknown' : (healthCount(mappings.total) > 0 ? 'ok' : 'error'))}
-        ${renderHealthMetric('Active credentials', credentialUnavailable ? 'unknown' : healthCount(credentials.byStatus?.active), credentialUnavailable ? 'unknown' : (healthCount(credentials.byStatus?.active) > 0 ? 'ok' : 'error'))}
+        ${renderHealthMetric('Page mappings', mappingUnavailable ? 'unknown' : healthStatusCounts(mappings, ['active', 'paused', 'archived']), healthPageMappingState(mappings))}
+        ${renderHealthMetric('Credentials', credentialUnavailable ? 'unknown' : healthStatusCounts(credentials, ['active', 'paused', 'archived']), healthCredentialState(credentials))}
         ${renderHealthMetric('Last webhook', activityUnavailable ? 'unknown' : healthTimestamp(activity.last_webhook_received_at), activityUnavailable ? 'unknown' : (activity.last_webhook_received_at ? 'ok' : 'warning'))}
-        ${renderHealthMetric('Last send', activityUnavailable ? 'unknown' : healthTimestamp(activity.last_successful_send_at), activityUnavailable ? 'unknown' : (activity.last_successful_send_at ? 'ok' : 'warning'))}
-        ${renderHealthMetric('Send error rate 1h', activityUnavailable || !hasErrorRate ? 'unknown' : `${(errorRate * 100).toFixed(1)}%`, activityUnavailable || !hasErrorRate ? 'unknown' : (errorRate > 0.1 ? 'error' : (errorRate > 0 ? 'warning' : 'ok')))}
+        ${renderHealthMetric('Last successful send', activityUnavailable ? 'unknown' : healthTimestamp(activity.last_successful_send_at), activityUnavailable ? 'unknown' : (activity.last_successful_send_at ? 'ok' : 'warning'))}
+        ${renderHealthMetric('Send error rate 1h', activityUnavailable || !hasErrorRate ? 'unknown' : healthSendErrorRateText(activity, errorRate), activityUnavailable || !hasErrorRate ? 'unknown' : (errorRate > 0.1 ? 'error' : (errorRate > 0 ? 'warning' : 'ok')))}
         ${renderHealthMetric('Active handoffs', activityUnavailable ? 'unknown' : healthCount(activity.active_handoff_count), activityUnavailable ? 'unknown' : (healthCount(activity.active_handoff_count) > 0 ? 'warning' : 'ok'))}
-        ${renderHealthMetric('Queue', queueUnavailable ? 'unknown' : `${healthCount(queue.total)} total`, queueUnavailable ? 'unknown' : 'ok')}
+        ${renderHealthMetric('Processed MIDs retention', processedMidsUnavailable ? 'unknown' : healthProcessedMidsText(processedMids), healthProcessedMidsState(processedMids))}
+        ${renderHealthMetric('Queue', queueUnavailable ? 'unknown' : healthStatusCounts(queue, ['queued', 'processing', 'done', 'failed']), healthQueueState(queue))}
       </div>
     </section>
   `;

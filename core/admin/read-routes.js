@@ -165,6 +165,7 @@ function createAdminReadHandlers({
         shop,
         pageMappings: unavailable,
         activity: unavailable,
+        processedMids: unavailable,
         queue: unavailable,
         credentials: unavailable
       }),
