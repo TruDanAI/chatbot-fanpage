@@ -28,6 +28,17 @@ config, data, or assets.
 - [x] The Real Page Pilot Gate keeps the P3.2 dry-run-only setup signal
       incomplete when another active/non-archived shop is not dry-run or is
       live-capable, until the exception is intentionally reviewed.
+- [x] P3.2 production dry-run simulation passed for shop `1018518438021869` /
+      Nem Bui Xa with exact product code `TS01`.
+- [x] P3.2 simulation flags passed: `menu_pass=1`, `product_pass=1`,
+      `mapping_pass=1`, `credential_pass=1`, and `handoff_pass=1`.
+- [x] Production readiness is now `passed`; hard blockers are `none`.
+- [x] Remaining P3.2 warning is `multiple_menu_images` with counts:
+      products=3, menu images=4, product images=3, mappings=1, auth records=1.
+- [x] `adult-shop` was untouched; the before/after snapshot hash matched.
+- [x] Rollback reference:
+      `output/p3-2-prod-dry-run-rollback-2026-06-04T11-18-06-574Z.json`.
+- [ ] P3.3 live remains blocked and requires separate explicit approval.
 
 ## P0.2 Emergency Control Checkpoint
 
@@ -66,14 +77,15 @@ config, data, or assets.
 
 Current status 2026-06-04: P3.1 manual approval gate is complete for P3.2
 dry-run only. Page target is Nem Bui Xa. Trung approved the Page target,
-approved the current menu plus product code `1`, and is the staff tester,
-rollback owner, pilot operator, and monitoring owner for the current test
-window. P3.3 live remains blocked and requires separate explicit approval.
-The `multiple_menu_images` readiness warning is accepted for dry-run only.
+approved the current menu plus exact catalog product code `TS01`, and is the
+staff tester, rollback owner, pilot operator, and monitoring owner for the
+current test window. P3.2 production dry-run has passed. P3.3 live remains
+blocked and requires separate explicit approval. The `multiple_menu_images`
+readiness warning is accepted for dry-run only.
 
 - [x] Shop owner has explicitly approved using the real Page.
 - [x] Shop owner has approved the product/menu content for the pilot: current
-      menu plus product code `1`.
+      menu plus exact catalog product code `TS01`.
 - [x] Staff are online and ready to take over conversations: Trung self-tests
       and monitors in the current window.
 - [x] Rollback owner is named: `Trung`.
@@ -81,42 +93,39 @@ The `multiple_menu_images` readiness warning is accepted for dry-run only.
 - [x] Monitoring owner is named: `Trung`.
 - [x] Real Page identity is confirmed by the shop owner without printing raw
       Page IDs in chat or logs.
-- [ ] Real Page has no conflicting active mapping for another shop.
+- [x] Real Page has no conflicting active mapping for another shop; P3.2
+      `mapping_pass=1`.
 - [x] All operators understand the no-go conditions in this checklist.
 
-Do not continue to production Page mapping, credential writes, dry-run
-simulation writes, or any live-window work until the remaining conflict check
-and dry-run-only technical gates below are verified. Production DB writes still
-require a fresh verified backup and separate explicit production DB write
-approval.
+Do not continue to P3.3 live-window work until there is separate explicit live
+approval. Production DB writes still require a fresh verified backup and
+separate explicit production DB write approval.
 
 ## Real Page Dry-Run-Only Steps
 
-Keep the system in dry-run-only mode while preparing the real Page. These steps
-are for the approved future pilot window, not for this documentation update.
+Keep the system in dry-run-only mode while preparing the real Page. P3.2 is now
+complete for shop `1018518438021869` / Nem Bui Xa; these checks do not approve
+P3.3 live.
 
 - [ ] Confirm global `MESSENGER_DRY_RUN=true`.
-- [ ] Confirm `nem-bui-xa` `dry_run=true`.
+- [x] Confirm target shop `dry_run=true`.
 - [ ] Confirm every other shop remains `dry_run=true`.
-- [ ] Archive the staging/test Page mapping for `nem-bui-xa` if it would
-      conflict with the real Page pilot.
-- [ ] Map the approved real Page to `nem-bui-xa`.
-- [ ] Add the approved real Page credential for `nem-bui-xa`.
-- [ ] Confirm exactly one active Page mapping exists for `nem-bui-xa`.
-- [ ] Confirm exactly one active Page credential exists for that mapping.
-- [ ] Open the shop detail Safety tab and confirm the Real Page Pilot Gate
-      shows global Messenger dry-run safe, target shop `dry_run=true`,
-      `live_enabled=false`, exactly one active mapping, exactly one active
-      credential, readiness passed, and manual dry-run simulation passed.
+- [x] Confirm the approved real Page has exactly one active mapping for the
+      target shop.
+- [x] Confirm exactly one active Page credential exists for that mapping.
+- [x] Open the shop detail Safety tab and confirm the Real Page Pilot Gate
+      shows target shop `dry_run=true`, `live_enabled=false`, exactly one
+      active mapping, exactly one active credential, readiness passed, and
+      manual dry-run simulation passed.
 - [ ] Confirm the Real Page Pilot Gate shows either all other active shops are
       dry-run or every not-dry-run/live-capable exception is intentionally
       live for the pilot window.
-- [ ] Run a dry-run webhook simulation for the real Page mapping.
-- [ ] Confirm the dry-run menu response resolves to `nem-bui-xa`.
-- [ ] Confirm dry-run code `1` resolves to the approved product and image.
-- [ ] Confirm no real Messenger sends occur during dry-run simulation.
-- [ ] Confirm no `adult-shop` or `demo-shop` config, data, or asset changes
-      occur.
+- [x] Run the approved dry-run wizard simulation for the real Page mapping.
+- [x] Confirm the dry-run menu check passed for the target shop.
+- [x] Confirm dry-run code `TS01` resolves to the approved product and image.
+- [x] Confirm no real Messenger sends occur during dry-run simulation.
+- [x] Confirm no `adult-shop` config, data, or asset changes occur.
+- [ ] Confirm no `demo-shop` config, data, or asset changes occur.
 
 Stop and rollback to the prior safe mapping state if dry-run routing, product,
 image, credential resolution, or shop isolation is wrong.
@@ -132,9 +141,9 @@ preconditions remain true.
 - [ ] Keep `WEBHOOK_QUEUE_ENABLED=false` unless a separate queue rollout has
       been approved.
 - [ ] Test menu only.
-- [ ] Test product code `1` only.
+- [ ] Test product code `TS01` only.
 - [ ] Confirm menu image is correct.
-- [ ] Confirm product image and product info for code `1` are correct.
+- [ ] Confirm product image and product info for code `TS01` are correct.
 - [ ] Confirm handoff is active and staff can respond.
 - [ ] Do not test other product codes during the initial controlled window.
 - [ ] Do not enable or expand live traffic outside the approved window.
@@ -159,7 +168,7 @@ availability issue.
 - [ ] Watch for Messenger send errors.
 - [ ] Watch for wrong product or wrong image responses.
 - [ ] Watch for Page conflict or wrong-shop routing.
-- [ ] Confirm handoff starts after product code `1`.
+- [ ] Confirm handoff starts after product code `TS01`.
 - [ ] Confirm staff are online and can answer.
 - [ ] Roll back immediately on any no-go condition.
 

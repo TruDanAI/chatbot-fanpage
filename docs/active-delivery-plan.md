@@ -386,9 +386,9 @@ Goal: onboard one more shop safely without increasing blast radius.
     setup or the controlled live window before these are complete.
   - Completed 2026-06-04 for the manual approval gate: Page target is Nem Bui
     Xa; owner approval was given by Trung; approved dry-run content is the
-    current menu plus product code `1`; Trung is the staff tester, rollback
-    owner, pilot operator, and monitoring owner for the current window. Scope
-    is P3.2 dry-run only; P3.3 live remains blocked. The
+    current menu plus exact catalog product code `TS01`; Trung is the staff
+    tester, rollback owner, pilot operator, and monitoring owner for the
+    current window. Scope is P3.2 dry-run only; P3.3 live remains blocked. The
     `multiple_menu_images` readiness warning is accepted for dry-run only.
     Technical verification for active Page mapping, active credential,
     conflicting mappings, and other-shop isolation remains part of P3.2 and
@@ -401,7 +401,7 @@ Goal: onboard one more shop safely without increasing blast radius.
   - Exactly one active Page mapping and one active credential expected.
   - All other shops remain dry-run unless intentionally live.
 
-- [>] P3.2 Dry-run-only setup.
+- [x] P3.2 Dry-run-only setup.
   - Keep global `MESSENGER_DRY_RUN=true` if doing simulation.
   - Keep target shop `dry_run=true`.
   - Map Page and credential only through approved admin flow.
@@ -425,11 +425,22 @@ Goal: onboard one more shop safely without increasing blast radius.
     intentionally reviewed. This was a local read-only UI/test change only; no
     Page mapping, credential, deploy, push, env change, DB write, Meta call,
     Messenger send, or production action happened.
+  - Completed 2026-06-04 for production shop `1018518438021869` / Nem Bui Xa:
+    P3.2 dry-run simulation passed with exact product code `TS01`. Flags were
+    `menu_pass=1`, `product_pass=1`, `mapping_pass=1`,
+    `credential_pass=1`, and `handoff_pass=1`. Readiness is now `passed`;
+    hard blockers are `none`. Remaining warning is `multiple_menu_images`
+    with counts products=3, menu images=4, product images=3, mappings=1, and
+    auth records=1. `adult-shop` was untouched; the before/after snapshot hash
+    matched. Rollback reference:
+    `output/p3-2-prod-dry-run-rollback-2026-06-04T11-18-06-574Z.json`.
+    This checkpoint did not deploy, push, change env, call Meta/token health,
+    send Messenger, enable live, change `dry_run=false`, or start P3.3.
 
 - [!] P3.3 Controlled live window.
   - Requires explicit approval.
   - Set global/per-shop dry-run according to runbook.
-  - Test only `menu` and one product code.
+  - Test only `menu` and exact product code `TS01`.
   - Confirm image, product info, handoff, and staff takeover.
   - Monitor for 1h, then review at 24h.
   - Roll back immediately on send error, wrong product/image, wrong-shop
