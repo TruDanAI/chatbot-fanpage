@@ -23,6 +23,8 @@ evidence and runbooks:
   automated-send boundaries, and outside-window approval gates.
 - `docs/webhook-queue-rollout-runbook.md` for queue rollout gates,
   staging-first procedure, production approval, monitoring, and rollback.
+- `docs/admin-image-upload-staging-smoke-runbook.md` for local-file image
+  upload staging env/write approval, smoke steps, and rollback.
 - `docs/real-page-pilot-checklist.md` for real Page pilot steps.
 - `docs/production-page-cutover-runbook.md` for future production Page cutover.
 - `docs/saas-roadmap.md` for the long-range architecture direction.
@@ -487,8 +489,42 @@ Goal: reduce operator mistakes and make onboarding repeatable.
     paused, missing Fanpage, missing products, missing images, readiness not
     passed, manual test not passed, live monitoring, P3 dry-run pilot blocked,
     and dry-run/live state requiring confirmation.
-- [ ] Add multi-image upload polish if operators are uploading many product
-  images.
+- [x] Single-image admin upload MVP exists, but remains gated.
+  - Current safe/default operator path is still URL-only asset management unless
+    `ADMIN_IMAGE_UPLOAD_ENABLED=true` and valid Cloudinary config are present.
+  - The upload MVP is implemented through the admin image upload service and is
+    covered by tests for disabled state, missing Cloudinary config, auth/RBAC,
+    JPEG/PNG/WebP validation, provider failures, DB/audit failure cleanup, and
+    runtime compatibility.
+  - It requires `CLOUDINARY_URL` and `CLOUDINARY_FOLDER`; optional limits are
+    `IMAGE_UPLOAD_MAX_BYTES`, `IMAGE_UPLOAD_ALLOWED_MIME`, and
+    `IMAGE_UPLOAD_ALLOWED_EXT`.
+  - Do not assume it is enabled in staging or production without checking env.
+- [!] Stage-enable local-file image upload if operators need no-URL workflow.
+  - Requires explicit staging env approval for `ADMIN_IMAGE_UPLOAD_ENABLED`,
+    `CLOUDINARY_URL`, `CLOUDINARY_FOLDER`, and optional upload limits.
+  - Requires staging DB/write approval because successful uploads create or
+    update `shop_assets`, write audit metadata, and store files in Cloudinary.
+  - Smoke: upload one menu image and one product image from disk, verify admin
+    thumbnails/rendering, verify runtime uses the Cloudinary HTTPS URL, and
+    confirm no Cloudinary secret, raw Page ID, customer data, or DB URL appears
+    in UI/logs.
+  - Production enablement needs a separate production env approval and should
+    not be combined with real Page live tests, queue rollout, credential
+    rotation, or production DB changes.
+  - Blocked 2026-06-04 pending explicit staging env and staging DB/write
+    approval. Prepared
+    `docs/admin-image-upload-staging-smoke-runbook.md` so the approved smoke
+    has fixed scope, preconditions, secret handling, rollback, and pass/fail
+    criteria. No staging env change, Cloudinary upload, DB write, deploy, push,
+    Meta call, Messenger send, queue action, or production action happened.
+- [ ] Add multi-image upload polish after single-image upload is staging-safe
+  if operators are uploading many product images.
+  - Current likely friction: one file per upload and wizard links out to the
+    shop asset tab instead of handling many product images in-place.
+  - Preferred next UX: multi-file product/menu upload with per-file validation,
+    product matching, safe partial-failure summary, and no secret/raw payload
+    output.
 - [ ] Add better search/filter/pagination for product/admin pages as data
   grows.
 - [ ] Keep all write actions confirmed, audited, and reversible where possible.
