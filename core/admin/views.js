@@ -4027,8 +4027,20 @@ function renderShopDetailHtml(model = {}) {
             tabs.forEach(t => t.classList.toggle('active', t.getAttribute('href') === activeHash));
             sections.forEach(s => s.classList.toggle('active', s === activeSection));
           }
-          window.addEventListener('hashchange', () => activateTab(window.location.hash));
+          function scrollHashTargetIntoView(hash) {
+            if (!hash || hash === '#') return;
+            const target = document.getElementById(hash.slice(1));
+            if (!target || target.classList.contains('tab-section')) return;
+            window.requestAnimationFrame(() => {
+              target.scrollIntoView({ block: 'start', inline: 'nearest' });
+            });
+          }
+          window.addEventListener('hashchange', () => {
+            activateTab(window.location.hash);
+            scrollHashTargetIntoView(window.location.hash);
+          });
           activateTab(window.location.hash);
+          scrollHashTargetIntoView(window.location.hash);
 
           // Standardized Danger Confirmation Modal Client Interceptor
           const modalBackdrop = document.getElementById('danger-confirm-modal');

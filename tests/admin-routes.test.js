@@ -3528,6 +3528,8 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('Gắn URL ảnh');
     expect(res.body).toContain('Archive is a soft archive, not a delete action.');
     expect(res.body).toContain('id="asset-asset-1"');
+    expect(res.body).toContain('function scrollHashTargetIntoView(hash)');
+    expect(res.body).toContain("target.scrollIntoView({ block: 'start', inline: 'nearest' });");
     expect(res.body.includes('Tải ảnh sản phẩm lên')).toBeFalse();
     expect(res.body.includes('type="file"')).toBeFalse();
 
