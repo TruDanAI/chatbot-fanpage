@@ -24,6 +24,31 @@ const { pageRef } = require('../utils/log-refs');
 const { createPostgresShopReadinessCheckService } = require('./shop-readiness-check');
 const { buildShopReadiness, resolveGlobalDryRunState } = require('./shop-readiness');
 
+const STEP_6_SIMULATION_SAFE_LIFECYCLES = Object.freeze(new Set(['draft', 'configuring', 'paused']));
+
+function normalizeWizardBoolean(value, fallback = false) {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return /^(1|true|yes|on|enabled|active)$/i.test(String(value).trim());
+}
+
+function getStep6SimulationBlockReason(shop = {}) {
+  if (normalizeWizardBoolean(shop.dry_run, false) !== true) {
+    return 'Chỉ chạy giả lập khi chế độ test an toàn của shop (dry_run) đang bật.';
+  }
+
+  if (normalizeWizardBoolean(shop.live_enabled, false) === true) {
+    return 'Không chạy giả lập cho shop đang bật live_enabled.';
+  }
+
+  const lifecycle = String(shop.lifecycle || '').trim().toLowerCase();
+  if (!STEP_6_SIMULATION_SAFE_LIFECYCLES.has(lifecycle)) {
+    return 'Chỉ chạy giả lập cho shop ở lifecycle draft, configuring, hoặc paused.';
+  }
+
+  return '';
+}
+
 
 // Load pg Client safely
 function loadPgClient() {
@@ -2349,11 +2374,9 @@ function registerWizardRoutes(app, {
         return res.status(403).send('Thao tác bị chặn.');
       }
 
-      const globalDryRun = resolveGlobalDryRunState(process.env).dry_run;
-      const isShopDryRun = Boolean(shopDetail.shop.dry_run);
-
-      if (globalDryRun !== true || !isShopDryRun) {
-        return res.status(400).send('Giả lập chạy thử chỉ được thực hiện khi cả chế độ test an toàn toàn cục và chế độ test an toàn của shop đều được bật.');
+      const simulationBlockReason = getStep6SimulationBlockReason(shopDetail.shop);
+      if (simulationBlockReason) {
+        return res.status(400).send(simulationBlockReason);
       }
 
       const menuPass = Boolean(shopDetail.settings?.menu_intro_text?.trim());

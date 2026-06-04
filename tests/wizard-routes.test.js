@@ -1,4 +1,5 @@
 const { describe, it, expect } = require('./harness');
+const axios = require('axios');
 const { registerWizardRoutes, isValidShopSlug, BLOCKLIST, wizardShopGuard } = require('../core/admin/wizard-routes');
 const { PERMISSIONS } = require('../core/admin-auth');
 
@@ -277,6 +278,31 @@ class MockSensitiveFailPgClient {
     throw new Error('connect failed at postgres://user:pass@example.test/db token=EAABsecretvalue123 encrypted_value=v1:encrypted-secret-value for page 111222333444555');
   }
   async end() {}
+}
+
+function createStep6ShopStateClient(shopOverrides = {}) {
+  return class Step6ShopStateClient extends MockPgClient {
+    async query(sql, params) {
+      const cleanSql = String(sql || '').replace(/\s+/g, ' ').trim().toUpperCase();
+      if (cleanSql.includes('FROM SHOPS WHERE ID = $1 OR SLUG = $1') && cleanSql.includes('ORDER BY')) {
+        return {
+          rows: [{
+            id: params[0],
+            slug: params[0],
+            name: 'My Staging Shop',
+            status: 'active',
+            package: 'basic',
+            lifecycle: 'draft',
+            dry_run: true,
+            live_enabled: false,
+            last_manual_test_status: 'unknown',
+            ...shopOverrides
+          }]
+        };
+      }
+      return super.query(sql, params);
+    }
+  };
 }
 
 function createApp() {
@@ -1777,13 +1803,61 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
       process.env = originalEnv;
     });
 
-    it('POST /admin/wizard/:shopId/step/6/simulate blocks if global dry-run is false', async () => {
+    it('POST /admin/wizard/:shopId/step/6/simulate allows production-like global dry-run false when target shop is safe', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      const originalAxiosPost = axios.post;
+      const originalAxiosGet = axios.get;
+      const metaCalls = [];
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+      process.env.MESSENGER_DRY_RUN = 'false';
+      const Client = createStep6ShopStateClient({
+        dry_run: true,
+        live_enabled: false,
+        lifecycle: 'configuring'
+      });
+      axios.post = async () => {
+        metaCalls.push('post');
+        throw new Error('unexpected_meta_post');
+      };
+      axios.get = async () => {
+        metaCalls.push('get');
+        throw new Error('unexpected_meta_get');
+      };
+
+      try {
+        registerWizardRoutes(app, { adminExportToken: 'test-token', Client });
+
+        const req = createReq({
+          headers: { authorization: 'Bearer test-token' },
+          params: { shopId: 'has-credentials-shop' },
+          body: { productCode: 'code1' }
+        });
+        const res = createRes();
+        await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
+
+        expect(res.statusCode).toBe(303);
+        expect(res.headers.location.includes('success=simulated')).toBeTrue();
+        expect(metaCalls.length).toBe(0);
+      } finally {
+        axios.post = originalAxiosPost;
+        axios.get = originalAxiosGet;
+        process.env = originalEnv;
+      }
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/simulate blocks when target shop dry_run is false', async () => {
       const app = createApp();
       const originalEnv = { ...process.env };
       process.env.DATABASE_URL = 'postgres://localhost/test';
-      process.env.MESSENGER_DRY_RUN = 'false';
+      process.env.MESSENGER_DRY_RUN = 'true';
+      const Client = createStep6ShopStateClient({
+        dry_run: false,
+        live_enabled: false,
+        lifecycle: 'configuring'
+      });
 
-      registerWizardRoutes(app, { adminExportToken: 'test-token', Client: MockPgClient });
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client });
 
       const req = createReq({
         headers: { authorization: 'Bearer test-token' },
@@ -1794,7 +1868,61 @@ describe('Setup Wizard Step 5 Readiness Gate', () => {
       await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
 
       expect(res.statusCode).toBe(400);
-      expect(res.body.includes('Giả lập chạy thử chỉ được thực hiện khi cả chế độ test an toàn toàn cục và chế độ test an toàn của shop đều được bật.')).toBeTrue();
+      expect(res.body.includes('dry_run')).toBeTrue();
+
+      process.env = originalEnv;
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/simulate blocks when target shop live_enabled is true', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+      process.env.MESSENGER_DRY_RUN = 'false';
+      const Client = createStep6ShopStateClient({
+        dry_run: true,
+        live_enabled: true,
+        lifecycle: 'configuring'
+      });
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop' },
+        body: { productCode: 'code1' }
+      });
+      const res = createRes();
+      await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.includes('live_enabled')).toBeTrue();
+
+      process.env = originalEnv;
+    });
+
+    it('POST /admin/wizard/:shopId/step/6/simulate blocks when target shop lifecycle is live', async () => {
+      const app = createApp();
+      const originalEnv = { ...process.env };
+      process.env.DATABASE_URL = 'postgres://localhost/test';
+      process.env.MESSENGER_DRY_RUN = 'false';
+      const Client = createStep6ShopStateClient({
+        dry_run: true,
+        live_enabled: false,
+        lifecycle: 'live'
+      });
+
+      registerWizardRoutes(app, { adminExportToken: 'test-token', Client });
+
+      const req = createReq({
+        headers: { authorization: 'Bearer test-token' },
+        params: { shopId: 'has-credentials-shop' },
+        body: { productCode: 'code1' }
+      });
+      const res = createRes();
+      await app.routes['POST /admin/wizard/:shopId/step/6/simulate'](req, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.includes('lifecycle')).toBeTrue();
 
       process.env = originalEnv;
     });
