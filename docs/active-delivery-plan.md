@@ -445,6 +445,19 @@ Goal: onboard one more shop safely without increasing blast radius.
   - Monitor for 1h, then review at 24h.
   - Roll back immediately on send error, wrong product/image, wrong-shop
     routing, or staff unavailability.
+  - Partial/no-traffic checkpoint 2026-06-04 for production shop
+    `1018518438021869` / Nem Bui Xa: live enablement passed for the target
+    shop and rollback passed. `adult-shop` was untouched. Observed send errors:
+    `0`. Final target rollback state is `dry_run=true`,
+    `live_enabled=false`, with readiness/manual test still `passed`. Rollback
+    artifact:
+    `output/p3-3-prod-controlled-live-rollback-2026-06-04T16-44-20-584Z.json`.
+    Messenger `menu` and `TS01` were not run because no inbound target message
+    appeared in the log window; handoff/staff takeover was not reached. The
+    1h/24h monitoring did not continue because the shop was rolled back before
+    traffic. This does not complete P3.3. A second controlled live window with
+    an inbound tester is still required to verify `menu`, `TS01`, handoff, and
+    staff takeover.
 
 ## P4: Queue Rollout Planning
 

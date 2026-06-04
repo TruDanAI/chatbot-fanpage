@@ -38,7 +38,14 @@ config, data, or assets.
 - [x] `adult-shop` was untouched; the before/after snapshot hash matched.
 - [x] Rollback reference:
       `output/p3-2-prod-dry-run-rollback-2026-06-04T11-18-06-574Z.json`.
-- [ ] P3.3 live remains blocked and requires separate explicit approval.
+- [x] P3.3 partial/no-traffic live enablement and rollback drill passed for
+      production shop `1018518438021869` / Nem Bui Xa on 2026-06-04. Live
+      enablement passed, rollback passed, `adult-shop` was untouched, and
+      observed send errors were `0`. Rollback artifact:
+      `output/p3-3-prod-controlled-live-rollback-2026-06-04T16-44-20-584Z.json`.
+- [ ] P3.3 full live verification is not complete. A second controlled live
+      window with an inbound tester is required to verify Messenger `menu`,
+      product code `TS01`, handoff, and staff takeover.
 
 ## P0.2 Emergency Control Checkpoint
 
@@ -79,9 +86,11 @@ Current status 2026-06-04: P3.1 manual approval gate is complete for P3.2
 dry-run only. Page target is Nem Bui Xa. Trung approved the Page target,
 approved the current menu plus exact catalog product code `TS01`, and is the
 staff tester, rollback owner, pilot operator, and monitoring owner for the
-current test window. P3.2 production dry-run has passed. P3.3 live remains
-blocked and requires separate explicit approval. The `multiple_menu_images`
-readiness warning is accepted for dry-run only.
+current test window. P3.2 production dry-run has passed. A P3.3 no-traffic
+live enablement plus rollback drill passed on 2026-06-04, but P3.3 full live
+verification remains incomplete. The next P3.3 window requires an inbound
+tester and must still verify `menu`, `TS01`, handoff, and staff takeover. The
+`multiple_menu_images` readiness warning is accepted for dry-run only.
 
 - [x] Shop owner has explicitly approved using the real Page.
 - [x] Shop owner has approved the product/menu content for the pilot: current
@@ -97,9 +106,9 @@ readiness warning is accepted for dry-run only.
       `mapping_pass=1`.
 - [x] All operators understand the no-go conditions in this checklist.
 
-Do not continue to P3.3 live-window work until there is separate explicit live
-approval. Production DB writes still require a fresh verified backup and
-separate explicit production DB write approval.
+Do not continue to the next P3.3 live-window work until there is separate
+explicit live approval for that window. Production DB writes still require a
+fresh verified backup and separate explicit production DB write approval.
 
 ## Real Page Dry-Run-Only Steps
 
@@ -135,6 +144,10 @@ image, credential resolution, or shop isolation is wrong.
 Only start the live window after all dry-run-only checks pass and the
 preconditions remain true.
 
+The 2026-06-04 no-traffic drill does not satisfy the live verification items
+below. Leave the Messenger, handoff, and staff takeover checks open until a
+second controlled live window has an inbound tester.
+
 - [ ] Set global `MESSENGER_DRY_RUN=false` for the approved live window.
 - [ ] Set `nem-bui-xa` `dry_run=false`.
 - [ ] Keep all other shops at `dry_run=true`.
@@ -147,6 +160,24 @@ preconditions remain true.
 - [ ] Confirm handoff is active and staff can respond.
 - [ ] Do not test other product codes during the initial controlled window.
 - [ ] Do not enable or expand live traffic outside the approved window.
+
+### No-Traffic Controlled Live Attempt - 2026-06-04
+
+- [x] Live enablement passed for production shop `1018518438021869` /
+      Nem Bui Xa.
+- [x] Rollback passed; target returned to `dry_run=true`,
+      `live_enabled=false`.
+- [x] Readiness/manual test remained `passed`.
+- [x] `adult-shop` was untouched.
+- [x] Observed send errors: `0`.
+- [x] Rollback artifact:
+      `output/p3-3-prod-controlled-live-rollback-2026-06-04T16-44-20-584Z.json`.
+- [ ] Messenger `menu` was not run because no inbound target message appeared
+      in the log window.
+- [ ] Messenger `TS01` was not run.
+- [ ] Handoff/staff takeover was not reached.
+- [ ] Full P3.3 live verification remains open and needs a second controlled
+      live window with an inbound tester.
 
 ## Rollback
 
@@ -165,6 +196,8 @@ availability issue.
 
 ### First 15 Minutes
 
+- [x] 2026-06-04 no-traffic drill: rollback occurred before target traffic;
+      observed send errors were `0`.
 - [ ] Watch for Messenger send errors.
 - [ ] Watch for wrong product or wrong image responses.
 - [ ] Watch for Page conflict or wrong-shop routing.
@@ -174,6 +207,8 @@ availability issue.
 
 ### First 1 Hour
 
+- [ ] 2026-06-04 no-traffic drill: 1h monitoring did not continue because the
+      target was rolled back before traffic.
 - [ ] Recheck send error count.
 - [ ] Recheck wrong-shop routing indicators.
 - [ ] Recheck customer/staff handoff behavior.
@@ -182,6 +217,8 @@ availability issue.
 
 ### 24 Hours
 
+- [ ] 2026-06-04 no-traffic drill: 24h review did not continue because the
+      target was rolled back before traffic.
 - [ ] Review send errors and routing failures for the full period.
 - [ ] Review shop owner feedback.
 - [ ] Review staff feedback.
