@@ -21,6 +21,8 @@ evidence and runbooks:
   visibility, retention policy, and cleanup approval gates.
 - `docs/messenger-outside-24h-review.md` for Messenger standard-window policy,
   automated-send boundaries, and outside-window approval gates.
+- `docs/webhook-queue-rollout-runbook.md` for queue rollout gates,
+  staging-first procedure, production approval, monitoring, and rollback.
 - `docs/real-page-pilot-checklist.md` for real Page pilot steps.
 - `docs/production-page-cutover-runbook.md` for future production Page cutover.
 - `docs/saas-roadmap.md` for the long-range architecture direction.
@@ -435,17 +437,33 @@ Goal: onboard one more shop safely without increasing blast radius.
 
 Goal: prepare durable webhook queue without enabling it prematurely.
 
-- [ ] P4.1 Write queue rollout runbook.
+- [x] P4.1 Write queue rollout runbook.
   - Preconditions: schema exists, backup, `WEBHOOK_QUEUE_ENABLED=false`,
     worker settings known, rollback plan.
   - Rollout: staging first, production later with approval.
   - Rollback: set `WEBHOOK_QUEUE_ENABLED=false`, leave additive rows in place.
+  - Completed 2026-06-04: added
+    `docs/webhook-queue-rollout-runbook.md`. The runbook documents current
+    queue implementation boundaries, required schema/count-only prechecks,
+    safe runtime knobs, explicit staging write/env approval, production backup
+    and env approval gates, one-hour and 24-hour monitoring, rollback by
+    disabling `WEBHOOK_QUEUE_ENABLED`, and the rule to leave additive queue
+    rows in place. No queue enablement, deploy, push, env change, DB write,
+    Meta call, or Messenger send happened.
 
-- [ ] P4.2 Add queue observability.
+- [x] P4.2 Add queue observability.
   - Counts by status.
   - Oldest queued job age.
   - Failed count and last safe error code.
   - No raw payload or customer body in UI.
+  - Completed 2026-06-04: extended the read-only shop health queue summary in
+    the admin API and shop detail Health card. The queue section now reports
+    status counts, oldest queued job timestamp/age, failed count, and the last
+    safe failed error code. The dashboard repository query remains SELECT-only
+    and parameterized, and tests verify that raw Page IDs, payload fields,
+    `last_error`, and customer message/body values are not returned or rendered.
+    No queue enablement, deploy, push, env change, DB write, Meta call, or
+    Messenger send happened.
 
 - [!] P4.3 Production enable is blocked.
   - Do not enable `WEBHOOK_QUEUE_ENABLED` in production until runbook and

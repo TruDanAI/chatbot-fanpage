@@ -570,6 +570,12 @@ function createDashboardReaderStub() {
             done: 1,
             failed: 1
           },
+          oldest_queued_created_at: '2026-05-15T00:30:00.000Z',
+          oldest_queued_available_at: '2026-05-15T00:30:00.000Z',
+          oldest_queued_age_seconds: 1800,
+          failed_count: 1,
+          last_failed_error_code: 'messenger_outside_window',
+          last_error: 'raw customer body do-not-return',
           payload_json: { text: 'do-not-return' }
         },
         credentials: {
@@ -3269,6 +3275,10 @@ describe('admin dashboard routes', () => {
     expect(body.processedMids.cleanup_candidate_count).toBe(1);
     expect(body.processedMids.oldest_first_seen_at).toBe('2026-04-10T00:00:00.000Z');
     expect(body.queue.byStatus.failed).toBe(1);
+    expect(body.queue.oldest_queued_created_at).toBe('2026-05-15T00:30:00.000Z');
+    expect(body.queue.oldest_queued_age_seconds).toBe(1800);
+    expect(body.queue.failed_count).toBe(1);
+    expect(body.queue.last_failed_error_code).toBe('messenger_outside_window');
     expect(body.credentials.byStatus.active).toBe(1);
     expect(bodyText.includes('page_1')).toBeFalse();
     expect(bodyText.includes('raw_page_id')).toBeFalse();
@@ -3280,6 +3290,8 @@ describe('admin dashboard routes', () => {
     expect(bodyText.includes('do-not-return')).toBeFalse();
     expect(bodyText.includes('message_body')).toBeFalse();
     expect(bodyText.includes('payload_json')).toBeFalse();
+    expect(bodyText.includes('last_error')).toBeFalse();
+    expect(bodyText.includes('raw customer body')).toBeFalse();
   });
 
   it('shop health API handles missing optional queue and credential schema gracefully', async () => {
@@ -3993,16 +4005,18 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('<strong>Send error rate 1h</strong>: 25.0% (1 failed / 4 attempts)');
     expect(res.body).toContain('<strong>Active handoffs</strong>: 2');
     expect(res.body).toContain('<strong>Processed MIDs retention</strong>: 7 total; 3 older than 7d; 1 cleanup candidate &gt;30d; oldest 2026-04-10T00:00:00.000Z');
-    expect(res.body).toContain('<strong>Queue</strong>: queued 1, processing 1, done 1, failed 1 (4 total)');
+    expect(res.body).toContain('<strong>Queue</strong>: queued 1, processing 1, done 1, failed 1 (4 total); oldest queued 30m; last safe error code messenger_outside_window');
     expect(res.body).toContain('Operational alert thresholds');
     expect(res.body).toContain('High send error rate');
     expect(res.body).toContain('25.0% (1 failed / 4 attempts) in the last hour.');
     expect(res.body).toContain('Queue has failed jobs');
-    expect(res.body).toContain('1 failed queue job found.');
+    expect(res.body).toContain('1 failed queue job found. Last safe error code: messenger_outside_window.');
     expect(res.body).toContain('Keep WEBHOOK_QUEUE_ENABLED unchanged');
     expect(res.body.includes('raw_page_id')).toBeFalse();
     expect(res.body.includes('message_body')).toBeFalse();
     expect(res.body.includes('payload_json')).toBeFalse();
+    expect(res.body.includes('last_error')).toBeFalse();
+    expect(res.body.includes('raw customer body')).toBeFalse();
     expect(res.body.includes('sender_id')).toBeFalse();
     expect(res.body.includes('do-not-return')).toBeFalse();
   });
@@ -7956,7 +7970,19 @@ describe('admin dashboard PostgreSQL reader', () => {
         }
         if (sql.includes('FROM webhook_queue')) {
           expect(params).toEqual(['adult-shop', 'default']);
-          return { rows: [{ status: 'queued', total: 2 }, { status: 'failed', total: 1 }] };
+          return {
+            rows: [{
+              queued: 2,
+              processing: 0,
+              done: 0,
+              failed: 1,
+              oldest_queued_created_at: '2026-05-15T00:45:00.000Z',
+              oldest_queued_available_at: '2026-05-15T00:45:00.000Z',
+              oldest_queued_age_seconds: 900,
+              last_failed_error_code: 'network_timeout',
+              last_error: 'do-not-return'
+            }]
+          };
         }
         if (sql.includes('SELECT DISTINCT page_id')) {
           expect(params).toEqual(['adult-shop']);
@@ -7993,6 +8019,10 @@ describe('admin dashboard PostgreSQL reader', () => {
     expect(model.processedMids.oldest_first_seen_at).toBe('2026-04-10T00:00:00.000Z');
     expect(model.queue.byStatus.queued).toBe(2);
     expect(model.queue.byStatus.failed).toBe(1);
+    expect(model.queue.oldest_queued_created_at).toBe('2026-05-15T00:45:00.000Z');
+    expect(model.queue.oldest_queued_age_seconds).toBe(900);
+    expect(model.queue.failed_count).toBe(1);
+    expect(model.queue.last_failed_error_code).toBe('network_timeout');
     expect(model.credentials.byStatus.active).toBe(1);
     expect(text.includes('raw-page-id')).toBeFalse();
     expect(text.includes('do-not-return')).toBeFalse();

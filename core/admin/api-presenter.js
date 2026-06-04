@@ -4,6 +4,7 @@ const {
 } = require('./views');
 const { pageRef } = require('../utils/log-refs');
 const { buildShopReadiness } = require('./shop-readiness');
+const { safeErrorCode } = require('../webhook-queue');
 
 function limitText(value = '', max = 240) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -537,6 +538,30 @@ function presentHealthStatusSummary(section = {}, statuses = []) {
   };
 }
 
+function presentQueueErrorCode(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/\s/.test(raw)) return 'webhook_queue_job_failed';
+  const code = safeErrorCode(raw);
+  if (/(?:eaab|token|secret|password|postgres|database[_-]?url|db[_-]?url|sender[_-]?id|customer|message[_-]?body|payload[_-]?json|page[_-]?id)/i.test(code)) {
+    return 'webhook_queue_job_failed';
+  }
+  return limitText(code || 'webhook_queue_job_failed', 120);
+}
+
+function presentQueueSummary(section = {}) {
+  const summary = presentHealthStatusSummary(section, ['queued', 'processing', 'done', 'failed']);
+  if (section.available === false) return summary;
+  return {
+    ...summary,
+    oldest_queued_created_at: section.oldest_queued_created_at || null,
+    oldest_queued_available_at: section.oldest_queued_available_at || null,
+    oldest_queued_age_seconds: section.oldest_queued_age_seconds == null ? null : Math.max(0, Number(section.oldest_queued_age_seconds || 0)),
+    failed_count: Number(section.failed_count ?? section.byStatus?.failed ?? 0),
+    last_failed_error_code: presentQueueErrorCode(section.last_failed_error_code)
+  };
+}
+
 function presentPilotIsolation(section = {}) {
   if (!section || section.available === false) {
     return {
@@ -611,7 +636,7 @@ function presentShopHealthApi(model = {}) {
       active_handoff_count: Number(activity.active_handoff_count || 0)
     },
     processedMids: presentProcessedMidsSummary(model.processedMids),
-    queue: presentHealthStatusSummary(model.queue || {}, ['queued', 'processing', 'done', 'failed']),
+    queue: presentQueueSummary(model.queue || {}),
     credentials: credentialSummary,
     ...(model.message ? { message: limitText(model.message, 160) } : {})
   };

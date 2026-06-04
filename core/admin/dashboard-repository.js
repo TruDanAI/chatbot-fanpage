@@ -1,3 +1,5 @@
+const { safeErrorCode } = require('../webhook-queue');
+
 function escapeSqlLike(value = '') {
   return String(value || '').replace(/[\\%_]/g, char => `\\${char}`);
 }
@@ -57,6 +59,24 @@ function createUnavailableSection(reason = 'schema_not_ready') {
     available: false,
     reason
   };
+}
+
+function safeQueueErrorCode(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/\s/.test(raw)) return 'webhook_queue_job_failed';
+  const code = safeErrorCode(raw);
+  if (/(?:eaab|token|secret|password|postgres|database[_-]?url|db[_-]?url|sender[_-]?id|customer|message[_-]?body|payload[_-]?json|page[_-]?id)/i.test(code)) {
+    return 'webhook_queue_job_failed';
+  }
+  return code || 'webhook_queue_job_failed';
+}
+
+function nullableNonNegativeInteger(value) {
+  if (value == null || value === '') return null;
+  const number = Math.floor(Number(value));
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, number);
 }
 
 function createPageMeta({ page = 1, limit = 25, offset = 0, total = 0 } = {}) {
@@ -574,7 +594,32 @@ function createDashboardRepository({
       let queue = createUnavailableSection('webhook_queue_schema_not_ready');
       try {
         const queueResult = await client.query(`
-          SELECT q.status, COUNT(*)::int AS total
+          SELECT
+            COUNT(*) FILTER (WHERE q.status = 'queued')::int AS queued,
+            COUNT(*) FILTER (WHERE q.status = 'processing')::int AS processing,
+            COUNT(*) FILTER (WHERE q.status = 'done')::int AS done,
+            COUNT(*) FILTER (WHERE q.status = 'failed')::int AS failed,
+            MIN(q.created_at) FILTER (WHERE q.status = 'queued') AS oldest_queued_created_at,
+            MIN(q.available_at) FILTER (WHERE q.status = 'queued') AS oldest_queued_available_at,
+            CASE
+              WHEN MIN(q.created_at) FILTER (WHERE q.status = 'queued') IS NULL THEN NULL
+              ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - MIN(q.created_at) FILTER (WHERE q.status = 'queued')))))::int
+            END AS oldest_queued_age_seconds,
+            (
+              SELECT q2.last_error
+              FROM webhook_queue q2
+              JOIN (
+                SELECT DISTINCT page_id
+                FROM shop_pages
+                WHERE shop_id = $1
+                  AND page_id <> ''
+              ) sp2 ON sp2.page_id = q2.page_id
+              WHERE q2.tenant_id = $2
+                AND q2.status = 'failed'
+                AND q2.last_error <> ''
+              ORDER BY q2.updated_at DESC, q2.id DESC
+              LIMIT 1
+            ) AS last_failed_error_code
           FROM webhook_queue q
           JOIN (
             SELECT DISTINCT page_id
@@ -583,12 +628,21 @@ function createDashboardRepository({
               AND page_id <> ''
           ) sp ON sp.page_id = q.page_id
           WHERE q.tenant_id = $2
-          GROUP BY q.status
-          ORDER BY q.status ASC
         `, [shop.id, tenantId]);
+        const row = queueResult.rows[0] || {};
+        const summaryRows = ['queued', 'processing', 'done', 'failed'].map(status => ({
+          status,
+          total: Number(row[status] || 0)
+        }));
+        const summary = createStatusSummary(summaryRows, ['queued', 'processing', 'done', 'failed']);
         queue = {
           available: true,
-          ...createStatusSummary(queueResult.rows, ['queued', 'processing', 'done', 'failed'])
+          ...summary,
+          oldest_queued_created_at: row.oldest_queued_created_at || null,
+          oldest_queued_available_at: row.oldest_queued_available_at || null,
+          oldest_queued_age_seconds: nullableNonNegativeInteger(row.oldest_queued_age_seconds),
+          failed_count: Number(row.failed || summary.byStatus.failed || 0),
+          last_failed_error_code: safeQueueErrorCode(row.last_failed_error_code)
         };
       } catch (err) {
         if (!isMissingMultiShopSchemaError(err)) throw err;

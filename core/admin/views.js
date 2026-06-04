@@ -3037,6 +3037,23 @@ function healthStatusCounts(section = {}, statuses = []) {
   return `${parts.join(', ')} (${healthCount(section.total)} total)`;
 }
 
+function healthDurationSeconds(value = null) {
+  if (value == null || value === '') return 'unknown';
+  const totalSeconds = Math.max(0, Math.floor(Number(value)));
+  if (!Number.isFinite(totalSeconds)) return 'unknown';
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return remainingMinutes > 0 ? `${totalHours}h ${remainingMinutes}m` : `${totalHours}h`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const remainingHours = totalHours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
 function healthSendErrorRateText(activity = {}, errorRate = NaN) {
   if (!Number.isFinite(errorRate)) return 'unknown';
   const errors = healthCount(activity.send_errors_1h);
@@ -3076,6 +3093,20 @@ function healthProcessedMidsText(processedMids = {}) {
   return `${healthCount(processedMids.total)} total; ${olderThan7d} older than 7d; ${cleanupCandidates} ${candidateLabel} >${retentionDays}d; oldest ${oldest}`;
 }
 
+function healthQueueText(queue = {}) {
+  if (!queue || queue.available === false) return 'unknown';
+  const parts = [healthStatusCounts(queue, ['queued', 'processing', 'done', 'failed'])];
+  const queued = healthCount(queue.byStatus?.queued);
+  if (queued > 0) {
+    parts.push(`oldest queued ${healthDurationSeconds(queue.oldest_queued_age_seconds)}`);
+  }
+  const failed = healthCount(queue.failed_count ?? queue.byStatus?.failed);
+  if (failed > 0 && queue.last_failed_error_code) {
+    parts.push(`last safe error code ${queue.last_failed_error_code}`);
+  }
+  return parts.join('; ');
+}
+
 function healthTimeMs(value = '') {
   if (!value) return null;
   const time = new Date(value).getTime();
@@ -3111,10 +3142,13 @@ function buildHealthAlerts({ activity = {}, queue = {}, credentials = {}, errorR
   if (queueAvailable) {
     const failed = healthCount(queue.byStatus?.failed);
     if (failed > 0) {
+      const lastCode = queue.last_failed_error_code
+        ? ` Last safe error code: ${queue.last_failed_error_code}.`
+        : '';
       alerts.push({
         severity: 'error',
         title: 'Queue has failed jobs',
-        detail: `${failed} failed queue job${failed === 1 ? '' : 's'} found. Keep WEBHOOK_QUEUE_ENABLED unchanged and inspect queue handling before rollout.`
+        detail: `${failed} failed queue job${failed === 1 ? '' : 's'} found.${lastCode} Keep WEBHOOK_QUEUE_ENABLED unchanged and inspect queue handling before rollout.`
       });
     }
   }
@@ -3201,7 +3235,7 @@ function renderHealthCard(health = {}) {
         ${renderHealthMetric('Send error rate 1h', activityUnavailable || !hasErrorRate ? 'unknown' : healthSendErrorRateText(activity, errorRate), activityUnavailable || !hasErrorRate ? 'unknown' : (errorRate > 0.1 ? 'error' : (errorRate > 0 ? 'warning' : 'ok')))}
         ${renderHealthMetric('Active handoffs', activityUnavailable ? 'unknown' : healthCount(activity.active_handoff_count), activityUnavailable ? 'unknown' : (healthCount(activity.active_handoff_count) > 0 ? 'warning' : 'ok'))}
         ${renderHealthMetric('Processed MIDs retention', processedMidsUnavailable ? 'unknown' : healthProcessedMidsText(processedMids), healthProcessedMidsState(processedMids))}
-        ${renderHealthMetric('Queue', queueUnavailable ? 'unknown' : healthStatusCounts(queue, ['queued', 'processing', 'done', 'failed']), healthQueueState(queue))}
+        ${renderHealthMetric('Queue', queueUnavailable ? 'unknown' : healthQueueText(queue), healthQueueState(queue))}
       </div>
     </section>
   `;
