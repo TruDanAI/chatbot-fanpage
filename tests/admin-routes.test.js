@@ -3516,6 +3516,20 @@ describe('admin dashboard routes', () => {
     expect(res.body).toContain('https://cdn.example.test/db1.jpg'); // prod-1 thumbnail URL
     expect(res.body).toContain('⚠'); // active product missing image warning symbol
     expect(res.body).toContain('Thiếu ảnh'); // active product missing image warning text
+    expect(res.body).toContain('class="product-edit-panel"');
+    expect(res.body).toContain('data-product-image-controls="true"');
+    expect(res.body).toContain('Product image URL');
+    expect(res.body).toContain('Không tải được ảnh. Kiểm tra lại URL công khai HTTPS.');
+    expect(res.body).toContain('action="/admin/shops/adult-shop/assets/asset-1"');
+    expect(res.body).toContain('href="#asset-asset-1"');
+    expect(res.body).toContain('<input type="hidden" name="asset_type" value="product_image">');
+    expect(res.body).toContain('<input type="hidden" name="product_id" value="prod-1">');
+    expect(res.body).toContain('<input type="hidden" name="product_id" value="prod-4">');
+    expect(res.body).toContain('Gắn URL ảnh');
+    expect(res.body).toContain('Archive is a soft archive, not a delete action.');
+    expect(res.body).toContain('id="asset-asset-1"');
+    expect(res.body.includes('Tải ảnh sản phẩm lên')).toBeFalse();
+    expect(res.body.includes('type="file"')).toBeFalse();
 
     // Mobile card fallback list
     expect(res.body).toContain('class="product-mobile-list"');

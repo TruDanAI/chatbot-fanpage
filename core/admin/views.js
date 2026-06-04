@@ -71,6 +71,18 @@ function encodeRoutePart(value = '') {
   return encodeURIComponent(String(value || ''));
 }
 
+function safeDomIdPart(value = '') {
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || 'unknown';
+}
+
+function assetDomId(asset = {}) {
+  return `asset-${safeDomIdPart(asset.id || asset.public_url || 'unknown')}`;
+}
+
 function productImportStorageKey(shopId = '') {
   return `product-import-csv:${String(shopId || '').trim().slice(0, 160)}`;
 }
@@ -576,6 +588,22 @@ function renderLayout(title, body, { showLogout = true } = {}) {
     .product-row-edit .button-link { min-height: 32px; font-size: 13px; }
     .product-thumb-warning { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #fffbeb; border: 1px dashed #f59e0b; color: #b45309; box-sizing: border-box; font-size: 16px; }
     .product-thumb-muted { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 6px; background: #f1f5f9; border: 1px dashed #cbd5e1; color: #64748b; box-sizing: border-box; font-size: 16px; }
+    .product-edit-panel { display: grid; gap: 14px; }
+    .product-image-control-card { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 12px; display: grid; gap: 12px; }
+    .product-image-control-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .product-image-control-header h4 { margin: 0 0 4px; font-size: 14px; color: #17202a; }
+    .product-image-control-header p { margin: 0; line-height: 1.4; }
+    .product-image-preview-panel { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: center; }
+    .product-image-preview-frame { width: 72px; min-height: 72px; }
+    .product-image-preview-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: #ffffff; display: block; box-sizing: border-box; }
+    .product-image-broken-warning, .product-image-empty-warning { width: 72px; min-height: 72px; border-radius: 6px; border: 1px dashed #fca5a5; background: #fef2f2; color: var(--danger); display: flex; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; padding: 7px; font-size: 11px; line-height: 1.25; }
+    .product-image-empty-warning { border-color: #f59e0b; background: #fffbeb; color: #b45309; font-weight: 800; }
+    .product-image-preview-copy { min-width: 0; display: grid; gap: 4px; }
+    .product-image-preview-copy strong, .product-image-preview-copy span { overflow-wrap: anywhere; }
+    .product-image-url-form { border-top: 1px solid #e2e8f0 !important; padding-top: 12px !important; }
+    .product-image-control-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+    .product-image-control-actions .inline-action { margin: 0; }
+    .compact-warning { display: block; padding: 7px 8px; font-size: 12px; }
     .import-steps { grid-column: 1 / -1; display: grid; gap: 6px; margin: 0; padding-left: 20px; color: #334155; font-size: 13px; line-height: 1.45; }
     .checklist-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 16px 0 4px; }
     .checklist-card h2 { margin-top: 0; }
@@ -962,6 +990,10 @@ function renderLayout(title, body, { showLogout = true } = {}) {
       display: grid;
       gap: 12px;
       grid-template-columns: 1fr;
+    }
+    .drawer-body .product-edit-panel {
+      display: grid;
+      gap: 14px;
     }
     body.js-enabled #add-product-section {
       display: none;
@@ -2596,6 +2628,83 @@ function renderProductEditForm(shopId = '', product = {}) {
   </form>`;
 }
 
+function renderProductImageControlPreview(product = {}, asset = null) {
+  if (asset?.public_url) {
+    return `
+      <div class="product-image-preview-panel">
+        <div class="product-image-preview-frame">
+          <img class="product-image-preview-thumb" src="${escapeHtml(asset.public_url)}" alt="${escapeHtml(product.name || product.code || 'product image')}" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
+          <div class="product-image-broken-warning" hidden>Không tải được ảnh. Kiểm tra lại URL công khai HTTPS.</div>
+        </div>
+        <div class="product-image-preview-copy">
+          <strong>Ảnh đang gắn với sản phẩm</strong>
+          <span class="meta">${escapeHtml(limitText(asset.public_url, 180))}</span>
+          ${String(asset.status || '').toLowerCase() !== 'active'
+            ? '<span class="asset-warning compact-warning">Ảnh này chưa active nên bot chưa dùng trong phản hồi sản phẩm.</span>'
+            : ''
+          }
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="product-image-preview-panel">
+      <div class="product-image-empty-warning">Thiếu ảnh</div>
+      <div class="product-image-preview-copy">
+        <strong>Chưa gắn URL ảnh sản phẩm</strong>
+        <span class="meta">Thêm URL ảnh công khai HTTPS để bot có thể dùng ảnh cho mã này.</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderProductImageUrlForm(shopId = '', product = {}, asset = null) {
+  const isUpdate = Boolean(asset?.id);
+  const action = isUpdate
+    ? `/admin/shops/${encodeRoutePart(shopId)}/assets/${encodeRoutePart(asset.id)}`
+    : `/admin/shops/${encodeRoutePart(shopId)}/assets`;
+  const status = asset?.status || 'active';
+  const sortOrder = asset?.sort_order != null ? asset.sort_order : (product.sort_order || 0);
+  return `<form class="product-form compact product-image-url-form" method="post" action="${escapeHtml(action)}" data-product-image-url-form="true">
+    <input type="hidden" name="asset_type" value="product_image">
+    <input type="hidden" name="product_id" value="${escapeHtml(product.id || '')}">
+    <label class="wide">Product image URL <span class="required">required</span>
+      <input name="public_url" type="url" value="${escapeHtml(asset?.public_url || '')}" maxlength="2048" required aria-required="true" autocomplete="off" placeholder="https://cdn.example.test/${escapeHtml(product.code || 'product')}.jpg">
+      <span class="help">Chỉ cập nhật URL/linkage trong shop_assets. Không upload file, không xóa ảnh cũ.</span>
+    </label>
+    <label>Status<select name="status">${renderAssetStatusOptions(status)}</select></label>
+    <label>Sort order<input name="sort_order" type="number" value="${escapeHtml(sortOrder)}"></label>
+    <label>Content type<input name="content_type" value="${escapeHtml(asset?.content_type || '')}" maxlength="120" placeholder="image/jpeg"></label>
+    <div class="form-actions"><button type="submit">${isUpdate ? 'Cập nhật URL ảnh' : 'Gắn URL ảnh'}</button></div>
+  </form>`;
+}
+
+function renderProductImageControls(shopId = '', product = {}, assets = []) {
+  const editableImage = findProductImageAsset(product, assets, { editableOnly: true });
+  const galleryHref = editableImage?.id ? `#${assetDomId(editableImage)}` : '#asset-product-images';
+  return `
+    <section class="product-image-control-card" data-product-image-controls="true">
+      <div class="product-image-control-header">
+        <div>
+          <h4>Ảnh sản phẩm</h4>
+          <p class="meta">Xem và sửa ảnh cho mã <code>${escapeHtml(product.code || '')}</code> ngay trong màn hình Product.</p>
+        </div>
+        <a class="button-link secondary-button" href="${escapeHtml(galleryHref)}">Mở trong Images</a>
+      </div>
+      ${renderProductImageControlPreview(product, editableImage)}
+      ${renderProductImageUrlForm(shopId, product, editableImage)}
+      ${editableImage?.id ? `<div class="product-image-control-actions">${renderAssetStatusActions(shopId, editableImage)}</div>` : ''}
+    </section>
+  `;
+}
+
+function renderProductEditPanel(shopId = '', product = {}, assets = []) {
+  return `<div class="product-edit-panel" data-product-edit-panel="true">
+    ${renderProductEditForm(shopId, product)}
+    ${renderProductImageControls(shopId, product, assets)}
+  </div>`;
+}
+
 function renderProductStatusActions(shopId = '', product = {}) {
   const status = String(product.status || '').toLowerCase();
   const statusAction = `/admin/shops/${encodeRoutePart(shopId)}/products/${encodeRoutePart(product.id)}/status`;
@@ -2774,15 +2883,42 @@ function renderAssetStatusActions(shopId = '', asset = {}) {
   `;
 }
 
-function findActiveProductImage(product = {}, assets = []) {
-  return (assets || []).find(asset =>
+function productImageMatchesProduct(asset = {}, product = {}) {
+  return Boolean(
     asset.asset_type === 'product_image' &&
-    asset.status === 'active' &&
     (
       (asset.product_id && String(asset.product_id) === String(product.id)) ||
       (asset.product_code && String(asset.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
     )
-  ) || null;
+  );
+}
+
+function productImageStatusRank(asset = {}) {
+  const status = String(asset.status || '').toLowerCase();
+  if (status === 'active') return 0;
+  if (status === 'hidden') return 1;
+  if (status === 'archived') return 3;
+  return 2;
+}
+
+function findProductImageAsset(product = {}, assets = [], { activeOnly = false, editableOnly = false } = {}) {
+  const candidates = (assets || [])
+    .filter(asset => productImageMatchesProduct(asset, product))
+    .filter(asset => !activeOnly || String(asset.status || '').toLowerCase() === 'active')
+    .filter(asset => !editableOnly || String(asset.status || '').toLowerCase() !== 'archived')
+    .slice()
+    .sort((a, b) => {
+      const statusDelta = productImageStatusRank(a) - productImageStatusRank(b);
+      if (statusDelta) return statusDelta;
+      const sortDelta = Number(a.sort_order || 0) - Number(b.sort_order || 0);
+      if (sortDelta) return sortDelta;
+      return String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true });
+    });
+  return candidates[0] || null;
+}
+
+function findActiveProductImage(product = {}, assets = []) {
+  return findProductImageAsset(product, assets, { activeOnly: true });
 }
 
 function productByCode(products = []) {
@@ -3275,7 +3411,7 @@ function getAssetTypeLabel(type = '') {
 function renderAssetCards(assets = [], shopId = '', products = []) {
   if (!assets.length) return '<div class="asset-empty">Chưa có ảnh trong nhóm này.</div>';
   return `<div class="asset-card-grid">${assets.map(asset => `
-    <article class="asset-card">
+    <article class="asset-card" id="${escapeHtml(assetDomId(asset))}" data-asset-id="${escapeHtml(asset.id || '')}" data-product-id="${escapeHtml(asset.product_id || '')}" data-product-code="${escapeHtml(asset.product_code || '')}">
       <div class="asset-preview">${renderAssetPreview(asset)}</div>
       <div class="asset-card-body">
         <div class="asset-title-row">
@@ -3521,14 +3657,7 @@ function renderShopDetailHtml(model = {}) {
   );
 
   const productRows = Array.isArray(model.products) ? model.products : [];
-  const productHasActiveImage = product => assetRows.some(a =>
-    a.asset_type === 'product_image' &&
-    a.status === 'active' &&
-    (
-      (a.product_id && String(a.product_id) === String(product.id)) ||
-      (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
-    )
-  );
+  const productHasActiveImage = product => Boolean(findActiveProductImage(product, assetRows));
   const activeProducts = productRows.filter(product => String(product.status || '').toLowerCase() === 'active');
   const secondaryProducts = productRows.filter(product => String(product.status || '').toLowerCase() !== 'active');
   const missingImageProducts = activeProducts.filter(product => !productHasActiveImage(product));
@@ -3546,14 +3675,7 @@ function renderShopDetailHtml(model = {}) {
           const isArchived = String(product.status || '').toLowerCase() === 'archived';
           const isSecondary = String(product.status || '').toLowerCase() !== 'active';
           const style = isSecondary ? 'opacity: 0.72; ' : '';
-          const productImage = assetRows.find(a =>
-            a.asset_type === 'product_image' &&
-            a.status === 'active' &&
-            (
-              (a.product_id && String(a.product_id) === String(product.id)) ||
-              (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
-            )
-          );
+          const productImage = findActiveProductImage(product, assetRows);
           const hasImage = !!(productImage && productImage.public_url);
           let imgHtml = '';
           if (hasImage) {
@@ -3590,7 +3712,7 @@ function renderShopDetailHtml(model = {}) {
                   </div>
                 </div>
                 <div class="js-fallback-form-container" style="display: none; margin-top: 8px;">
-                  ${renderProductEditForm(shop.id, product)}
+                  ${renderProductEditPanel(shop.id, product, assetRows)}
                 </div>
               </div>
             </article>
@@ -3604,14 +3726,7 @@ function renderShopDetailHtml(model = {}) {
         const isArchived = String(product.status || '').toLowerCase() === 'archived';
         const isSecondary = String(product.status || '').toLowerCase() !== 'active';
         const rowClass = isSecondary ? ' class="product-row-secondary"' : ' class="product-row-primary"';
-        const productImage = assetRows.find(a =>
-          a.asset_type === 'product_image' &&
-          a.status === 'active' &&
-          (
-            (a.product_id && String(a.product_id) === String(product.id)) ||
-            (a.product_code && String(a.product_code).trim().toLowerCase() === String(product.code).trim().toLowerCase())
-          )
-        );
+        const productImage = findActiveProductImage(product, assetRows);
         const hasImage = !!(productImage && productImage.public_url);
         let imageHtml = '';
         if (hasImage) {
@@ -3646,7 +3761,7 @@ function renderShopDetailHtml(model = {}) {
               ${!isArchived ? `<button type="button" class="js-edit-product-btn button-link" data-product-id="${escapeHtml(product.id)}" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: var(--primary);">Sửa</button>` : ''}
               ${renderProductStatusActions(shop.id, product)}
               <div class="js-fallback-form-container">
-                ${renderProductEditForm(shop.id, product)}
+                ${renderProductEditPanel(shop.id, product, assetRows)}
               </div>
             </td>
           </tr>
@@ -4218,7 +4333,8 @@ function renderShopDetailHtml(model = {}) {
             if (!codeInput || !hint) return;
             const typed = String(codeInput.value || '').trim();
             const value = typed.toLowerCase();
-            const currentCode = String(form.dataset.currentCode || '').trim().toLowerCase();
+            const productForm = codeInput.closest('.product-form');
+            const currentCode = String(form.dataset.currentCode || (productForm && productForm.dataset.currentCode) || '').trim().toLowerCase();
             let matches = productCodeRegistry.filter(code => code === value).length;
             // The product being edited is in the registry too; do not flag its own code.
             if (currentCode && value === currentCode && matches > 0) matches -= 1;
@@ -4252,14 +4368,14 @@ function renderShopDetailHtml(model = {}) {
           const drawerDiscardCancel = document.getElementById('drawer-discard-cancel');
           const drawerDiscardConfirm = document.getElementById('drawer-discard-confirm');
 
-          let activeDrawerFormParent = null;
-          let activeDrawerForm = null;
+          let activeDrawerNodeParent = null;
+          let activeDrawerNode = null;
           let drawerInitialState = '';
 
-          function serializeDrawerForm(form) {
-            if (!form) return '';
+          function serializeDrawerForm(node) {
+            if (!node) return '';
             const parts = [];
-            const elements = form.querySelectorAll('input, textarea, select');
+            const elements = node.querySelectorAll('input, textarea, select');
             Array.prototype.forEach.call(elements, el => {
               if (!el.name) return;
               if (el.type === 'checkbox' || el.type === 'radio') {
@@ -4271,32 +4387,32 @@ function renderShopDetailHtml(model = {}) {
             return parts.join('&');
           }
 
-          function openDrawer(form, titleText) {
-            if (activeDrawerForm && activeDrawerFormParent) {
-              activeDrawerFormParent.appendChild(activeDrawerForm);
+          function openDrawer(node, titleText) {
+            if (activeDrawerNode && activeDrawerNodeParent) {
+              activeDrawerNodeParent.appendChild(activeDrawerNode);
             }
-            activeDrawerForm = form;
-            activeDrawerFormParent = form.parentElement;
+            activeDrawerNode = node;
+            activeDrawerNodeParent = node.parentElement;
 
             drawerTitle.textContent = titleText;
-            drawerBody.appendChild(form);
+            drawerBody.appendChild(node);
             drawerBackdrop.classList.add('visible');
-            drawerInitialState = serializeDrawerForm(form);
-            checkDuplicateCode(form);
+            drawerInitialState = serializeDrawerForm(node);
+            checkDuplicateCode(node);
           }
 
           function closeDrawer() {
-            if (activeDrawerForm && activeDrawerFormParent) {
-              activeDrawerFormParent.appendChild(activeDrawerForm);
-              activeDrawerForm = null;
-              activeDrawerFormParent = null;
+            if (activeDrawerNode && activeDrawerNodeParent) {
+              activeDrawerNodeParent.appendChild(activeDrawerNode);
+              activeDrawerNode = null;
+              activeDrawerNodeParent = null;
             }
             drawerInitialState = '';
             drawerBackdrop.classList.remove('visible');
           }
 
           function requestCloseDrawer() {
-            if (activeDrawerForm && serializeDrawerForm(activeDrawerForm) !== drawerInitialState) {
+            if (activeDrawerNode && serializeDrawerForm(activeDrawerNode) !== drawerInitialState) {
               if (drawerDiscardModal) {
                 drawerDiscardModal.classList.add('visible');
                 return;
@@ -4380,13 +4496,14 @@ function renderShopDetailHtml(model = {}) {
             const editBtn = e.target.closest('.js-edit-product-btn');
             if (editBtn) {
               e.preventDefault();
-              const parentTd = editBtn.closest('td');
-              if (parentTd) {
-                const form = parentTd.querySelector('.product-form');
+              const container = editBtn.closest('td') || editBtn.closest('.product-card-fallback');
+              if (container) {
+                const panel = container.querySelector('.product-edit-panel') || container.querySelector('.product-form');
                 const row = editBtn.closest('tr');
-                const productCode = row ? row.querySelector('td:first-child code').textContent : '';
-                if (form) {
-                  openDrawer(form, 'Sửa sản phẩm: ' + productCode);
+                const codeNode = row ? row.querySelector('td:first-child code') : container.querySelector('code');
+                const productCode = codeNode ? codeNode.textContent : '';
+                if (panel) {
+                  openDrawer(panel, 'Sửa sản phẩm: ' + productCode);
                 }
               }
             }
