@@ -240,20 +240,20 @@ Blocked until separately reviewed:
 
 ## Key Runbooks
 
-- `docs/active-delivery-plan.md` - current project stage, safety rules, and
+- `docs/active/active-delivery-plan.md` - current project stage, safety rules, and
   next work.
-- `docs/production-rollout-checkpoint.md` - verified production rollout state.
-- `docs/real-page-pilot-checklist.md` - dry-run-first and controlled live Page
+- `docs/active/production-rollout-checkpoint.md` - verified production rollout state.
+- `docs/active/real-page-pilot-checklist.md` - dry-run-first and controlled live Page
   pilot record.
-- `docs/production-page-cutover-runbook.md` - future Page cutover procedure and
+- `docs/runbooks/production-page-cutover-runbook.md` - future Page cutover procedure and
   approval gates.
-- `docs/webhook-queue-rollout-runbook.md` - staged queue rollout and rollback.
-- `docs/production-data-backup-runbook.md` - production data backup discipline.
-- `docs/basic-sales-v2-behavior-contract.md` - staging-only v2 behavior
+- `docs/runbooks/webhook-queue-rollout-runbook.md` - staged queue rollout and rollback.
+- `docs/runbooks/production-data-backup-runbook.md` - production data backup discipline.
+- `docs/active/basic-sales-v2-behavior-contract.md` - staging-only v2 behavior
   contract.
-- `docs/messenger-outside-24h-review.md` - Messenger standard-window policy
+- `docs/architecture/messenger-outside-24h-review.md` - Messenger standard-window policy
   posture.
-- `docs/processed-mids-retention-plan.md` - idempotency retention visibility
+- `docs/architecture/processed-mids-retention-plan.md` - idempotency retention visibility
   and cleanup gates.
 
 ## Near-Term Priorities

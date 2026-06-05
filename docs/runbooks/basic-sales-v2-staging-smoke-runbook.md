@@ -177,7 +177,7 @@ After an approved successful smoke:
 - Confirm the summary reports `adultShop.untouched=true`.
 - Re-run local focused tests if code changed.
 - Re-run `npm audit --omit=dev` if dependencies changed.
-- Update `docs/active-delivery-plan.md` P1.2 with the date, result, and any
+- Update `docs/active/active-delivery-plan.md` P1.2 with the date, result, and any
   follow-up.
 
 Do not use a successful staging smoke as production approval. Production Page

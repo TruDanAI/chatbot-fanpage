@@ -1,7 +1,7 @@
 # Multi-Shop Dashboard Design
 
 Status: Multi-shop MVP has passed staging on
-`feature/multi-shop-dashboard`. See `docs/multi-shop-rollout.md` for the
+`feature/multi-shop-dashboard`. See `docs/archive/checkpoints/multi-shop-rollout.md` for the
 current staging record and production rollout sequence.
 
 This document proposes the architecture for managing multiple Messenger shops
@@ -239,7 +239,7 @@ The original phase plan below has advanced through staging for the MVP:
   an aborted transaction or `COMMIT` does not report command `COMMIT`.
 - Production remains untouched for this branch.
 
-Use `docs/multi-shop-rollout.md` as the current rollout runbook before any
+Use `docs/archive/checkpoints/multi-shop-rollout.md` as the current rollout runbook before any
 production work.
 
 ### Phase A: Design Only

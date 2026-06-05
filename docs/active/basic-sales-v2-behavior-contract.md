@@ -152,7 +152,7 @@ Durable smoke script:
 node scripts/basic-sales-v2-staging-smoke.js
 ```
 
-Detailed runbook: `docs/basic-sales-v2-staging-smoke-runbook.md`.
+Detailed runbook: `docs/runbooks/basic-sales-v2-staging-smoke-runbook.md`.
 
 Do not run this script without explicit staging DB write approval. It mutates
 `wizard-smoke-shop` `shop_settings.settings_json` and restores it in `finally`.

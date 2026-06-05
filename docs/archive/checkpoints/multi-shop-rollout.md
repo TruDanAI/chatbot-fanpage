@@ -992,7 +992,7 @@ Safety notes:
 ## Production Rollout Checkpoint - 2026-05-31
 
 Detailed checkpoint:
-[production-rollout-checkpoint.md](production-rollout-checkpoint.md)
+[production-rollout-checkpoint.md](../../active/production-rollout-checkpoint.md)
 
 Production rollout after the dry-run/lifecycle readiness schema migration is
 fully verified.
@@ -1229,9 +1229,9 @@ P1.2g adds the production-safe Page cutover runbook and the operator approval
 gate plan that must precede any future production cutover:
 
 - **Runbook**:
-  [production-page-cutover-runbook.md](production-page-cutover-runbook.md)
+  [production-page-cutover-runbook.md](../../runbooks/production-page-cutover-runbook.md)
 - **Approval gate plan**:
-  [operator-approval-gate-plan.md](operator-approval-gate-plan.md)
+  [operator-approval-gate-plan.md](../../runbooks/operator-approval-gate-plan.md)
 
 Key documented decisions:
 

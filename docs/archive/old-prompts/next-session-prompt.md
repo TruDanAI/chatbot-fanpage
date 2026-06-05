@@ -467,8 +467,8 @@ Backup production mới nhất đã biết:
      /admin/dashboard 200
      /admin/audit 200, schema message vẫn hiện như kỳ vọng
 5. Cập nhật docs handoff/roadmap:
-   - docs/next-session-prompt.md
-   - docs/saas-roadmap.md
+   - docs/archive/old-prompts/next-session-prompt.md
+   - docs/architecture/saas-roadmap.md
    - Commit:
      5851368 Update handoff docs after admin refactor deploy
    - Pushed origin/main.
@@ -874,15 +874,15 @@ Backup production mới nhất đã biết:
    - Không đổi production env.
    - Không ghi production /data.
 16. Phiên Phase 3.5 identity/audit design, đã push/deploy sau xác nhận:
-   - Thêm docs/admin-identity-provisioning.md:
+   - Thêm docs/architecture/admin-identity-provisioning.md:
      PostgreSQL-backed admin_users/admin_user_roles design, provisioning sequence,
      rollback stance, và quy tắc chưa tạo production user vội.
    - Định nghĩa actor/audit semantics:
      Bearer automation là non-human actor `automation:admin_export_token` khi được cấu hình rõ;
      browser session hiện vẫn là bridge từ `ADMIN_PRINCIPAL_ID`, target sau này là `admin_users.id`.
    - core/admin-auth.js enrich audit metadata bằng safe `auth_method` cho audit entry mới.
-   - Cập nhật DESIGN.md, docs/admin-auth-rbac-audit-runbook.md, docs/saas-roadmap.md,
-     docs/next-session-prompt.md.
+   - Cập nhật DESIGN.md, docs/runbooks/admin-auth-rbac-audit-runbook.md, docs/architecture/saas-roadmap.md,
+     docs/archive/old-prompts/next-session-prompt.md.
    - Không thêm business write workflow.
    - Không tạo production admin user.
    - Verify local trước push:
@@ -903,7 +903,7 @@ Backup production mới nhất đã biết:
    - Không ghi production /data.
 17. Phiên Phase 4 internal notes local service/test, đã push/deploy sau xác nhận:
    - Thêm design doc:
-     docs/phase-4-internal-notes-design.md
+     docs/architecture/phase-4-internal-notes-design.md
    - Thêm SQL proposal additive/idempotent:
      db/internal-notes-proposal.sql
    - Thêm local PostgreSQL internal note service:
@@ -1137,9 +1137,9 @@ Tính năng admin hiện có:
 - Production audit schema đã apply.
 - Admin read routes production đang ghi audit log.
 - Phase 3.5 identity provisioning design:
-  docs/admin-identity-provisioning.md
+  docs/architecture/admin-identity-provisioning.md
 - Phase 4 internal notes v1 backend/API/UI đã complete:
-  - design doc: docs/phase-4-internal-notes-design.md
+  - design doc: docs/architecture/phase-4-internal-notes-design.md
   - SQL proposal: db/internal-notes-proposal.sql
   - safe SQL verifier: npm run verify:internal-notes-sql
   - create service: core/admin/internal-notes.js
@@ -1237,13 +1237,13 @@ File quan trọng:
 - db/admin-auth-rbac-audit-proposal.sql
 - db/internal-notes-proposal.sql
 - db/multi-shop-proposal.sql
-- docs/admin-auth-rbac-audit-runbook.md
-- docs/admin-identity-provisioning.md
-- docs/multi-shop-dashboard-design.md
-- docs/multi-shop-rollout.md
-- docs/phase-4-internal-notes-design.md
-- docs/saas-roadmap.md
-- docs/next-session-prompt.md
+- docs/runbooks/admin-auth-rbac-audit-runbook.md
+- docs/architecture/admin-identity-provisioning.md
+- docs/archive/reviews/multi-shop-dashboard-design.md
+- docs/archive/checkpoints/multi-shop-rollout.md
+- docs/architecture/phase-4-internal-notes-design.md
+- docs/architecture/saas-roadmap.md
+- docs/archive/old-prompts/next-session-prompt.md
 - DESIGN.md
 - .env.example
 - tests/admin-auth.test.js
@@ -1263,13 +1263,13 @@ Việc bắt buộc làm đầu phiên mới:
    - Không cần token.
    - Chỉ báo metadata an toàn: ok, storage.adapter, storage.ready, messenger.dryRun.
 4. Đọc lại:
-   - docs/next-session-prompt.md
-   - docs/saas-roadmap.md
-   - docs/phase-4-internal-notes-design.md
-   - docs/admin-auth-rbac-audit-runbook.md
-   - docs/admin-identity-provisioning.md
-   - docs/multi-shop-dashboard-design.md
-   - docs/multi-shop-rollout.md
+   - docs/archive/old-prompts/next-session-prompt.md
+   - docs/architecture/saas-roadmap.md
+   - docs/architecture/phase-4-internal-notes-design.md
+   - docs/runbooks/admin-auth-rbac-audit-runbook.md
+   - docs/architecture/admin-identity-provisioning.md
+   - docs/archive/reviews/multi-shop-dashboard-design.md
+   - docs/archive/checkpoints/multi-shop-rollout.md
    - db/multi-shop-proposal.sql
    - db/internal-notes-proposal.sql
    - core/webhook.js
@@ -1305,7 +1305,7 @@ Next recommended task:
   - thêm UI nhẹ hoặc alert thresholds cho queue failed/error rate
   - tiếp tục không expose raw token, raw page_id, customer rows, messages,
     orders
-- Production multi-shop rollout vẫn phải theo docs/multi-shop-rollout.md và cần
+- Production multi-shop rollout vẫn phải theo docs/archive/checkpoints/multi-shop-rollout.md và cần
   approval riêng cho từng gate: backup, schema apply, credential seed,
   `CREDENTIAL_MASTER_KEY` env, future redeploy/restart nếu cần, env enable,
   authenticated smoke, product CRUD smoke.

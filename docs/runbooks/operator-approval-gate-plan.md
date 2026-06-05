@@ -8,7 +8,7 @@ message, or enable any production cutover UI or route.
 It defines who may approve a production Page cutover, the exact wording that
 counts as approval, the roles involved, and the checks that must surround the
 approval. It is the human gate that sits in front of the procedure in
-`docs/production-page-cutover-runbook.md`.
+`docs/runbooks/production-page-cutover-runbook.md`.
 
 ## 1. Why a gate is needed
 

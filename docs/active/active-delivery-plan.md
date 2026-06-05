@@ -9,32 +9,32 @@ SaaS-style Messenger shop operations system.
 Use this file as the active checklist. Treat the longer docs as detailed
 evidence and runbooks:
 
-- `docs/source-map-current.md` for current code map.
-- `docs/production-rollout-checkpoint.md` for the latest verified production
+- `docs/architecture/source-map-current.md` for current code map.
+- `docs/active/production-rollout-checkpoint.md` for the latest verified production
   state.
-- `docs/multi-shop-rollout.md` for rollout history and gates.
-- `docs/basic-sales-v2-behavior-contract.md` for Basic Sales v2 runtime
+- `docs/archive/checkpoints/multi-shop-rollout.md` for rollout history and gates.
+- `docs/active/basic-sales-v2-behavior-contract.md` for Basic Sales v2 runtime
   behavior, disabled features, and staging smoke procedure.
-- `docs/basic-sales-v2-staging-smoke-runbook.md` for the Basic Sales v2
+- `docs/runbooks/basic-sales-v2-staging-smoke-runbook.md` for the Basic Sales v2
   staging smoke approval gate, preconditions, command, and failure handling.
-- `docs/processed-mids-retention-plan.md` for count-only `processed_mids`
+- `docs/architecture/processed-mids-retention-plan.md` for count-only `processed_mids`
   visibility, retention policy, and cleanup approval gates.
-- `docs/messenger-outside-24h-review.md` for Messenger standard-window policy,
+- `docs/architecture/messenger-outside-24h-review.md` for Messenger standard-window policy,
   automated-send boundaries, and outside-window approval gates.
-- `docs/webhook-queue-rollout-runbook.md` for queue rollout gates,
+- `docs/runbooks/webhook-queue-rollout-runbook.md` for queue rollout gates,
   staging-first procedure, production approval, monitoring, and rollback.
-- `docs/admin-image-upload-staging-smoke-runbook.md` for local-file image
+- `docs/runbooks/admin-image-upload-staging-smoke-runbook.md` for local-file image
   upload staging env/write approval, smoke steps, and rollback.
-- `docs/real-page-pilot-checklist.md` for real Page pilot steps.
-- `docs/production-page-cutover-runbook.md` for future production Page cutover.
-- `docs/saas-roadmap.md` for the long-range architecture direction.
+- `docs/active/real-page-pilot-checklist.md` for real Page pilot steps.
+- `docs/runbooks/production-page-cutover-runbook.md` for future production Page cutover.
+- `docs/architecture/saas-roadmap.md` for the long-range architecture direction.
 
 ## How To Use This File
 
 At the start of a session, the user can say:
 
 ```text
-Doc docs/active-delivery-plan.md roi lam muc NEXT tiep theo. Khong deploy,
+Doc docs/active/active-delivery-plan.md roi lam muc NEXT tiep theo. Khong deploy,
 khong push, khong doi env, khong ghi production DB neu toi chua xac nhan.
 ```
 
@@ -122,9 +122,9 @@ Latest local observation from 2026-06-02:
 - P0.3 focused local Basic Sales v2 check passed with 93 tests:
   `node -e "require('./tests/webhook.test.js'); require('./tests/harness').run().then(code => process.exit(code))"`.
 - P0.4 Basic Sales v2 behavior contract was documented in
-  `docs/basic-sales-v2-behavior-contract.md`.
+  `docs/active/basic-sales-v2-behavior-contract.md`.
 - P1.1 Basic Sales v2 staging smoke runbook was prepared in
-  `docs/basic-sales-v2-staging-smoke-runbook.md`.
+  `docs/runbooks/basic-sales-v2-staging-smoke-runbook.md`.
 - P1.2 Basic Sales v2 staging smoke passed on 2026-06-02 after explicit
   staging DB write approval from Trung. The smoke mutated and restored staging
   `wizard-smoke-shop.shop_settings.settings_json`; `cleanup.restored=true` and
@@ -228,7 +228,7 @@ Goal: make the current branch safe to keep developing and safe to stage-smoke.
     product-code handoff, disabled features, and staging smoke procedure.
   - Exit criteria: future sessions do not need to infer v2 behavior from code.
   - Completed 2026-06-02: added
-    `docs/basic-sales-v2-behavior-contract.md` covering activation, supported
+    `docs/active/basic-sales-v2-behavior-contract.md` covering activation, supported
     runtime, menu behavior, Hot Products, product-code handoff, disabled
     features, staging smoke procedure, and local verification.
 
@@ -244,7 +244,7 @@ Goal: prove `basic_sales_v2` safely on staging without touching production.
   - Confirm script restores `settings_json` after mutation.
   - Do not print raw tokens, Page IDs, sender IDs, or DB URLs.
   - Completed 2026-06-02: added
-    `docs/basic-sales-v2-staging-smoke-runbook.md` covering target
+    `docs/runbooks/basic-sales-v2-staging-smoke-runbook.md` covering target
     `wizard-smoke-shop`, required dry-run and DB-config flags, explicit
     `CHATBOT_STAGING_DATABASE_URL` usage, no `DATABASE_URL` fallback,
     restoration checks, secret-handling rules, expected pass criteria, and
@@ -355,7 +355,7 @@ Goal: make the current live `adult-shop` safer and easier to monitor.
     `processed_mids` retention posture: total rows, rows older than 7 days,
     rows older than 30 days, cleanup candidate count, and oldest/newest
     timestamps. Documented the initial 30-day retention policy and future
-    cleanup gates in `docs/processed-mids-retention-plan.md`. No cron, worker,
+    cleanup gates in `docs/architecture/processed-mids-retention-plan.md`. No cron, worker,
     delete SQL, production DB write, env change, deploy, push, Meta call, or
     Messenger send was added.
 
@@ -365,7 +365,7 @@ Goal: make the current live `adult-shop` safer and easier to monitor.
   - Ensure reminder/follow-up workers are disabled or strictly policy-safe for
     Basic shops.
   - Completed 2026-06-03: reviewed Meta Messenger policy/Send API docs and
-    documented the repo posture in `docs/messenger-outside-24h-review.md`.
+    documented the repo posture in `docs/architecture/messenger-outside-24h-review.md`.
     Standard automated Messenger sends now declare `messaging_type='RESPONSE'`
     and do not use message tags. Basic/minimal sales shops
     (`menu_code_handoff` and `basic_sales_v2`) do not start abandoned-cart or
@@ -488,7 +488,7 @@ Goal: prepare durable webhook queue without enabling it prematurely.
   - Rollout: staging first, production later with approval.
   - Rollback: set `WEBHOOK_QUEUE_ENABLED=false`, leave additive rows in place.
   - Completed 2026-06-04: added
-    `docs/webhook-queue-rollout-runbook.md`. The runbook documents current
+    `docs/runbooks/webhook-queue-rollout-runbook.md`. The runbook documents current
     queue implementation boundaries, required schema/count-only prechecks,
     safe runtime knobs, explicit staging write/env approval, production backup
     and env approval gates, one-hour and 24-hour monitoring, rollback by
@@ -557,7 +557,7 @@ Goal: reduce operator mistakes and make onboarding repeatable.
     rotation, or production DB changes.
   - Blocked 2026-06-04 pending explicit staging env and staging DB/write
     approval. Prepared
-    `docs/admin-image-upload-staging-smoke-runbook.md` so the approved smoke
+    `docs/runbooks/admin-image-upload-staging-smoke-runbook.md` so the approved smoke
     has fixed scope, preconditions, secret handling, rollback, and pass/fail
     criteria. No staging env change, Cloudinary upload, DB write, deploy, push,
     Meta call, Messenger send, queue action, or production action happened.
@@ -628,8 +628,8 @@ Useful existing skills/tools:
 Recommended future custom skill:
 
 - Name: `zenbot-operator`.
-- Purpose: automatically read `docs/active-delivery-plan.md`,
-  `docs/source-map-current.md`, and relevant runbooks; enforce no production
+- Purpose: automatically read `docs/active/active-delivery-plan.md`,
+  `docs/architecture/source-map-current.md`, and relevant runbooks; enforce no production
   deploy/env/DB/smoke without explicit approval; report session closeout in the
   standard format.
 - Do not create this skill until the user explicitly asks, because skills live

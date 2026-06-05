@@ -193,7 +193,7 @@ For now, Cloudinary is the right call.
 
 ### B1. How should a new shop be onboarded from zero?
 
-**Current state**: Requires reading [basic-shop-onboarding-checklist.md](file:///c:/Users/Pc/Desktop/New%20folder/chatbot-fanpage/docs/basic-shop-onboarding-checklist.md) (19KB!) and manually executing ~25 steps across admin API, Railway env, Facebook Developer Console, and Cloudinary dashboard.
+**Current state**: Requires reading [basic-shop-onboarding-checklist.md](../../runbooks/basic-shop-onboarding-checklist.md) (19KB!) and manually executing ~25 steps across admin API, Railway env, Facebook Developer Console, and Cloudinary dashboard.
 
 **Target state** (recommended operator workflow):
 

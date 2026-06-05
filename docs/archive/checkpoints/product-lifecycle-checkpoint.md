@@ -58,7 +58,7 @@ This phase introduces an image-first visual standard to catalog tables, ensuring
      - **Active** translates to `Hoạt động` (green/success status styling).
      - **Hidden** translates to `Tạm ẩn` (amber/warning status styling).
      - **Archived** translates to `Đã lưu trữ` (grey/muted status styling).
-   - This ensures full alignment with the [Product Lifecycle UX Policy](file:///c:/Users/Pc/Desktop/New%20folder/chatbot-fanpage/docs/product-lifecycle-ux-policy.md).
+   - This ensures full alignment with the [Product Lifecycle UX Policy](../../architecture/product-lifecycle-ux-policy.md).
 
 4. **Mobile Responsive Fallback**:
    - Implemented a complete card-based fallback system optimized for mobile views.

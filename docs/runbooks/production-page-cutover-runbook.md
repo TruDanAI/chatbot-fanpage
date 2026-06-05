@@ -58,12 +58,12 @@ These are the gates that a future production cutover must satisfy. Until a
 production cutover path is implemented and separately approved, treat any
 unmet item as a hard stop.
 
-- [ ] The operator approval gate in `docs/operator-approval-gate-plan.md` has
+- [ ] The operator approval gate in `docs/runbooks/operator-approval-gate-plan.md` has
       passed, including the exact approval wording (see section 8).
 - [ ] A fresh production PostgreSQL backup exists outside this repo, with a
       confirmed timestamp and verified SHA256 (same standard as
       `.agent/skills/railway-production-safety.md` and
-      `docs/production-data-backup-runbook.md`). Record it in
+      `docs/runbooks/production-data-backup-runbook.md`). Record it in
       `.agent/project-state.md`.
 - [ ] The exact target shop is confirmed by `shop_ref` and slug, not by memory.
 - [ ] The target shop currently has **exactly one** active page mapping and
@@ -225,7 +225,7 @@ The shop is not considered ready until these pass, in order:
 3. Re-run the shop readiness checklist and confirm it returns to `passed`.
 4. Only after readiness passes, run a controlled live verification on the new
    Page following the existing real-Page pilot discipline
-   (`docs/real-page-pilot-checklist.md`): keep the global kill switch and
+   (`docs/active/real-page-pilot-checklist.md`): keep the global kill switch and
    per-shop dry-run posture deliberate, verify the inbound `page_ref` matches
    the new mapping, and confirm there is no wrong-shop routing.
 5. Confirm aggregate Railway logs show no `page_not_found`, credential error,

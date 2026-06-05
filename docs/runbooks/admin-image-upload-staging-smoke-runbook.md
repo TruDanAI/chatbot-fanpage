@@ -258,7 +258,7 @@ After an approved successful smoke:
 - confirm no sensitive values appeared in UI/log output;
 - re-run local tests if code changed;
 - re-run `npm audit --omit=dev` if dependencies changed;
-- update `docs/active-delivery-plan.md` with the date, target shop, safe result
+- update `docs/active/active-delivery-plan.md` with the date, target shop, safe result
   summary, cleanup decision, and next production approval gate.
 
 Do not use a successful staging smoke as production approval.

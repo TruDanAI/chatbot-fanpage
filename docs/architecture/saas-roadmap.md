@@ -234,7 +234,7 @@ Last verified baseline updated May 15, 2026:
   `d6e8cb9 Add internal notes production rollout runbook`,
   `9f10f24 Add internal notes create API`
 - Phase 4 internal notes current status:
-  design doc exists in `docs/phase-4-internal-notes-design.md`;
+  design doc exists in `docs/architecture/phase-4-internal-notes-design.md`;
   SQL proposal exists in `db/internal-notes-proposal.sql`;
   safe SQL verifier exists via `npm run verify:internal-notes-sql`;
   live local PostgreSQL SQL verification passed in an isolated schema using
@@ -310,7 +310,7 @@ Status as of branch `feature/multi-shop-dashboard` at commit
   or seed commands, did not access production `/data`, ran no authenticated
   smoke, changed no flags, and changed no credential keys.
 
-Production rollout for this MVP must follow `docs/multi-shop-rollout.md`.
+Production rollout for this MVP must follow `docs/archive/checkpoints/multi-shop-rollout.md`.
 
 ## Product goal
 
@@ -518,10 +518,10 @@ Recommended steps:
   multi-instance behavior becomes a real production issue.
 - Design PostgreSQL-backed admin user provisioning without creating production
   users until there is a rollback plan and separate approval. Done in
-  `docs/admin-identity-provisioning.md`.
+  `docs/architecture/admin-identity-provisioning.md`.
 - Decide how static `ADMIN_EXPORT_TOKEN` maps to an actor while browser
   sessions continue to use the current token-based login. Done in
-  `docs/admin-identity-provisioning.md`: Bearer automation should become the
+  `docs/architecture/admin-identity-provisioning.md`: Bearer automation should become the
   non-human `automation:admin_export_token` actor when explicitly configured,
   while browser sessions move to real `admin_users.id` actors after identity is
   implemented.
@@ -546,7 +546,7 @@ Goal: introduce small, explicit write actions.
 
 Current internal-notes status:
 
-- Design doc exists: `docs/phase-4-internal-notes-design.md`.
+- Design doc exists: `docs/architecture/phase-4-internal-notes-design.md`.
 - SQL proposal exists: `db/internal-notes-proposal.sql`.
 - Safe SQL verifier exists via `npm run verify:internal-notes-sql`.
 - Local create service exists: `core/admin/internal-notes.js`.
@@ -635,7 +635,7 @@ Status: multi-shop MVP is staging-verified on
 Remaining rollout gates still need separate approval for backup, any further
 schema/data/seed work, credential seed, env enable, authenticated smoke, and
 product CRUD smoke. The current rollout record is
-`docs/multi-shop-rollout.md`.
+`docs/archive/checkpoints/multi-shop-rollout.md`.
 
 Goal: support multiple pages/shops cleanly without increasing blast radius for
 the existing `adult-shop` runtime.
@@ -778,11 +778,11 @@ A phase is done only when:
 
 ## Recommended next session
 
-Use `docs/next-session-prompt.md` as the handoff prompt for the next Codex
+Use `docs/archive/old-prompts/next-session-prompt.md` as the handoff prompt for the next Codex
 session. Per-page credential resolution phase 1, atomic message idempotency
 phase 1, feature flag facade phase 1, durable webhook queue phase 1, and
 per-shop health phase 1 are complete locally. The current multi-shop safety
 order is now approved queue rollout planning, then deeper health UI/alerts.
-Any production rollout still follows `docs/multi-shop-rollout.md` and needs
+Any production rollout still follows `docs/archive/checkpoints/multi-shop-rollout.md` and needs
 separate approval for deploy, env changes, DB writes, credential seeding, and
 authenticated smoke.

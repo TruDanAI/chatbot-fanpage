@@ -30,7 +30,7 @@ Audit records store actor, action, resource, outcome, tenant/page, request id,
 hashed IP, user agent, and redacted JSON metadata. They must not store raw
 tokens, database URLs, full phone numbers, addresses, or customer export rows.
 For new entries, `metadata.auth_method` distinguishes static Bearer automation
-from browser session access. See `docs/admin-identity-provisioning.md` for the
+from browser session access. See `docs/architecture/admin-identity-provisioning.md` for the
 Phase 3.5 actor semantics and user provisioning design.
 
 ## Runtime routes and frontend
