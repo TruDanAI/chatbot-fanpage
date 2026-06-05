@@ -43,9 +43,27 @@ config, data, or assets.
       enablement passed, rollback passed, `adult-shop` was untouched, and
       observed send errors were `0`. Rollback artifact:
       `output/p3-3-prod-controlled-live-rollback-2026-06-04T16-44-20-584Z.json`.
-- [ ] P3.3 full live verification is not complete. A second controlled live
-      window with an inbound tester is required to verify Messenger `menu`,
-      product code `TS01`, handoff, and staff takeover.
+- [x] P3.3 second controlled live window verified the bot live path for
+      production shop `1018518438021869` / Nem Bui Xa on 2026-06-04. Window
+      opened at `2026-06-04T18:02:09Z` and rolled back at
+      `2026-06-04T18:08:38Z`.
+- [x] P3.3 approved-scope checks passed: Messenger `menu` reached live path
+      `send_allowed`, menu text was sent, menu image was sent, product code
+      `TS01` sent the product image, and `TS01` activated handoff.
+- [x] Extra inbound after handoff was skipped because active handoff was in
+      effect; no bot spam was observed.
+- [x] Staff takeover is manually confirmed: Trung confirmed in Page inbox that
+      staff can reply after handoff. Staff echo/marker was not observed before
+      rollback, so this is a manual confirmation rather than a log-observed
+      marker.
+- [x] Second-window rollback succeeded. Final target state is `dry_run=true`,
+      `live_enabled=false`, and `lifecycle=configuring`; no live state remains.
+      Rollback artifact:
+      `output/p3-3-prod-controlled-live-rollback-2026-06-04T18-01-34-214Z.json`.
+- [x] Second-window safety checks passed: observed send errors were `0`,
+      `adult-shop` was untouched and its snapshot hash matched,
+      readiness/manual test still passed, `WEBHOOK_QUEUE_ENABLED=false`, and
+      public `/healthz` was OK.
 
 ## P0.2 Emergency Control Checkpoint
 
@@ -82,15 +100,16 @@ config, data, or assets.
 
 ## Preconditions Before Touching The Real Page
 
-Current status 2026-06-04: P3.1 manual approval gate is complete for P3.2
-dry-run only. Page target is Nem Bui Xa. Trung approved the Page target,
-approved the current menu plus exact catalog product code `TS01`, and is the
-staff tester, rollback owner, pilot operator, and monitoring owner for the
-current test window. P3.2 production dry-run has passed. A P3.3 no-traffic
-live enablement plus rollback drill passed on 2026-06-04, but P3.3 full live
-verification remains incomplete. The next P3.3 window requires an inbound
-tester and must still verify `menu`, `TS01`, handoff, and staff takeover. The
-`multiple_menu_images` readiness warning is accepted for dry-run only.
+Current status 2026-06-04: P3.1 manual approval gate is complete. Page target
+is Nem Bui Xa. Trung approved the Page target, approved the current menu plus
+exact catalog product code `TS01`, and is the staff tester, rollback owner,
+pilot operator, and monitoring owner for the current test window. P3.2
+production dry-run passed. P3.3 controlled live verification is complete for
+the approved test scope after the second window: `menu` and `TS01` reached the
+bot live path, `TS01` activated handoff, extra inbound after handoff did not
+trigger bot spam, and Trung manually confirmed staff can reply in Page inbox
+after handoff. The `multiple_menu_images` readiness warning is accepted for
+this controlled scope.
 
 - [x] Shop owner has explicitly approved using the real Page.
 - [x] Shop owner has approved the product/menu content for the pilot: current
@@ -106,15 +125,16 @@ tester and must still verify `menu`, `TS01`, handoff, and staff takeover. The
       `mapping_pass=1`.
 - [x] All operators understand the no-go conditions in this checklist.
 
-Do not continue to the next P3.3 live-window work until there is separate
-explicit live approval for that window. Production DB writes still require a
-fresh verified backup and separate explicit production DB write approval.
+Do not start any further live window, expanded live traffic, deployment, env
+change, production DB write, Meta/token health check, or Messenger send without
+separate explicit approval for that action. Production DB writes still require
+a fresh verified backup and separate explicit production DB write approval.
 
 ## Real Page Dry-Run-Only Steps
 
 Keep the system in dry-run-only mode while preparing the real Page. P3.2 is now
-complete for shop `1018518438021869` / Nem Bui Xa; these checks do not approve
-P3.3 live.
+complete for shop `1018518438021869` / Nem Bui Xa; these checks remain the
+dry-run setup record and do not approve future live traffic.
 
 - [ ] Confirm global `MESSENGER_DRY_RUN=true`.
 - [x] Confirm target shop `dry_run=true`.
@@ -144,22 +164,26 @@ image, credential resolution, or shop isolation is wrong.
 Only start the live window after all dry-run-only checks pass and the
 preconditions remain true.
 
-The 2026-06-04 no-traffic drill does not satisfy the live verification items
-below. Leave the Messenger, handoff, and staff takeover checks open until a
-second controlled live window has an inbound tester.
+P3.3 controlled live verification is complete for the approved 2026-06-04
+scope only. This is not approval to keep the shop live or expand live traffic.
+The second window verified the bot live path and then rolled back to non-live
+state.
 
-- [ ] Set global `MESSENGER_DRY_RUN=false` for the approved live window.
-- [ ] Set `nem-bui-xa` `dry_run=false`.
-- [ ] Keep all other shops at `dry_run=true`.
-- [ ] Keep `WEBHOOK_QUEUE_ENABLED=false` unless a separate queue rollout has
-      been approved.
-- [ ] Test menu only.
-- [ ] Test product code `TS01` only.
-- [ ] Confirm menu image is correct.
-- [ ] Confirm product image and product info for code `TS01` are correct.
-- [ ] Confirm handoff is active and staff can respond.
-- [ ] Do not test other product codes during the initial controlled window.
-- [ ] Do not enable or expand live traffic outside the approved window.
+- [x] Live path reached `send_allowed` for the approved window.
+- [x] Target shop returned to `dry_run=true`, `live_enabled=false`, and
+      `lifecycle=configuring` after rollback.
+- [x] `adult-shop` remained untouched; snapshot hash matched.
+- [x] `WEBHOOK_QUEUE_ENABLED=false`.
+- [x] Test menu only: menu text and menu image were sent.
+- [x] Test product code `TS01` only: product image was sent.
+- [x] Confirm product code `TS01` activates handoff.
+- [x] Confirm no bot spam after handoff: extra inbound was skipped due active
+      handoff.
+- [x] Confirm staff can respond after handoff: Trung manually confirmed this
+      in Page inbox. Staff echo/marker was not observed before rollback.
+- [x] Do not test other product codes during the initial controlled window.
+- [x] Do not enable or expand live traffic outside the approved window; no
+      live state remains.
 
 ### No-Traffic Controlled Live Attempt - 2026-06-04
 
@@ -172,17 +196,42 @@ second controlled live window has an inbound tester.
 - [x] Observed send errors: `0`.
 - [x] Rollback artifact:
       `output/p3-3-prod-controlled-live-rollback-2026-06-04T16-44-20-584Z.json`.
-- [ ] Messenger `menu` was not run because no inbound target message appeared
+- [x] Messenger `menu` was not run because no inbound target message appeared
       in the log window.
-- [ ] Messenger `TS01` was not run.
-- [ ] Handoff/staff takeover was not reached.
-- [ ] Full P3.3 live verification remains open and needs a second controlled
-      live window with an inbound tester.
+- [x] Messenger `TS01` was not run.
+- [x] Handoff/staff takeover was not reached in this first attempt.
+- [x] This attempt stayed partial; the second controlled live window below
+      completed the P3.3 approved-scope verification.
+
+### Second Controlled Live Window - 2026-06-04
+
+- [x] Window opened: `2026-06-04T18:02:09Z`.
+- [x] Rolled back: `2026-06-04T18:08:38Z`.
+- [x] Rollback artifact:
+      `output/p3-3-prod-controlled-live-rollback-2026-06-04T18-01-34-214Z.json`.
+- [x] Messenger `menu` reached live path `send_allowed`; menu text sent and
+      menu image sent.
+- [x] Product code `TS01` sent the product image and activated handoff.
+- [x] Extra inbound after handoff was skipped due active handoff; no bot spam
+      was observed.
+- [x] Staff takeover manually confirmed by Trung in Page inbox. Staff
+      echo/marker was not observed before rollback.
+- [x] Observed send errors: `0`.
+- [x] `adult-shop` was untouched; snapshot hash matched.
+- [x] Readiness/manual test still passed.
+- [x] `WEBHOOK_QUEUE_ENABLED=false`.
+- [x] Public `/healthz` OK.
+- [x] Final target state after rollback: `dry_run=true`,
+      `live_enabled=false`, `lifecycle=configuring`; no live state remains.
 
 ## Rollback
 
 Rollback is the default action for any no-go condition, uncertainty, or staff
 availability issue.
+
+The second controlled live window rollback succeeded at
+`2026-06-04T18:08:38Z`. The target returned to `dry_run=true`,
+`live_enabled=false`, and `lifecycle=configuring`; no live state remains.
 
 - [ ] Set `nem-bui-xa` `dry_run=true`.
 - [ ] Set global `MESSENGER_DRY_RUN=true`.
@@ -198,32 +247,42 @@ availability issue.
 
 - [x] 2026-06-04 no-traffic drill: rollback occurred before target traffic;
       observed send errors were `0`.
-- [ ] Watch for Messenger send errors.
-- [ ] Watch for wrong product or wrong image responses.
-- [ ] Watch for Page conflict or wrong-shop routing.
-- [ ] Confirm handoff starts after product code `TS01`.
-- [ ] Confirm staff are online and can answer.
-- [ ] Roll back immediately on any no-go condition.
+- [x] 2026-06-04 second window: observed send errors were `0`.
+- [x] 2026-06-04 second window: menu text, menu image, and `TS01` product
+      image were sent on the live path.
+- [x] 2026-06-04 second window: handoff started after product code `TS01`.
+- [x] 2026-06-04 second window: extra inbound after handoff was skipped due
+      active handoff; no bot spam was observed.
+- [x] 2026-06-04 second window: Trung manually confirmed staff can answer in
+      Page inbox after handoff.
+- [x] 2026-06-04 second window: rollback completed at
+      `2026-06-04T18:08:38Z`; no live state remains.
 
 ### First 1 Hour
 
-- [ ] 2026-06-04 no-traffic drill: 1h monitoring did not continue because the
+- [x] 2026-06-04 no-traffic drill: 1h monitoring did not continue because the
       target was rolled back before traffic.
-- [ ] Recheck send error count.
-- [ ] Recheck wrong-shop routing indicators.
-- [ ] Recheck customer/staff handoff behavior.
-- [ ] Confirm no unexpected product codes were tested.
-- [ ] Confirm no `adult-shop` or `demo-shop` side effects.
+- [x] 2026-06-04 second window: sustained 1h live monitoring was not
+      applicable because the target was rolled back after the approved test
+      scope; final target state is non-live.
+- [x] 2026-06-04 second window: send error count was `0`.
+- [x] 2026-06-04 second window: customer/staff handoff behavior was verified
+      by bot handoff activation plus Trung's manual Page inbox confirmation.
+- [x] 2026-06-04 second window: no unexpected product codes were tested.
+- [x] 2026-06-04 second window: `adult-shop` was untouched and snapshot hash
+      matched. `demo-shop` was not part of this controlled window record.
 
 ### 24 Hours
 
-- [ ] 2026-06-04 no-traffic drill: 24h review did not continue because the
+- [x] 2026-06-04 no-traffic drill: 24h review did not continue because the
       target was rolled back before traffic.
-- [ ] Review send errors and routing failures for the full period.
-- [ ] Review shop owner feedback.
-- [ ] Review staff feedback.
-- [ ] Decide whether to keep dry-run, repeat a controlled window, or prepare a
-      separate live rollout plan.
+- [x] 2026-06-04 second window: sustained 24h live review is not applicable to
+      this rolled-back controlled window; no live state remains.
+- [x] 2026-06-04 second window: staff feedback recorded as Trung's manual
+      confirmation that Page inbox staff can reply after handoff.
+- [x] 2026-06-04 second window: final decision is to keep the target in
+      non-live state after rollback. Any repeat window or live rollout requires
+      separate explicit approval.
 
 ## No-Go Conditions
 

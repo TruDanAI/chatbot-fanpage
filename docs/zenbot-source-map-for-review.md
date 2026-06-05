@@ -293,6 +293,13 @@ Recorded project milestones from docs:
 - `nem-bui-xa` real Messenger staging test passed: menu and code test, menu and
   product image sent, handoff active, no send errors, rollback to dry-run and
   non-live state recorded.
+- `nem-bui-xa` P3.3 second controlled production live window passed for the
+  approved scope: `menu` reached live path `send_allowed`, menu text/image
+  sent, product code `TS01` sent product image and activated handoff, extra
+  inbound after handoff was skipped, send errors were `0`, staff takeover was
+  manually confirmed by Trung in Page inbox, and rollback returned the target
+  to `dry_run=true`, `live_enabled=false`, `lifecycle=configuring` with no live
+  state remaining.
 - Cloudinary upload MVP implemented and covered by tests.
 - Page mapping archive control implemented as staging-only with confirmation,
   scoped credential archive, protected-shop guard, and safe audit.

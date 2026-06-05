@@ -388,8 +388,10 @@ Goal: onboard one more shop safely without increasing blast radius.
     Xa; owner approval was given by Trung; approved dry-run content is the
     current menu plus exact catalog product code `TS01`; Trung is the staff
     tester, rollback owner, pilot operator, and monitoring owner for the
-    current window. Scope is P3.2 dry-run only; P3.3 live remains blocked. The
-    `multiple_menu_images` readiness warning is accepted for dry-run only.
+    current window. Scope at this approval checkpoint was P3.2 dry-run only;
+    P3.3 live required separate approval and is recorded below. The
+    `multiple_menu_images` readiness warning is accepted for the controlled
+    pilot scope.
     Technical verification for active Page mapping, active credential,
     conflicting mappings, and other-shop isolation remains part of P3.2 and
     must not write production DB without a fresh verified backup plus separate
@@ -437,12 +439,14 @@ Goal: onboard one more shop safely without increasing blast radius.
     This checkpoint did not deploy, push, change env, call Meta/token health,
     send Messenger, enable live, change `dry_run=false`, or start P3.3.
 
-- [!] P3.3 Controlled live window.
+- [x] P3.3 Controlled live window.
   - Requires explicit approval.
   - Set global/per-shop dry-run according to runbook.
   - Test only `menu` and exact product code `TS01`.
   - Confirm image, product info, handoff, and staff takeover.
-  - Monitor for 1h, then review at 24h.
+  - Sustained 1h/24h live monitoring is only applicable if the shop remains
+    live after the approved test scope. The completed window was rolled back
+    to non-live state.
   - Roll back immediately on send error, wrong product/image, wrong-shop
     routing, or staff unavailability.
   - Partial/no-traffic checkpoint 2026-06-04 for production shop
@@ -455,9 +459,24 @@ Goal: onboard one more shop safely without increasing blast radius.
     Messenger `menu` and `TS01` were not run because no inbound target message
     appeared in the log window; handoff/staff takeover was not reached. The
     1h/24h monitoring did not continue because the shop was rolled back before
-    traffic. This does not complete P3.3. A second controlled live window with
-    an inbound tester is still required to verify `menu`, `TS01`, handoff, and
-    staff takeover.
+    traffic.
+  - Second controlled live window 2026-06-04 for production shop
+    `1018518438021869` / Nem Bui Xa completed the P3.3 approved-scope
+    verification. Window opened at `2026-06-04T18:02:09Z` and rolled back at
+    `2026-06-04T18:08:38Z`. Messenger `menu` reached live path
+    `send_allowed`; menu text and menu image were sent. Product code `TS01`
+    sent the product image and activated handoff. Extra inbound after handoff
+    was skipped due active handoff, so no bot spam was observed. Staff
+    takeover was manually confirmed by Trung in Page inbox; staff echo/marker
+    was not observed before rollback. Observed send errors: `0`.
+    `adult-shop` was untouched and snapshot hash matched. Readiness/manual
+    test still `passed`, `WEBHOOK_QUEUE_ENABLED=false`, and public `/healthz`
+    was OK. Rollback artifact:
+    `output/p3-3-prod-controlled-live-rollback-2026-06-04T18-01-34-214Z.json`.
+    Final target state after rollback is `dry_run=true`,
+    `live_enabled=false`, and `lifecycle=configuring`; no live state remains.
+    This completes P3.3 for controlled-window verification only and does not
+    approve expanded live traffic.
 
 ## P4: Queue Rollout Planning
 
