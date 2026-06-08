@@ -173,16 +173,20 @@ Bot tự quét các draft đã vào checkout nhưng còn thiếu tên/SĐT/đị
 ### Lưu và tải lead khách hàng
 Khi khách gửi tin nhắn có số điện thoại VN, bot tự động ghi vào `customers.csv` kèm thông tin đơn và 10 tin gần nhất. Nếu có set `DATA_DIR=/data` trên Railway thì file sẽ nằm ở `/data/customers.csv` trong Volume.
 
-Để tải CSV bằng trình duyệt, thêm biến Railway:
+Để tải CSV, thêm biến Railway:
 
 ```bash
 ADMIN_EXPORT_TOKEN=chuoi_bi_mat_that_dai
 ```
 
-Sau khi redeploy, mở URL sau để tải:
+Sau khi redeploy, gọi bằng header. Không đặt token trên URL vì URL có thể bị lưu trong browser history, proxy log hoặc ảnh chụp màn hình.
 
-```txt
-https://ten-app.up.railway.app/admin/customers.csv?token=chuoi_bi_mat_that_dai
+```bash
+curl -H "Authorization: Bearer chuoi_bi_mat_that_dai" \
+  https://ten-app.up.railway.app/admin/customers.csv -o customers.csv
+
+curl -H "x-admin-token: chuoi_bi_mat_that_dai" \
+  https://ten-app.up.railway.app/admin/customers.csv -o customers.csv
 ```
 
 Nếu muốn kiểm tra bằng Railway CLI:
@@ -197,10 +201,11 @@ railway run sh -lc "ls -la /data && sed -n '1,20p' /data/customers.csv"
 Nếu Volume của Railway mount ở path khác `/data`, hãy set `DATA_DIR` đúng bằng mount path đó.
 
 ### Debug trạng thái khách hàng
-Endpoint này giúp xem nhanh session/order draft của một user:
+Endpoint này giúp xem nhanh session/order draft của một user. Gọi bằng header admin token:
 
-```txt
-https://ten-app.up.railway.app/admin/state/USER_ID?token=chuoi_bi_mat_that_dai
+```bash
+curl -H "Authorization: Bearer chuoi_bi_mat_that_dai" \
+  https://ten-app.up.railway.app/admin/state/USER_ID
 ```
 
 Kết quả gồm: `inHandoff`, `lastProductCode`, `orderDraft`, `sessionState`, `historyLength`.

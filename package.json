@@ -1,25 +1,34 @@
 {
   "name": "chatbot-fanpage",
   "version": "1.1.0",
-  "description": "Chatbot fanpage tư vấn bán hàng dùng Gemini",
+  "description": "Messenger sales chatbot backend with rule-based automation, Gemini fallback, admin controls, and multi-shop hardening.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
     "verify:internal-notes-sql": "node scripts/verify-internal-notes-sql.js",
     "verify:multi-shop-sql": "node scripts/verify-multi-shop-sql.js",
-    "test": "node tests/index.js"
+    "test": "node tests/index.js",
+    "audit:prod": "npm audit --omit=dev"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "messenger-bot",
+    "chatbot",
+    "nodejs",
+    "express",
+    "gemini",
+    "sales-automation",
+    "backend"
+  ],
+  "author": "TruDanAI",
+  "license": "MIT",
   "dependencies": {
     "@google/genai": "^2.0.0",
-    "axios": "^1.6.0",
+    "axios": "^1.17.0",
     "cloudinary": "^2.10.0",
     "csv-parse": "^6.2.1",
     "dotenv": "^16.4.5",
-    "express": "^4.18.2",
+    "express": "^4.22.2",
     "multer": "^2.1.1",
     "pg": "^8.20.0"
   },
